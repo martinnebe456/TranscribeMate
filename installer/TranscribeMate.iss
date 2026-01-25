@@ -1,5 +1,5 @@
 #define MyAppName "TranscribeMate"
-#define MyAppVersion "26.01.25.002"
+#define MyAppVersion "26.01.25.003"
 #define MyAppPublisher "Martin Nebehay"
 #define MyAppExeName "TranscribeMate.exe"
 
@@ -8,7 +8,9 @@ AppId={{3D3C5C5E-24D9-4F4A-A6A2-6E5D4A7A9C11}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={autopf}\{#MyAppName}
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+DefaultDirName={localappdata}\Programs\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE

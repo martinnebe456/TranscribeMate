@@ -137,6 +137,8 @@ I18N: Dict[str, Dict[str, str]] = {
         "performance.model": "Model",
         "performance.quick_model": "Quick model",
         "performance.gpu_unavailable": "GPU: CUDA not available",
+        "performance.gpu_detecting": "GPU: detecting...",
+        "performance.gpu_idle": "GPU: not checked (click Detect)",
         "actions.start": "Start",
         "actions.stop": "Stop",
         "actions.update_models": "Refresh model cache",
@@ -164,6 +166,7 @@ I18N: Dict[str, Dict[str, str]] = {
         "colorpicker.subs": "Subtitle color",
         "colorpicker.outline": "Outline color",
         "step.download": "Downloading",
+        "step.detect_gpu": "Detecting GPU (first run may take a while)",
         "step.transcribe": "Transcription (faster-whisper)",
         "step.translate": "Translation",
         "step.embed": "Embedding subtitles",
@@ -237,6 +240,8 @@ I18N: Dict[str, Dict[str, str]] = {
         "performance.model": "Model",
         "performance.quick_model": "Rychlá volba",
         "performance.gpu_unavailable": "GPU: CUDA nedostupné",
+        "performance.gpu_detecting": "GPU: detekuji...",
+        "performance.gpu_idle": "GPU: nezjištěno (klikni Detekovat)",
         "actions.start": "Start",
         "actions.stop": "Stop",
         "actions.update_models": "Update modelů",
@@ -264,6 +269,7 @@ I18N: Dict[str, Dict[str, str]] = {
         "colorpicker.subs": "Barva titulků",
         "colorpicker.outline": "Barva obrysu",
         "step.download": "Stahování",
+        "step.detect_gpu": "Detekuji GPU (první spuštění může chvíli trvat)",
         "step.transcribe": "Přepis (faster-whisper)",
         "step.translate": "Překlad",
         "step.embed": "Vložení titulků",
@@ -307,18 +313,48 @@ def exe_dir() -> Path:
     return Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).parent
 
 
+def user_data_dir() -> Path:
+    if not getattr(sys, "frozen", False):
+        return Path(__file__).parent
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+    path = base / APP_NAME
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def user_assets_dir() -> Path:
+    path = user_data_dir() / "assets"
+    if getattr(sys, "frozen", False):
+        path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def config_path() -> Path:
-    return exe_dir() / "config.json"
+    return user_data_dir() / "config.json"
 
 
 def bundled_bin(name: str) -> Optional[Path]:
-    p = app_root() / "assets" / name
-    if p.exists():
-        return p
-    p = exe_dir() / "assets" / name
-    if p.exists():
-        return p
+    candidates = [
+        user_assets_dir() / name,
+        app_root() / "assets" / name,
+        exe_dir() / "assets" / name,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
     return None
+
+
+if getattr(sys, "frozen", False):
+    _assets_dir = user_assets_dir()
+    current_path = os.environ.get("PATH", "")
+    assets_str = str(_assets_dir)
+    path_parts = current_path.split(os.pathsep) if current_path else []
+    if assets_str not in path_parts:
+        os.environ["PATH"] = f"{assets_str}{os.pathsep}{current_path}" if current_path else assets_str
 
 
 def ffmpeg_path() -> Optional[str]:
@@ -419,18 +455,23 @@ class AppConfig:
 
 
 def load_config() -> AppConfig:
+    cfg_path = config_path()
     try:
-        if config_path().exists():
-            data = json.loads(config_path().read_text(encoding="utf-8"))
-            return AppConfig(**{k: v for k, v in data.items() if k in AppConfig.__dataclass_fields__})
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        if cfg_path.exists():
+            data = json.loads(cfg_path.read_text(encoding="utf-8"))
+            filtered = {k: v for k, v in data.items() if k in AppConfig.__dataclass_fields__}
+            return AppConfig(**filtered)
     except Exception:
         pass
     return AppConfig()
 
 
 def save_config(cfg: AppConfig):
+    cfg_path = config_path()
     try:
-        config_path().write_text(json.dumps(asdict(cfg), indent=2, ensure_ascii=False), encoding="utf-8")
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        cfg_path.write_text(json.dumps(asdict(cfg), indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
 
@@ -1088,10 +1129,12 @@ class App(tb.Window):
         self.done_videos = 0
         self.final_base_dir = Path(self.out_dir.get()) / "transcribemate_outputs"
 
+        self._gpu_info_cache: Optional[GpuInfo] = None
+        self._gpu_check_thread: Optional[threading.Thread] = None
+
         self._build_ui()
         self._setup_drag_drop()
         self.after(100, self._drain_uiq)
-        self._refresh_gpu_badge()
         self._update_source_ui()
         self._update_subtitle_options()
 
@@ -1185,6 +1228,9 @@ class App(tb.Window):
     def q_notify(self, title: str, message: str):
         self.uiq.put(("notify", title, message))
 
+    def q_gpu_info(self, gi: GpuInfo):
+        self.uiq.put(("gpu_info", gi))
+
     def _show_error_async(self, msg: str):
         self.after(0, lambda: Messagebox.show_error(self.t("dialog.error"), msg))
 
@@ -1228,6 +1274,8 @@ class App(tb.Window):
                 elif kind == "buttons_reset":
                     self.start_btn.configure(state="normal")
                     self.stop_btn.configure(state="disabled")
+                elif kind == "gpu_info":
+                    self._apply_gpu_info(item[1])
                 elif kind == "notify":
                     show_notification(item[1], item[2])
         except queue.Empty:
@@ -1433,7 +1481,7 @@ class App(tb.Window):
         row_m1.pack(fill="x", pady=(8, 0))
         self.gpu_chk = tb.Checkbutton(row_m1, text="", variable=self.use_gpu)
         self.gpu_chk.pack(side="left")
-        self.detect_btn = tb.Button(row_m1, text="", command=self._refresh_gpu_badge, bootstyle="secondary")
+        self.detect_btn = tb.Button(row_m1, text="", command=lambda: self._refresh_gpu_badge(force=True), bootstyle="secondary")
         self.detect_btn.pack(side="right")
 
         row_m2 = tb.Frame(self.mdl_frame)
@@ -1605,15 +1653,39 @@ class App(tb.Window):
         else:
             self.log_wrap.pack_forget()
 
-    def _refresh_gpu_badge(self):
-        gi = get_gpu_info()
+    def _refresh_gpu_badge(self, force: bool = False):
+        if self._gpu_check_thread and self._gpu_check_thread.is_alive() and not force:
+            return
+        if self._gpu_info_cache and not force:
+            self._apply_gpu_info(self._gpu_info_cache)
+            return
+
+        self.gpu_badge.configure(text=self.t("performance.gpu_detecting"), bootstyle="secondary")
+
+        def worker_detect():
+            gi = get_gpu_info()
+            self._gpu_info_cache = gi
+            self._apply_gpu_info_async(gi)
+
+        self._gpu_check_thread = threading.Thread(target=worker_detect, daemon=True)
+        self._gpu_check_thread.start()
+
+    def _apply_gpu_info_async(self, gi: GpuInfo):
+        def apply():
+            if not self.winfo_exists():
+                return
+            self._apply_gpu_info(gi)
+
+        self.after(0, apply)
+
+    def _apply_gpu_info(self, gi: GpuInfo):
         if gi.available:
             self.gpu_badge.configure(text=f"GPU: {gi.name} | VRAM: {gi.vram_gb:.1f} GB", bootstyle="success")
         else:
             self.gpu_badge.configure(text=self.t("performance.gpu_unavailable"), bootstyle="secondary")
-        self._apply_auto_model()
+        self._apply_auto_model(gi)
 
-    def _apply_auto_model(self):
+    def _apply_auto_model(self, gi: Optional[GpuInfo] = None):
         if not self.auto_model.get():
             self.model_cb.configure(state="readonly")
             self.quick_model_cb.configure(state="readonly")
@@ -1621,13 +1693,28 @@ class App(tb.Window):
             return
         self.model_cb.configure(state="disabled")
         self.quick_model_cb.configure(state="disabled")
-        gi = get_gpu_info()
-        if gi.available and self.use_gpu.get():
-            self.model.set(auto_whisper_model(gi.vram_gb))
+
+        if not self.use_gpu.get():
+            self.model.set("small")
+            self.quick_model_key.set(quick_model_key_for_model(self.model.get()))
+            self._sync_quick_model_label()
+            return
+
+        info = gi or self._gpu_info_cache
+        if info is None:
+            # Keep the current selection until GPU detection runs.
+            self.quick_model_key.set(quick_model_key_for_model(self.model.get()))
+            self._sync_quick_model_label()
+            return
+
+        if info.available:
+            self.model.set(auto_whisper_model(info.vram_gb))
         else:
             self.model.set("small")
+
         self.quick_model_key.set(quick_model_key_for_model(self.model.get()))
         self._sync_quick_model_label()
+
 
     def _sync_quick_model_label(self):
         key = normalize_quick_model(self.quick_model_key.get())
@@ -1796,9 +1883,30 @@ class App(tb.Window):
         t_local = self.t
 
         def worker():
+            nonlocal model
             workdir: Optional[Path] = None
             downloaded_files: List[Path] = []
             try:
+                if self.auto_model.get():
+                    if prefer_gpu:
+                        self.q_step(t_local("step.detect_gpu"))
+                        self.q_step_indeterminate(True)
+                        gi = get_gpu_info()
+                        self.q_step_indeterminate(False)
+                        self._gpu_info_cache = gi
+                        self.q_gpu_info(gi)
+                        if gi.available:
+                            model = auto_whisper_model(gi.vram_gb)
+                            self.q_log(
+                                f"[INFO] GPU detected: {gi.name} ({gi.vram_gb:.1f} GB). Auto model -> {model}\n"
+                            )
+                        else:
+                            model = "small"
+                            self.q_log("[WARN] GPU not available. Auto model -> small\n")
+                    else:
+                        model = "small"
+                        self.q_log("[INFO] GPU disabled. Auto model -> small\n")
+
                 # Final output directories (user-visible)
                 transcripts_dir = final_base_dir / "transcripts"
                 subtitles_src_final_dir = final_base_dir / "subtitles_source"
@@ -2013,7 +2121,11 @@ class App(tb.Window):
         self._sync_quick_model_label()
 
         self._update_mode_ui()
-        self._refresh_gpu_badge()
+        if self._gpu_info_cache:
+            self._apply_gpu_info(self._gpu_info_cache)
+        else:
+            self.gpu_badge.configure(text=self.t("performance.gpu_idle"), bootstyle="secondary")
+            self._apply_auto_model()
         self._save_current_config()
 
 

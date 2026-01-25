@@ -109,6 +109,9 @@ The installer creates:
 - and can launch the app right after installation.
 
 ## Notes
+- Installed EXE stores config, logs, and FFmpeg in `%LOCALAPPDATA%/TranscribeMate`.
+- The installer defaults to `%LOCALAPPDATA%/Programs/TranscribeMate` (no admin required).
+- First launch can take longer; a startup window explains what is happening.
 - On first run, models will be downloaded (Whisper / translation models).
 - Some models require significant RAM/VRAM.
 - Do not commit local configuration; use `config.example.json` as a reference.

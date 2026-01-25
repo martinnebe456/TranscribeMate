@@ -73,8 +73,11 @@ def _log(level: str, message: str):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{timestamp}] {level} {message}"
     print(line)
-    with LOG_FILE.open("a", encoding="utf-8") as fh:
-        fh.write(line + "\n")
+    try:
+        with LOG_FILE.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except Exception:
+        pass
 
 
 def log_step(message: str):
@@ -447,6 +450,73 @@ def run_doctor():
     log_success("Doctor finished")
 
 
+def create_startup_splash():
+    if not FROZEN:
+        return None, None
+    try:
+        import tkinter as tk
+        from tkinter import ttk
+
+        splash = tk.Tk()
+        splash.title("TranscribeMate")
+        splash.geometry("420x140")
+        splash.resizable(False, False)
+        splash.attributes("-topmost", True)
+        splash.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        frame = ttk.Frame(splash, padding=16)
+        frame.pack(fill="both", expand=True)
+
+        ttk.Label(frame, text="TranscribeMate", font=("Segoe UI", 14, "bold")).pack(anchor="w")
+        message_var = tk.StringVar(value="Starting...")
+        ttk.Label(frame, textvariable=message_var).pack(anchor="w", pady=(8, 8))
+
+        bar = ttk.Progressbar(frame, mode="indeterminate")
+        bar.pack(fill="x")
+        bar.start(12)
+
+        splash.update_idletasks()
+        splash.update()
+        return splash, message_var
+    except Exception:
+        return None, None
+
+
+def update_startup_splash(splash, message_var, message: str):
+    if not splash or not message_var:
+        return
+    try:
+        message_var.set(message)
+        splash.update_idletasks()
+        splash.update()
+    except Exception:
+        pass
+
+
+def close_startup_splash(splash):
+    if not splash:
+        return
+    try:
+        splash.destroy()
+    except Exception:
+        pass
+
+
+def show_error_dialog(message: str):
+    if not FROZEN:
+        return
+    try:
+        import tkinter as tk
+        from tkinter import messagebox
+
+        root = tk.Tk()
+        root.withdraw()
+        messagebox.showerror("TranscribeMate", message)
+        root.destroy()
+    except Exception:
+        pass
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Bootstrap TranscribeMate")
     parser.add_argument("--doctor", action="store_true", help="Only run environment checks")
@@ -475,11 +545,24 @@ def main():
     allow_ffmpeg_download = not args.no_ffmpeg_download
 
     if FROZEN:
-        ensure_ffmpeg_assets(allow_download=allow_ffmpeg_download)
-        log_step("Launching TranscribeMate GUI")
-        from app_gui import App  # Imported here so PyInstaller can include it via spec hiddenimports.
+        splash, splash_msg = create_startup_splash()
+        app = None
+        try:
+            update_startup_splash(splash, splash_msg, "Preparing FFmpeg (first run may take a moment)...")
+            ensure_ffmpeg_assets(allow_download=allow_ffmpeg_download)
+            update_startup_splash(splash, splash_msg, "Loading application...")
+            from app_gui import App  # Imported here so PyInstaller can include it via spec hiddenimports.
 
-        App().mainloop()
+            update_startup_splash(splash, splash_msg, "Opening window...")
+            close_startup_splash(splash)
+            splash = None
+            app = App()
+        finally:
+            close_startup_splash(splash)
+
+        if app:
+            log_step("Launching TranscribeMate GUI")
+            app.mainloop()
         return
 
     if not VENV.exists():
@@ -507,4 +590,10 @@ if __name__ == "__main__":
     except Exception as exc:  # pragma: no cover - safety net
         log_fail(f"Unexpected error: {exc}")
         log_info("See bootstrap.log for details.")
+        show_error_dialog(
+            f"""Startup failed: {exc}
+
+See log:
+{LOG_FILE}"""
+        )
         sys.exit(1)
