@@ -1,13 +1,11 @@
 # TranscribeMate
 
-TranscribeMate is a desktop GUI for:
+TranscribeMate is a Windows desktop GUI for:
 - downloading media from YouTube (optional, via `yt-dlp`),
 - speech-to-text transcription (via `faster-whisper`),
 - subtitle translation,
 - conference-style folder transcription to `.txt` / `.md`,
-- exporting video with subtitles, `.srt`, and timestamped transcripts.
-
-Czech documentation is included below.
+- exporting video with subtitles, `.srt`, timestamped transcripts, and summary packs for ChatGPT / Confluence.
 
 ## Important Legal Notice
 Use this tool only with content you are legally allowed to process.
@@ -18,56 +16,37 @@ Use this tool only with content you are legally allowed to process.
 
 See `DISCLAIMER.md` for the full legal disclaimer (EN + CZ).
 
-## Requirements
-- Python 3.10–3.12 (recommended: 3.12; Python 3.13+ is not supported)
-- Windows (primarily tested)
-- FFmpeg + FFprobe (must be available in PATH)
+## End User Install (Recommended)
+No Python installation is required for end users.
 
-## Install FFmpeg (Required)
-Windows (recommended):
-```powershell
-winget install Gyan.FFmpeg
-```
-Then restart the terminal/PC so `ffmpeg` and `ffprobe` are in PATH.
+1. Download `TranscribeMate-Setup.exe` from Releases.
+1. Run the installer.
+1. Launch TranscribeMate from the Desktop or Start Menu shortcut.
 
-## Quick Start
-The simplest option is the bootstrap script:
+On first launch the app may:
+- download FFmpeg,
+- download speech/translation models,
+- take longer than usual.
 
-```bash
-python bootstrap.py
-```
+A startup window explains what is happening.
 
-Useful options:
-```bash
-python bootstrap.py --doctor
-python bootstrap.py --no-cuda
-python bootstrap.py --no-ffmpeg-download
-```
+## Where Data Lives
+The installed EXE stores writable data here:
+- `%LOCALAPPDATA%/TranscribeMate`
 
-`bootstrap.log` is written in the project root for easier troubleshooting.
+This includes:
+- `assets/` (FFmpeg),
+- `cache/` (models),
+- `bootstrap.log` (startup log),
+- `config.json` (settings).
+- A legacy `config.json` next to the EXE is migrated automatically.
 
-What it does:
-- creates `.venv`,
-- installs dependencies from `requirements.txt`,
-- launches the GUI.
-
-## Manual Run
-
-```bash
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/macOS:
-source .venv/bin/activate
-
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python app_gui.py
-```
+There is a built-in button: **Open app data folder**.
 
 ## Outputs
 The app saves outputs into:
 - `transcribemate_outputs/transcripts`
+- `transcribemate_outputs/summaries` (timestamped transcripts, summary prompts, Confluence templates)
 - `transcribemate_outputs/subtitles_source`
 - `transcribemate_outputs/subtitles_translated`
 - `transcribemate_outputs/videos`
@@ -75,21 +54,55 @@ The app saves outputs into:
 
 Temporary working folders named `_tm_work_*` are created inside your output directory and deleted automatically after each run.
 
-## Build EXE (Windows)
+## Developer Setup
 
+### Requirements
+- Python 3.12 (64-bit recommended)
+- Inno Setup 6 (https://jrsoftware.org/isinfo.php)
+
+### Run From Source
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+python main.py
+```
+
+## Build EXE (Windows)
 ```powershell
 ./build_exe.ps1
 ```
 
-## Notes
-- On first run, models will be downloaded (Whisper / translation models).
-- Some models require significant RAM/VRAM.
-- Do not commit local configuration; use `config.example.json` as a reference.
-- You can switch the UI language (EN/CZ) in the top-right corner.
-- Conference mode is ideal for “record → transcribe everything in a folder”.
-- Filenames are timestamped automatically, e.g., `2026-01-26_09-30_lecture.txt`.
+Output:
+- `dist/TranscribeMate/TranscribeMate.exe`
+
+Notes:
+- The build script removes `assets/*.exe` before packaging to avoid bundling FFmpeg.
+- FFmpeg will be downloaded on first run into `%LOCALAPPDATA%/TranscribeMate/assets`.
+
+## Build Installer (Inno Setup)
+1. Build the EXE first:
+```powershell
+./build_exe.ps1
+```
+1. Open `installer/TranscribeMate.iss` in Inno Setup and click **Build**.
+
+Installer output:
+- `dist_installer/TranscribeMate-Setup.exe`
+
+The installer defaults to:
+- `%LOCALAPPDATA%/Programs/TranscribeMate`
+
+This avoids admin-rights issues and works well with per-user app data.
+
+## Project Structure
+The codebase is organized into typed components under `transcribemate/`:
+- `runtime/` handles EXE startup, splash screen, and FFmpeg setup (`transcribemate/runtime/runtime.py`).
+- `ui/` contains the GUI (`transcribemate/ui/ui.py`).
+- `pipeline/` implements the processing pipeline (`transcribemate/pipeline/*.py`).
+- `core/` contains shared services, paths, config, i18n, and file helpers (`transcribemate/core/*.py`).
 
 ## License
 PolyForm Noncommercial 1.0.0 — see `LICENSE`.
-
----

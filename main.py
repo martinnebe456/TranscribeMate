@@ -1,4 +1,4 @@
-"""Legacy entry point kept for compatibility."""
+"""Entry point for TranscribeMate."""
 
 from transcribemate.runtime import launch_app
 
