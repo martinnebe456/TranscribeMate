@@ -105,8 +105,8 @@ class App(tb.Window):
     def __init__(self):
         super().__init__(themename="flatly")
         self.title(I18N["en"]["app.title"])
-        self.geometry("1050x700")
-        self.minsize(1000, 650)
+        self.geometry("1050x820")
+        self.minsize(1000, 740)
 
         self.stop_flag = threading.Event()
         self.worker = None
@@ -137,7 +137,7 @@ class App(tb.Window):
         self.keep_originals = tb.BooleanVar(value=self.cfg.keep_originals)
 
         self.subtitle_mode = tb.StringVar(value=self.cfg.subtitle_mode)
-        self.show_log = tb.BooleanVar(value=False)
+        self.show_log = tb.BooleanVar(value=True)
 
         if not self.auto_model.get() and self.model.get() in QUICK_MODEL_MAP.values():
             self.quick_model_key.set(quick_model_key_for_model(self.model.get()))
@@ -572,6 +572,7 @@ class App(tb.Window):
 
         self._apply_auto_model()
         self._apply_translations()
+        self._toggle_log()
 
     def _update_source_ui(self):
         mode = normalize_output_mode(self.output_mode_key.get())
