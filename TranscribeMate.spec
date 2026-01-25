@@ -16,7 +16,26 @@ if assets_keep.exists():
     datas.append((str(assets_keep), "assets"))
 
 hiddenimports = [
-    "app_gui",
+    "transcribemate",
+    "transcribemate.runtime",
+    "transcribemate.runtime.runtime",
+    "transcribemate.ui",
+    "transcribemate.ui.ui",
+    "transcribemate.pipeline",
+    "transcribemate.pipeline.download",
+    "transcribemate.pipeline.transcribe",
+    "transcribemate.pipeline.translate",
+    "transcribemate.pipeline.subtitles",
+    "transcribemate.core",
+    "transcribemate.core.paths",
+    "transcribemate.core.config",
+    "transcribemate.core.files",
+    "transcribemate.core.gpu",
+    "transcribemate.core.i18n",
+    "transcribemate.core.models",
+    "transcribemate.core.process",
+    "transcribemate.core.transcripts",
+    "transcribemate.core.types",
     "ttkbootstrap",
     "tkinterdnd2",
     "win10toast",
@@ -34,7 +53,7 @@ hiddenimports = [
 ]
 
 a = Analysis(
-    ["bootstrap.py"],
+    ["main.py"],
     pathex=[str(root)],
     binaries=[],
     datas=datas,

@@ -19,6 +19,8 @@ function Run-Py {
 Write-Host "[BUILD] Using Python: $pyExe $pyBaseArgs"
 Run-Py -PyArgs @("-m", "pip", "install", "--upgrade", "pip", "pyinstaller")
 
+Run-Py -PyArgs @("-m", "pip", "install", "-r", "requirements.txt")
+
 # Clean build artifacts
 Remove-Item -Recurse -Force .\build -ErrorAction SilentlyContinue
 Remove-Item -Recurse -Force .\dist  -ErrorAction SilentlyContinue
