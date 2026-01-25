@@ -67,8 +67,12 @@ def config_path() -> Path:
     return user_data_dir() / "config.json"
 
 
-def log_path() -> Path:
+def legacy_log_path() -> Path:
     return user_data_dir() / "bootstrap.log"
+
+
+def log_path() -> Path:
+    return user_data_dir() / "runtime.log"
 
 
 def bundled_bin(name: str) -> Optional[Path]:

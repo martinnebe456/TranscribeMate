@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+
 block_cipher = None
 
 root = Path.cwd()
@@ -51,6 +53,65 @@ hiddenimports = [
     "ensurepip",
 ]
 
+# Torch pulls some stdlib modules dynamically; include a safety net for frozen builds.
+stdlib_imports = [
+    "timeit",
+    "pickletools",
+    "pstats",
+    "profile",
+    "cProfile",
+    "inspect",
+    "pydoc",
+    "multiprocessing",
+    "multiprocessing.pool",
+    "multiprocessing.context",
+    "concurrent.futures",
+    "concurrent.futures.thread",
+    "concurrent.futures.process",
+    "asyncio",
+    "asyncio.events",
+    "asyncio.base_events",
+    "queue",
+    "threading",
+    "logging",
+    "traceback",
+    "contextlib",
+    "importlib",
+    "importlib.resources",
+    "importlib.metadata",
+    "pkgutil",
+    "ctypes",
+    "ctypes.util",
+    "signal",
+    "subprocess",
+    "socket",
+    "selectors",
+]
+
+hiddenimports += stdlib_imports
+
+
+
+try:
+    # Bundle pip internals so runtime installs work in the frozen EXE.
+    hiddenimports += collect_submodules("pip")
+    hiddenimports += collect_submodules("ensurepip")
+except Exception:
+    pass
+
+try:
+    # Ensure vendored pip data (for example distlib executables) is present.
+    datas += collect_data_files("pip")
+    datas += collect_data_files("ensurepip")
+except Exception:
+    pass
+
+module_collection_mode = {
+    # pip expects a real filesystem package path for its vendored modules.
+    "pip": "py",
+    "ensurepip": "py",
+}
+
 a = Analysis(
     ["main.py"],
     pathex=[str(root)],
@@ -65,6 +126,7 @@ a = Analysis(
     win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
+    module_collection_mode=module_collection_mode,
 )
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
@@ -76,6 +138,7 @@ exe = EXE(
     a.datas,
     [],
     name="TranscribeMate",
+    icon=str(root / "icon.ico"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
