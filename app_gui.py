@@ -817,18 +817,58 @@ def download_single_or_playlist(url: str, workdir: Path, is_playlist: bool, qual
     outdir.mkdir(parents=True, exist_ok=True)
 
     output_tpl = str(outdir / "%(playlist_index|000)03d - %(title)s [%(id)s].%(ext)s")
+    fmt = quality_to_format(quality)
+
+    ff = ffmpeg_path()
+    ffmpeg_dir = str(Path(ff).parent) if ff else None
+
+    if getattr(sys, "frozen", False):
+        import yt_dlp
+        from yt_dlp.utils import DownloadError
+
+        def progress_hook(d: dict):
+            if stop_flag and stop_flag.is_set():
+                raise DownloadError("Stopped by user.")
+
+            if d.get("status") != "downloading":
+                return
+
+            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            downloaded = d.get("downloaded_bytes") or 0
+            if total:
+                try:
+                    set_step_progress((downloaded / total) * 100.0)
+                except Exception:
+                    pass
+
+        ydl_opts = {
+            "format": fmt,
+            "outtmpl": output_tpl,
+            "noplaylist": not is_playlist,
+            "extractor_args": {"youtube": {"player_client": ["default"]}},
+            "progress_hooks": [progress_hook],
+            "logger": None,
+            "quiet": True,
+            "no_warnings": True,
+        }
+        if ffmpeg_dir:
+            ydl_opts["ffmpeg_location"] = ffmpeg_dir
+
+        log("[INFO] Downloading via embedded yt-dlp...\n")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            ydl.download([url])
+        set_step_progress(100)
+        return outdir
 
     cmd = [
         *ytdlp_cmd(),
         "--extractor-args", "youtube:player_client=default",
-        "-f", quality_to_format(quality),
+        "-f", fmt,
         "-o", output_tpl,
         "--yes-playlist" if is_playlist else "--no-playlist",
     ]
 
-    ff = ffmpeg_path()
-    if ff:
-        ffmpeg_dir = str(Path(ff).parent)
+    if ffmpeg_dir:
         cmd.extend(["--ffmpeg-location", ffmpeg_dir])
 
     cmd.append(url)
@@ -844,6 +884,7 @@ def download_single_or_playlist(url: str, workdir: Path, is_playlist: bool, qual
 
     safe_run(cmd, cwd=str(workdir), on_line=on_line, stop_flag=stop_flag)
     return outdir
+
 
 
 def faster_whisper_transcribe(media_path: Path, out_dir: Path, model: str, prefer_gpu: bool,
