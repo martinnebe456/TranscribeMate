@@ -1,5 +1,5 @@
 #define MyAppName "TranscribeMate"
-#define MyAppVersion "26.01.25.012"
+#define MyAppVersion "26.01.25.019"
 #define MyAppPublisher "Martin Nebehay"
 #define MyAppExeName "TranscribeMate.exe"
 
@@ -24,6 +24,8 @@ OutputDir=..\dist_installer
 OutputBaseFilename=TranscribeMate-Setup
 Compression=lzma
 SolidCompression=yes
+SetupIconFile=..\icon.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64
 
@@ -33,14 +35,29 @@ CloseApplications=yes
 CloseApplicationsFilter={#MyAppExeName}
 RestartApplications=no
 
-; Nice-to-have metadata
-UninstallDisplayIcon={app}\{#MyAppExeName}
-
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
+
+[InstallDelete]
+Type: files; Name: "{app}\_internal\torch-*.dist-info\*"
+Type: dirifempty; Name: "{app}\_internal\torch-*.dist-info"
+Type: files; Name: "{app}\_internal\torchaudio-*.dist-info\*"
+Type: dirifempty; Name: "{app}\_internal\torchaudio-*.dist-info"
+Type: files; Name: "{app}\_internal\torchvision-*.dist-info\*"
+Type: dirifempty; Name: "{app}\_internal\torchvision-*.dist-info"
+Type: files; Name: "{app}\_internal\torch\*"
+Type: dirifempty; Name: "{app}\_internal\torch"
+Type: files; Name: "{app}\_internal\torchgen\*"
+Type: dirifempty; Name: "{app}\_internal\torchgen"
+Type: files; Name: "{app}\_internal\functorch\*"
+Type: dirifempty; Name: "{app}\_internal\functorch"
+Type: files; Name: "{app}\_internal\torchaudio\*"
+Type: dirifempty; Name: "{app}\_internal\torchaudio"
+Type: files; Name: "{app}\_internal\torchvision\*"
+Type: dirifempty; Name: "{app}\_internal\torchvision"
 
 [Files]
 Source: "..\dist\TranscribeMate\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -50,5 +67,5 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-gpu"; Description: "Install GPU dependencies (first run)"; Flags: postinstall skipifsilent nowait runhidden
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-gpu"; Description: "Install GPU dependencies"; Flags: postinstall skipifsilent nowait runhidden unchecked
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent unchecked

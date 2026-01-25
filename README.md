@@ -23,7 +23,7 @@ No Python installation is required for end users.
 1. Run the installer.
 1. Launch TranscribeMate from the Desktop or Start Menu shortcut.
 
-During installation, TranscribeMate runs a one-time GPU dependency setup (PyTorch). This can take several minutes and requires internet access.
+During installation, TranscribeMate starts GPU dependency setup (PyTorch). On every launch it re-checks Torch/CUDA and automatically repairs missing GPU dependencies while showing progress. This can take several minutes and requires internet access.
 
 On first launch the app may:
 - download FFmpeg,
@@ -39,7 +39,7 @@ The installed EXE stores writable data here:
 This includes:
 - `assets/` (FFmpeg),
 - `cache/` (models),
-- `bootstrap.log` (startup log),
+- `runtime.log` (startup log),
 - `config.json` (settings).
 - A legacy `config.json` next to the EXE is migrated automatically.
 
