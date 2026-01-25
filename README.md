@@ -19,7 +19,7 @@ Use this tool only with content you are legally allowed to process.
 See `DISCLAIMER.md` for the full legal disclaimer (EN + CZ).
 
 ## Requirements
-- Python 3.10–3.12 (recommended: 3.12)
+- Python 3.10–3.12 (recommended: 3.12; Python 3.13+ is not supported)
 - Windows (primarily tested)
 - FFmpeg + FFprobe (must be available in PATH)
 
@@ -36,6 +36,15 @@ The simplest option is the bootstrap script:
 ```bash
 python bootstrap.py
 ```
+
+Useful options:
+```bash
+python bootstrap.py --doctor
+python bootstrap.py --no-cuda
+python bootstrap.py --no-ffmpeg-download
+```
+
+`bootstrap.log` is written in the project root for easier troubleshooting.
 
 What it does:
 - creates `.venv`,
