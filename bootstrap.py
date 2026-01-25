@@ -1,4 +1,5 @@
 import argparse
+import hashlib
 import os
 import platform
 import shutil
@@ -11,10 +12,31 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).parent
+FROZEN = bool(getattr(sys, "frozen", False))
+
+
+def runtime_root() -> Path:
+    """Return the directory where runtime files should live."""
+    if not FROZEN:
+        return Path(__file__).parent
+
+    if sys.platform == "win32":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    else:
+        base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
+
+    return base / "TranscribeMate"
+
+
+ROOT = runtime_root()
 VENV = ROOT / ".venv"
 ASSETS_DIR = ROOT / "assets"
 LOG_FILE = ROOT / "bootstrap.log"
+
+if FROZEN:
+    ASSETS_DIR.mkdir(parents=True, exist_ok=True)
+    current_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = f"{ASSETS_DIR}{os.pathsep}{current_path}" if current_path else str(ASSETS_DIR)
 
 if sys.platform == "win32":
     PYTHON = VENV / "Scripts" / "python.exe"
@@ -23,6 +45,8 @@ else:
 
 REQUIREMENTS = ROOT / "requirements.txt"
 APP = ROOT / "app_gui.py"
+REQS_MARKER = VENV / ".tm_requirements.sha256"
+REQUIRED_IMPORTS = ("ttkbootstrap", "yt_dlp", "faster_whisper", "torch")
 
 # Windows-friendly FFmpeg bundle (kept out of git history)
 FFMPEG_ZIP_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
@@ -33,7 +57,15 @@ FFMPEG_EXES = ("ffmpeg.exe", "ffprobe.exe", "ffplay.exe")
 # Logging helpers
 # -----------------------------
 def init_log():
-    LOG_FILE.write_text("", encoding="utf-8")
+    global LOG_FILE
+    try:
+        LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        LOG_FILE.write_text("", encoding="utf-8")
+    except PermissionError:
+        fallback = Path(tempfile.gettempdir()) / "TranscribeMate"
+        fallback.mkdir(parents=True, exist_ok=True)
+        LOG_FILE = fallback / "bootstrap.log"
+        LOG_FILE.write_text("", encoding="utf-8")
     log_info(f"Logging to: {LOG_FILE}")
 
 
@@ -66,18 +98,19 @@ def log_fail(message: str):
 
 
 def run(cmd, *, friendly_name: str | None = None, capture: bool = False, check: bool = True):
-    label = friendly_name or " ".join(cmd)
+    cmd_str = [str(part) for part in cmd]
+    label = friendly_name or " ".join(cmd_str)
     log_step(label)
-    log_info(f"Command: {' '.join(cmd)}")
+    log_info(f"Command: {' '.join(cmd_str)}")
     try:
         if capture:
-            result = subprocess.run(cmd, check=check, text=True, capture_output=True)
+            result = subprocess.run(cmd_str, check=check, text=True, capture_output=True)
             if result.stdout:
                 log_info(result.stdout.strip())
             if result.stderr:
                 log_warn(result.stderr.strip())
             return result
-        subprocess.check_call(cmd)
+        subprocess.check_call(cmd_str)
         return None
     except subprocess.CalledProcessError as exc:
         log_fail(f"Command failed (exit {exc.returncode}): {label}")
@@ -131,11 +164,30 @@ def print_pip_failure_help():
     log_info("3. Restart the terminal after installing Python/FFmpeg")
 
 
+def requirements_hash() -> str | None:
+    if not REQUIREMENTS.exists():
+        return None
+    data = REQUIREMENTS.read_bytes()
+    return hashlib.sha256(data).hexdigest()
+
+
+def _marker_hash() -> str:
+    if not REQS_MARKER.exists():
+        return ""
+    try:
+        return REQS_MARKER.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
 def install_deps():
     log_step("Installing Python dependencies")
     try:
         run([str(PYTHON), "-m", "pip", "install", "--upgrade", "pip"], friendly_name="Upgrading pip")
         run([str(PYTHON), "-m", "pip", "install", "-r", str(REQUIREMENTS)], friendly_name="Installing requirements")
+        req_hash = requirements_hash()
+        if req_hash:
+            REQS_MARKER.write_text(req_hash, encoding="utf-8")
         log_success("Dependencies installed")
     except subprocess.CalledProcessError:
         print_pip_failure_help()
@@ -169,6 +221,53 @@ def install_cuda_torch():
     except subprocess.CalledProcessError as exc:
         log_warn("CUDA Torch install failed. Falling back to CPU wheels already installed.")
         log_info(f"Error was: {exc}")
+
+
+def _missing_imports(python_path: Path) -> list[str]:
+    """Check for required modules without importing them."""
+    script = (
+        "import importlib.util\n"
+        f"mods = {list(REQUIRED_IMPORTS)!r}\n"
+        "missing = [m for m in mods if importlib.util.find_spec(m) is None]\n"
+        "print('\\n'.join(missing))\n"
+    )
+    result = subprocess.run([str(python_path), "-c", script], text=True, capture_output=True, check=False)
+    if result.returncode != 0:
+        return list(REQUIRED_IMPORTS)
+    missing = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    return missing
+
+
+def ensure_dependencies(*, no_cuda: bool):
+    """Ensure dependencies are installed even if the venv already exists."""
+    if FROZEN:
+        return
+    if not REQUIREMENTS.exists():
+        log_warn("requirements.txt not found. Skipping dependency install.")
+        return
+    if not PYTHON.exists():
+        log_fail(f"Virtual environment Python missing: {PYTHON}")
+        raise SystemExit(1)
+
+    req_hash = requirements_hash() or ""
+    marker_hash = _marker_hash()
+    missing = _missing_imports(PYTHON)
+
+    needs_install = (req_hash and req_hash != marker_hash) or bool(missing)
+    if not needs_install:
+        log_success("Python dependencies already satisfied")
+        return
+
+    if missing:
+        log_warn(f"Missing modules in .venv: {', '.join(missing)}")
+    elif req_hash and req_hash != marker_hash:
+        log_warn("requirements.txt changed since the last install")
+
+    install_deps()
+    if no_cuda:
+        log_warn("Skipping CUDA installation due to --no-cuda")
+    else:
+        install_cuda_torch()
 
 
 def _has_system_ffmpeg() -> bool:
@@ -248,8 +347,12 @@ def ensure_ffmpeg_assets(*, allow_download: bool):
 
 def relaunch_in_venv(args):
     log_step("Relaunching inside .venv")
-    cmd = [str(PYTHON), str(APP)]
-    run(cmd, friendly_name="Launching app in venv")
+    cmd = [str(PYTHON), str(Path(__file__).resolve())]
+    if args.no_cuda:
+        cmd.append("--no-cuda")
+    if args.no_ffmpeg_download:
+        cmd.append("--no-ffmpeg-download")
+    run(cmd, friendly_name="Launching bootstrap in venv")
     sys.exit(0)
 
 
@@ -269,10 +372,35 @@ def _doctor_check_ffmpeg():
         verify_ffmpeg()
     else:
         log_fail("FFmpeg not found (PATH or assets/)")
-        log_info("Fix: winget install Gyan.FFmpeg")
+        log_info("Fix: install FFmpeg (or run bootstrap.py without --doctor)")
 
 
-def _doctor_check_torch_in_venv():
+def _doctor_check_torch():
+    def _log_torch(data: dict):
+        if "error" in data:
+            log_fail(f"Torch not ready: {data['error']}")
+            log_info("Fix: run bootstrap.py once to install dependencies")
+            return
+        log_success(f"Torch version: {data.get('torch', 'unknown')}")
+        if data.get("cuda_available"):
+            log_success(f"CUDA available: {data.get('cuda_device', 'GPU detected')}")
+        else:
+            log_warn("CUDA not available (CPU mode will be used)")
+
+    if FROZEN:
+        try:
+            import torch  # type: ignore
+
+            payload = {
+                "torch": torch.__version__,
+                "cuda_available": bool(torch.cuda.is_available()),
+                "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "",
+            }
+            _log_torch(payload)
+        except Exception as exc:  # pragma: no cover - best effort
+            _log_torch({"error": str(exc)})
+        return
+
     if not PYTHON.exists():
         log_warn("Cannot check torch/GPU because .venv Python is missing")
         return
@@ -305,17 +433,7 @@ def _doctor_check_torch_in_venv():
 
         import json
 
-        data = json.loads(payload)
-        if "error" in data:
-            log_fail(f"Torch not ready in .venv: {data['error']}")
-            log_info("Fix: run bootstrap.py once to install dependencies")
-            return
-
-        log_success(f"Torch version: {data.get('torch', 'unknown')}")
-        if data.get("cuda_available"):
-            log_success(f"CUDA available: {data.get('cuda_device', 'GPU detected')}")
-        else:
-            log_warn("CUDA not available (CPU mode will be used)")
+        _log_torch(json.loads(payload))
     except Exception as exc:  # pragma: no cover - best effort
         log_warn(f"Could not run torch doctor check: {exc}")
 
@@ -325,7 +443,7 @@ def run_doctor():
     ensure_supported_python()
     _doctor_check_venv()
     _doctor_check_ffmpeg()
-    _doctor_check_torch_in_venv()
+    _doctor_check_torch()
     log_success("Doctor finished")
 
 
@@ -356,15 +474,18 @@ def main():
 
     allow_ffmpeg_download = not args.no_ffmpeg_download
 
+    if FROZEN:
+        ensure_ffmpeg_assets(allow_download=allow_ffmpeg_download)
+        log_step("Launching TranscribeMate GUI")
+        from app_gui import App  # Imported here so PyInstaller can include it via spec hiddenimports.
+
+        App().mainloop()
+        return
+
     if not VENV.exists():
         create_venv()
-        install_deps()
-        if args.no_cuda:
-            log_warn("Skipping CUDA installation due to --no-cuda")
-        else:
-            install_cuda_torch()
-        ensure_ffmpeg_assets(allow_download=allow_ffmpeg_download)
-        relaunch_in_venv(args)
+
+    ensure_dependencies(no_cuda=args.no_cuda)
 
     if not in_venv():
         ensure_ffmpeg_assets(allow_download=allow_ffmpeg_download)

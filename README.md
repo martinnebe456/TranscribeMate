@@ -21,10 +21,14 @@ See `DISCLAIMER.md` for the full legal disclaimer (EN + CZ).
 ## Requirements
 - Python 3.10–3.12 (recommended: 3.12; Python 3.13+ is not supported)
 - Windows (primarily tested)
-- FFmpeg + FFprobe (must be available in PATH)
 
-## Install FFmpeg (Required)
-Windows (recommended):
+For building the installer:
+- Inno Setup 6 (https://jrsoftware.org/isinfo.php)
+
+## FFmpeg
+On Windows, `bootstrap.py` can download FFmpeg automatically into `assets/`.
+
+Manual install (optional):
 ```powershell
 winget install Gyan.FFmpeg
 ```
@@ -33,32 +37,30 @@ Then restart the terminal/PC so `ffmpeg` and `ffprobe` are in PATH.
 ## Quick Start
 The simplest option is the bootstrap script:
 
-```bash
-python bootstrap.py
+```powershell
+py -3.12 bootstrap.py
 ```
 
 Useful options:
-```bash
-python bootstrap.py --doctor
-python bootstrap.py --no-cuda
-python bootstrap.py --no-ffmpeg-download
+```powershell
+py -3.12 bootstrap.py --doctor
+py -3.12 bootstrap.py --no-cuda
+py -3.12 bootstrap.py --no-ffmpeg-download
 ```
 
 `bootstrap.log` is written in the project root for easier troubleshooting.
 
 What it does:
-- creates `.venv`,
-- installs dependencies from `requirements.txt`,
+- creates `.venv` when missing,
+- installs dependencies from `requirements.txt` (even if `.venv` already exists),
+- ensures FFmpeg is available,
 - launches the GUI.
 
 ## Manual Run
 
-```bash
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/macOS:
-source .venv/bin/activate
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
 
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
@@ -77,9 +79,34 @@ Temporary working folders named `_tm_work_*` are created inside your output dire
 
 ## Build EXE (Windows)
 
+Build the onedir EXE (bootstrap is the entrypoint):
+
 ```powershell
 ./build_exe.ps1
 ```
+
+Output:
+- `dist/TranscribeMate/TranscribeMate.exe`
+
+Notes:
+- The build script removes `assets/*.exe` before packaging to avoid bundling FFmpeg.
+- FFmpeg will be downloaded on first run.
+
+## Build Installer (Inno Setup)
+
+1. Build the EXE first:
+```powershell
+./build_exe.ps1
+```
+2. Open `installer/TranscribeMate.iss` in Inno Setup and click **Build**.
+
+Installer output:
+- `dist_installer/TranscribeMate-Setup.exe`
+
+The installer creates:
+- a Start Menu entry,
+- an optional Desktop shortcut,
+- and can launch the app right after installation.
 
 ## Notes
 - On first run, models will be downloaded (Whisper / translation models).
