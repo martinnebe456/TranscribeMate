@@ -6,15 +6,26 @@ import re
 from pathlib import Path
 
 
-def translate_srt(inp_srt: Path, out_srt: Path, model_name: str, prefer_gpu: bool, batch_size: int,
-                  log, set_step_progress, stop_flag):
+def translate_srt(
+    inp_srt: Path,
+    out_srt: Path,
+    model_name: str,
+    prefer_gpu: bool,
+    batch_size: int,
+    log,
+    set_step_progress,
+    stop_flag,
+):
     import torch
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
     device = "cuda" if (prefer_gpu and torch.cuda.is_available()) else "cpu"
-    log(f"[INFO] Translating using {model_name} on {device}\n")
+    log(f"[INFO] Translation settings: model={model_name}, device={device}, batch={batch_size}\n")
 
+    log("[INFO] Loading translation tokenizer...\n")
     tok = AutoTokenizer.from_pretrained(model_name)
+
+    log("[INFO] Loading translation model...\n")
     try:
         mdl = AutoModelForSeq2SeqLM.from_pretrained(
             model_name,
@@ -45,6 +56,7 @@ def translate_srt(inp_srt: Path, out_srt: Path, model_name: str, prefer_gpu: boo
         texts.append(text.replace("\n", " "))
 
     total = max(1, len(texts))
+    log(f"[INFO] Subtitle lines to translate: {len(texts)}\n")
 
     out = []
     for i in range(0, len(texts), batch_size):
@@ -56,7 +68,9 @@ def translate_srt(inp_srt: Path, out_srt: Path, model_name: str, prefer_gpu: boo
             gen = mdl.generate(**inputs, max_new_tokens=256)
         out.extend(tok.batch_decode(gen, skip_special_tokens=True))
         done = min(i + batch_size, len(texts))
-        set_step_progress(done * 100.0 / total)
+        pct = done * 100.0 / total
+        set_step_progress(pct)
+        log(f"[INFO] Translation progress: {done}/{len(texts)} ({pct:.0f}%)\n")
 
     j = 0
     out_blocks = []
@@ -70,3 +84,4 @@ def translate_srt(inp_srt: Path, out_srt: Path, model_name: str, prefer_gpu: boo
 
     out_srt.parent.mkdir(parents=True, exist_ok=True)
     out_srt.write_text("\n\n".join(out_blocks) + "\n", encoding="utf-8")
+    log(f"[OK] Translated SRT saved: {out_srt}\n")

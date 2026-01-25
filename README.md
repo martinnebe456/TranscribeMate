@@ -5,7 +5,7 @@ TranscribeMate is a Windows desktop GUI for:
 - speech-to-text transcription (via `faster-whisper`),
 - subtitle translation,
 - conference-style folder transcription to `.txt` / `.md`,
-- exporting video with subtitles, `.srt`, and timestamped transcripts.
+- exporting video with subtitles, `.srt`, timestamped transcripts, and summary packs for ChatGPT / Confluence.
 
 ## Important Legal Notice
 Use this tool only with content you are legally allowed to process.
@@ -46,6 +46,7 @@ There is a built-in button: **Open app data folder**.
 ## Outputs
 The app saves outputs into:
 - `transcribemate_outputs/transcripts`
+- `transcribemate_outputs/summaries` (timestamped transcripts, summary prompts, Confluence templates)
 - `transcribemate_outputs/subtitles_source`
 - `transcribemate_outputs/subtitles_translated`
 - `transcribemate_outputs/videos`

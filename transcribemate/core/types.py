@@ -14,3 +14,5 @@ class TranscriptionResult:
     segments: List[Any]
     detected_lang: str
     duration: float
+    device: str = "cpu"
+    compute_type: str = "int8"

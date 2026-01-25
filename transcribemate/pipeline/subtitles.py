@@ -14,12 +14,25 @@ def hex_to_ass_color(hex_color: str) -> str:
     return f"&H{b:02X}{g:02X}{r:02X}&"
 
 
-def hard_subtitles(video_path: Path, srt_path: Path, out_mp4: Path,
-                   font: str, size: int, color: str, outline_color: str, outline_width: int,
-                   log, set_step_indeterminate, stop_flag):
+def hard_subtitles(
+    video_path: Path,
+    srt_path: Path,
+    out_mp4: Path,
+    font: str,
+    size: int,
+    color: str,
+    outline_color: str,
+    outline_width: int,
+    log,
+    set_step_indeterminate,
+    stop_flag,
+):
     ff = ffmpeg_path()
     if not ff:
         raise RuntimeError("ffmpeg not found (bundled or PATH).")
+
+    log(f"[INFO] Embedding hard subtitles into: {video_path.name}\n")
+    log(f"[INFO] Subtitle source: {srt_path}\n")
 
     sub = str(srt_path).replace("\\", "\\\\").replace(":", "\\:")
 
@@ -44,13 +57,24 @@ def hard_subtitles(video_path: Path, srt_path: Path, out_mp4: Path,
     set_step_indeterminate(True)
     safe_run(cmd, on_line=log, stop_flag=stop_flag)
     set_step_indeterminate(False)
+    log(f"[OK] Subtitled video saved: {out_mp4}\n")
 
 
-def soft_subtitles(video_path: Path, srt_path: Path, out_mp4: Path, lang_code: str,
-                   log, set_step_indeterminate, stop_flag):
+def soft_subtitles(
+    video_path: Path,
+    srt_path: Path,
+    out_mp4: Path,
+    lang_code: str,
+    log,
+    set_step_indeterminate,
+    stop_flag,
+):
     ff = ffmpeg_path()
     if not ff:
         raise RuntimeError("ffmpeg not found (bundled or PATH).")
+
+    log(f"[INFO] Embedding soft subtitles into: {video_path.name}\n")
+    log(f"[INFO] Subtitle source: {srt_path}\n")
 
     cmd = [
         ff,
@@ -78,3 +102,4 @@ def soft_subtitles(video_path: Path, srt_path: Path, out_mp4: Path, lang_code: s
     set_step_indeterminate(True)
     safe_run(cmd, on_line=log, stop_flag=stop_flag)
     set_step_indeterminate(False)
+    log(f"[OK] Subtitled video saved: {out_mp4}\n")

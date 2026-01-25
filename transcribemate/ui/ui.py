@@ -28,6 +28,7 @@ from ..core.files import (
     copy_originals_to_final,
     is_audio_file,
     list_videos,
+    sanitize_filename,
     timestamped_base_name,
     unique_path,
 )
@@ -133,6 +134,7 @@ class App(tb.Window):
         self.output_mode = tb.StringVar()
         self.clean_text = tb.BooleanVar(value=self.cfg.clean_text)
         self.export_md = tb.BooleanVar(value=self.cfg.export_md)
+        self.summary_pack = tb.BooleanVar(value=self.cfg.summary_pack)
         self.split_minutes = tb.IntVar(value=self.cfg.split_minutes)
         self.keep_originals = tb.BooleanVar(value=self.cfg.keep_originals)
 
@@ -208,6 +210,7 @@ class App(tb.Window):
         self.cfg.output_mode = normalize_output_mode(self.output_mode_key.get())
         self.cfg.clean_text = bool(self.clean_text.get())
         self.cfg.export_md = bool(self.export_md.get())
+        self.cfg.summary_pack = bool(self.summary_pack.get())
         try:
             self.cfg.split_minutes = max(0, int(self.split_minutes.get()))
         except Exception:
@@ -270,7 +273,8 @@ class App(tb.Window):
                 elif kind == "status":
                     self.status_lbl.configure(text=item[1])
                 elif kind == "step":
-                    self.step_lbl.configure(text=item[1])
+                    self._current_step_text = str(item[1])
+                    self.step_lbl.configure(text=self._current_step_text)
                     self.step_bar.stop()
                     self.step_bar.configure(mode="determinate")
                     self.step_bar["value"] = 0
@@ -280,9 +284,12 @@ class App(tb.Window):
                         self.step_bar.stop()
                         self.step_bar.configure(mode="determinate")
                     self.step_bar["value"] = v
+                    if self._current_step_text:
+                        self.step_lbl.configure(text=f"{self._current_step_text} — {v:.0f}%")
                 elif kind == "step_indeterminate":
                     on = bool(item[1])
                     if on:
+                        self.step_lbl.configure(text=self._current_step_text)
                         self.step_bar["value"] = 0
                         self.step_bar.configure(mode="indeterminate")
                         self.step_bar.start(12)
@@ -290,6 +297,7 @@ class App(tb.Window):
                         self.step_bar.stop()
                         self.step_bar.configure(mode="determinate")
                         self.step_bar["value"] = 100
+                        self.step_lbl.configure(text=self._current_step_text)
                 elif kind == "overall":
                     done, total = int(item[1]), int(item[2])
                     self.overall_bar["maximum"] = max(1, total)
@@ -422,6 +430,8 @@ class App(tb.Window):
         self.clean_text_chk.pack(anchor="w")
         self.export_md_chk = tb.Checkbutton(options_row, text="", variable=self.export_md)
         self.export_md_chk.pack(anchor="w")
+        self.summary_pack_chk = tb.Checkbutton(options_row, text="", variable=self.summary_pack)
+        self.summary_pack_chk.pack(anchor="w")
 
         split_row = tb.Frame(self.transcribe_frame)
         split_row.pack(fill="x", pady=(6, 0))
@@ -559,6 +569,7 @@ class App(tb.Window):
         self.activity_lbl_title.pack(side="left", padx=(0, 10))
         self.step_lbl = tb.Label(row_p2, text="—")
         self.step_lbl.pack(side="left", padx=(0, 10))
+        self._current_step_text = "—"
         self.step_bar = tb.Progressbar(row_p2, mode="determinate", length=600)
         self.step_bar.pack(side="left", fill="x", expand=True)
 
@@ -906,6 +917,7 @@ class App(tb.Window):
         quality = self.video_quality.get()
         clean_text = bool(self.clean_text.get())
         export_md = bool(self.export_md.get())
+        generate_summary_pack = bool(self.summary_pack.get())
         try:
             split_minutes = max(0, int(self.split_minutes.get()))
         except Exception:
@@ -925,11 +937,29 @@ class App(tb.Window):
             nonlocal model
             workdir: Optional[Path] = None
             downloaded_files: List[Path] = []
+
+            def step_with_file(step_key: str, idx: int, total: int, name: str) -> str:
+                return f"{t_local(step_key)} — {idx}/{total}: {name}"
+
             try:
+                self.q_log("[INFO] Starting TranscribeMate pipeline\n")
+                self.q_log(f"[INFO] Mode: {output_mode}\n")
+                self.q_log(f"[INFO] Output root: {out_root}\n")
+                if output_mode == "conference" and generate_summary_pack:
+                    self.q_log("[INFO] Conference Flow: transcripts + summary pack + Confluence templates\n")
+                self.q_log(
+                    f"[INFO] Settings: clean_text={clean_text}, export_md={export_md}, summary_pack={generate_summary_pack}, split_minutes={split_minutes}\n"
+                )
+                self.q_log(
+                    f"[INFO] Model: {model} | GPU requested: {prefer_gpu} | Auto model: {self.auto_model.get()}\n"
+                )
+                self.q_log(f"[INFO] Speech language: {src_language}\n")
+
                 if self.auto_model.get():
                     if prefer_gpu:
                         self.q_step(t_local("step.detect_gpu"))
                         self.q_step_indeterminate(True)
+                        self.q_log("[INFO] Detecting GPU capabilities...\n")
                         gi = get_gpu_info()
                         self.q_step_indeterminate(False)
                         self._gpu_info_cache = gi
@@ -947,13 +977,26 @@ class App(tb.Window):
                         self.q_log("[INFO] GPU disabled. Auto model -> small\n")
 
                 # Final output directories (user-visible)
+                self.q_step(t_local("step.prepare_outputs"))
+                self.q_step_indeterminate(True)
                 transcripts_dir = final_base_dir / "transcripts"
                 subtitles_src_final_dir = final_base_dir / "subtitles_source"
                 subtitles_trans_final_dir = final_base_dir / "subtitles_translated"
                 videos_final_dir = final_base_dir / "videos"
                 originals_dir = final_base_dir / "originals"
-                for d in [transcripts_dir, subtitles_src_final_dir, subtitles_trans_final_dir, videos_final_dir, originals_dir]:
+                summaries_dir = final_base_dir / "summaries"
+                output_dirs = [
+                    transcripts_dir,
+                    subtitles_src_final_dir,
+                    subtitles_trans_final_dir,
+                    videos_final_dir,
+                    originals_dir,
+                ]
+                if generate_summary_pack:
+                    output_dirs.append(summaries_dir)
+                for d in output_dirs:
                     d.mkdir(parents=True, exist_ok=True)
+                self.q_step_indeterminate(False)
 
                 # Temporary working directory (always cleaned up)
                 workdir = Path(tempfile.mkdtemp(prefix="_tm_work_", dir=out_root))
@@ -968,19 +1011,31 @@ class App(tb.Window):
 
                 # Get videos
                 if is_youtube:
-                    self.q_step(t_local("step.download"))
+                    self.q_step(f"{t_local('step.download')} — yt-dlp")
                     self.q_step_progress(0)
-                    download_single_or_playlist(url, workdir, is_playlist, quality,
-                                                 self.q_log, self.q_step_progress, self.stop_flag)
+                    download_single_or_playlist(
+                        url,
+                        workdir,
+                        is_playlist,
+                        quality,
+                        self.q_log,
+                        self.q_step_progress,
+                        self.stop_flag,
+                    )
                     downloaded_files = list_videos(downloads_dir)
                     videos = downloaded_files
+                    self.q_log(f"[INFO] Downloaded media files: {len(videos)}\n")
                 else:
                     if not local_path:
                         raise RuntimeError(t_local("error.enter_path"))
+                    self.q_step(t_local("step.scan_media"))
+                    self.q_step_indeterminate(True)
                     if local_path.is_file():
                         videos = [local_path]
                     else:
                         videos = list_videos(local_path)
+                    self.q_step_indeterminate(False)
+                    self.q_log(f"[INFO] Media files found: {len(videos)}\n")
 
                 if not videos:
                     raise RuntimeError(t_local("error.no_media"))
@@ -993,26 +1048,50 @@ class App(tb.Window):
                 self.total_videos = len(videos)
                 self.done_videos = 0
                 self.q_overall(self.done_videos, self.total_videos)
+                self.q_log(f"[INFO] Total items to process: {self.total_videos}\n")
 
                 for i, v in enumerate(videos, 1):
                     if self.stop_flag.is_set():
                         raise RuntimeError(t_local("error.stopped"))
 
                     self.q_status(f"{t_local('status.processing')} {i}/{len(videos)}: {v.name}")
+                    self.q_log(f"\n[INFO] Processing {i}/{len(videos)}: {v.name}\n")
                     base_name = timestamped_base_name(v)
 
                     # Transcribe
-                    self.q_step(t_local("step.transcribe"))
+                    self.q_step(step_with_file("step.transcribe", i, len(videos), v.name))
                     self.q_step_progress(0)
                     transcription = faster_whisper_transcribe(
-                        v, srt_src_dir, model, prefer_gpu, src_language,
-                        self.q_log, self.q_step_progress, self.stop_flag
+                        v,
+                        srt_src_dir,
+                        model,
+                        prefer_gpu,
+                        src_language,
+                        self.q_log,
+                        self.q_step_progress,
+                        self.stop_flag,
+                    )
+                    self.q_log(
+                        f"[INFO] Transcription done: lang={transcription.detected_lang}, duration={transcription.duration:.1f}s\n"
                     )
 
-                    # Export transcripts (.txt and optional .md)
-                    self.q_step(t_local("step.export_txt"))
+                    # Export transcripts (.txt/.md) + summary pack
+                    export_step_key = "step.export_with_summary" if generate_summary_pack else "step.export_txt"
+                    self.q_step(step_with_file(export_step_key, i, len(videos), v.name))
                     self.q_step_indeterminate(True)
-                    export_transcripts(v, transcription, transcripts_dir, clean_text, export_md, split_minutes, self.q_log)
+                    export_transcripts(
+                        media_path=v,
+                        result=transcription,
+                        transcripts_dir=transcripts_dir,
+                        clean_text=clean_text,
+                        export_md=export_md,
+                        split_minutes=split_minutes,
+                        generate_summary_pack=generate_summary_pack,
+                        summaries_dir=summaries_dir,
+                        output_mode=output_mode,
+                        model_name=model,
+                        log=self.q_log,
+                    )
                     self.q_step_indeterminate(False)
 
                     if not translation_needed:
@@ -1021,17 +1100,32 @@ class App(tb.Window):
                         continue
 
                     # Translate
-                    self.q_step(f"{t_local('step.translate')} ({target_lang})")
+                    step_translate = step_with_file("step.translate", i, len(videos), v.name)
+                    self.q_step(f"{step_translate} ({target_lang})")
                     self.q_step_progress(0)
                     srt_trans_tmp = srt_trans_dir / f"{sanitize_filename(v.stem)}.{lang_suffix}.srt"
-                    translate_srt(transcription.srt_path, srt_trans_tmp, translation_model, prefer_gpu, batch,
-                                  self.q_log, self.q_step_progress, self.stop_flag)
+                    translate_srt(
+                        transcription.srt_path,
+                        srt_trans_tmp,
+                        translation_model,
+                        prefer_gpu,
+                        batch,
+                        self.q_log,
+                        self.q_step_progress,
+                        self.stop_flag,
+                    )
 
                     # Export SRTs to final folders
-                    self.q_step(t_local("step.export_srt"))
+                    self.q_step(step_with_file("step.export_srt", i, len(videos), v.name))
                     self.q_step_indeterminate(True)
-                    final_srt_src = unique_path(subtitles_src_final_dir, f"{base_name}.{transcription.detected_lang}.srt")
-                    final_srt_trans = unique_path(subtitles_trans_final_dir, f"{base_name}.{lang_suffix}.srt")
+                    final_srt_src = unique_path(
+                        subtitles_src_final_dir,
+                        f"{base_name}.{transcription.detected_lang}.srt",
+                    )
+                    final_srt_trans = unique_path(
+                        subtitles_trans_final_dir,
+                        f"{base_name}.{lang_suffix}.srt",
+                    )
                     shutil.copy(transcription.srt_path, final_srt_src)
                     shutil.copy(srt_trans_tmp, final_srt_trans)
                     self.q_step_indeterminate(False)
@@ -1044,17 +1138,33 @@ class App(tb.Window):
                         continue
 
                     # Add subtitles to video
-                    self.q_step(t_local("step.embed"))
+                    self.q_step(step_with_file("step.embed", i, len(videos), v.name))
                     suffix = ".soft" if sub_mode == "soft" else ".hard"
                     out_mp4 = unique_path(videos_final_dir, f"{base_name}{suffix}.sub.mp4")
                     if sub_mode == "soft":
-                        soft_subtitles(v, srt_trans_tmp, out_mp4, lang_code,
-                                       self.q_log, self.q_step_indeterminate, self.stop_flag)
+                        soft_subtitles(
+                            v,
+                            srt_trans_tmp,
+                            out_mp4,
+                            lang_code,
+                            self.q_log,
+                            self.q_step_indeterminate,
+                            self.stop_flag,
+                        )
                     else:
-                        hard_subtitles(v, srt_trans_tmp, out_mp4,
-                                       sub_font, sub_size, sub_color, sub_outline_color, sub_outline_width,
-                                       self.q_log, self.q_step_indeterminate, self.stop_flag)
-                    self.q_log(f"[OK] Saved: {out_mp4}\n")
+                        hard_subtitles(
+                            v,
+                            srt_trans_tmp,
+                            out_mp4,
+                            sub_font,
+                            sub_size,
+                            sub_color,
+                            sub_outline_color,
+                            sub_outline_width,
+                            self.q_log,
+                            self.q_step_indeterminate,
+                            self.stop_flag,
+                        )
 
                     self.done_videos += 1
                     self.q_overall(self.done_videos, self.total_videos)
@@ -1069,7 +1179,6 @@ class App(tb.Window):
                     t_local("notify.done_title"),
                     t_local("notify.done_body").format(done=self.done_videos, total=self.total_videos),
                 )
-
             except Exception as e:
                 err_msg = str(e)
                 self.q_log(f"\n[ERROR] {err_msg}\n")
@@ -1116,6 +1225,7 @@ class App(tb.Window):
         self.speech_lang_lbl.configure(text=self.t("transcribe.speech_language"))
         self.clean_text_chk.configure(text=self.t("transcribe.clean_text"))
         self.export_md_chk.configure(text=self.t("transcribe.export_md"))
+        self.summary_pack_chk.configure(text=self.t("transcribe.summary_pack"))
         self.split_lbl.configure(text=self.t("transcribe.split_minutes"))
         self.trans_frame.configure(text=self.t("translate.title"))
         self.target_lang_lbl.configure(text=self.t("translate.target_language"))

@@ -13,6 +13,7 @@
   "output_mode": "video_subs",
   "clean_text": true,
   "export_md": true,
+  "summary_pack": true,
   "split_minutes": 0,
   "keep_originals": false,
   "sub_font": "Arial",

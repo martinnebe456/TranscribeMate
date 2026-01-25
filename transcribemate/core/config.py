@@ -27,6 +27,7 @@ class AppConfig:
     quick_model: str = "medium"
     clean_text: bool = True
     export_md: bool = True
+    summary_pack: bool = True
     split_minutes: int = 0
     keep_originals: bool = False
     sub_font: str = "Arial"
@@ -48,6 +49,7 @@ class AppConfig:
             self.split_minutes = 0
         self.clean_text = bool(self.clean_text)
         self.export_md = bool(self.export_md)
+        self.summary_pack = bool(self.summary_pack)
         self.keep_originals = bool(self.keep_originals)
 
 

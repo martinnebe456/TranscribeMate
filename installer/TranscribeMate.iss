@@ -1,5 +1,5 @@
 #define MyAppName "TranscribeMate"
-#define MyAppVersion "26.01.25.006"
+#define MyAppVersion "26.01.25.007"
 #define MyAppPublisher "Martin Nebehay"
 #define MyAppExeName "TranscribeMate.exe"
 

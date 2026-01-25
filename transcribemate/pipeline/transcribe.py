@@ -20,15 +20,25 @@ def format_timestamp(seconds: float) -> str:
     return f"{h:02}:{m:02}:{s:02},{ms:03}"
 
 
-def faster_whisper_transcribe(media_path: Path, out_dir: Path, model: str, prefer_gpu: bool,
-                               language: str, log, set_step_progress, stop_flag) -> TranscriptionResult:
+def faster_whisper_transcribe(
+    media_path: Path,
+    out_dir: Path,
+    model: str,
+    prefer_gpu: bool,
+    language: str,
+    log,
+    set_step_progress,
+    stop_flag,
+) -> TranscriptionResult:
     from faster_whisper import WhisperModel
 
     out_dir.mkdir(parents=True, exist_ok=True)
     device = "cuda" if prefer_gpu and torch_device(prefer_gpu) == "cuda" else "cpu"
     compute_type = "float16" if device == "cuda" else "int8"
 
-    log(f"[INFO] Loading faster-whisper model '{model}' on {device} ({compute_type})...\n")
+    log(f"[INFO] Transcription settings: model={model}, device={device}, compute={compute_type}\n")
+    log(f"[INFO] Language hint: {language}\n")
+    log(f"[INFO] Loading faster-whisper model '{model}'...\n")
     wmodel = WhisperModel(model, device=device, compute_type=compute_type)
 
     log(f"[INFO] Transcribing: {media_path.name}\n")
@@ -65,8 +75,18 @@ def faster_whisper_transcribe(media_path: Path, out_dir: Path, model: str, prefe
 
     srt_path = out_dir / (media_path.stem + ".srt")
     srt_path.write_text("\n".join(srt_lines), encoding="utf-8")
+    log(f"[OK] SRT saved: {srt_path}\n")
 
     txt_path = out_dir / (media_path.stem + ".txt")
     txt_path.write_text("\n".join(txt_lines).strip() + "\n", encoding="utf-8")
+    log(f"[OK] Raw transcript saved: {txt_path}\n")
 
-    return TranscriptionResult(srt_path, txt_path, segment_list, detected_lang, float(duration_value))
+    return TranscriptionResult(
+        srt_path=srt_path,
+        raw_txt_path=txt_path,
+        segments=segment_list,
+        detected_lang=detected_lang,
+        duration=float(duration_value),
+        device=device,
+        compute_type=compute_type,
+    )
