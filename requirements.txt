@@ -1,0 +1,12 @@
+yt-dlp
+faster-whisper
+transformers
+sentencepiece
+accelerate
+safetensors
+torch
+torchvision
+torchaudio
+ttkbootstrap
+tkinterdnd2
+win10toast

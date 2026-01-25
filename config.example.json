@@ -1,0 +1,23 @@
+{
+  "out_dir": "C:\\Users\\<user>\\Downloads",
+  "lang": "en",
+  "use_gpu": true,
+  "auto_model": true,
+  "whisper_model": "medium",
+  "quick_model": "medium",
+  "source_lang": "auto",
+  "target_lang": "en→cs",
+  "batch_size": 16,
+  "subtitle_mode": "soft",
+  "video_quality": "best",
+  "output_mode": "video_subs",
+  "clean_text": true,
+  "export_md": true,
+  "split_minutes": 0,
+  "keep_originals": false,
+  "sub_font": "Arial",
+  "sub_size": 24,
+  "sub_color": "#FFFFFF",
+  "sub_outline_color": "#000000",
+  "sub_outline_width": 2
+}

@@ -1,0 +1,36 @@
+# Virtual environments
+.venv/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build artifacts
+build/
+dist/
+*.spec
+
+# App outputs and local config
+yt_out/
+transcribemate_outputs/
+_tm_work_*/
+config.json
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+assets/*.exe
+
+# Binaries / large files
+*.exe
+*.dll
+*.zip
+*.7z
