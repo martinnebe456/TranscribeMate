@@ -7,7 +7,7 @@ import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .i18n import LANGUAGES, normalize_output_mode, normalize_quick_model
+from .i18n import LANGUAGES, normalize_output_mode, normalize_quick_model, normalize_theme
 from .paths import FROZEN, config_path, project_root
 
 
@@ -15,6 +15,7 @@ from .paths import FROZEN, config_path, project_root
 class AppConfig:
     out_dir: str = ""
     lang: str = "en"
+    theme: str = "light"
     use_gpu: bool = True
     auto_model: bool = True
     whisper_model: str = "medium"
@@ -41,6 +42,7 @@ class AppConfig:
             self.out_dir = str(Path.home() / "Downloads")
         if self.lang not in LANGUAGES:
             self.lang = "en"
+        self.theme = normalize_theme(self.theme)
         self.output_mode = normalize_output_mode(self.output_mode)
         self.quick_model = normalize_quick_model(self.quick_model)
         try:

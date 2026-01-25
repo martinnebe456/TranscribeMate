@@ -46,11 +46,15 @@ from ..core.i18n import (
     VIDEO_QUALITIES,
     normalize_output_mode,
     normalize_quick_model,
+    normalize_theme,
     output_mode_label_to_key,
     output_mode_labels,
     quick_model_key_for_model,
     quick_model_label_to_key,
     quick_model_labels,
+    theme_label_to_key,
+    theme_labels,
+    theme_name_for_key,
 )
 from ..core.models import force_refresh_models
 from ..core.paths import ensure_tools, user_data_dir
@@ -66,6 +70,19 @@ os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS", "1")
 _YT_URL_PATTERN = re.compile(
     r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)/.+"
 )
+
+
+
+def show_notification(title: str, message: str):
+    """Best-effort desktop notification without crashing the UI loop."""
+    try:
+        from win10toast import ToastNotifier  # type: ignore
+
+        toaster = ToastNotifier()
+        toaster.show_toast(title, message, duration=6, threaded=True)
+    except Exception:
+        # Notifications are optional; never let them break the UI queue.
+        return
 
 # -----------------------------
 # Custom Window with DnD support
@@ -104,7 +121,9 @@ class DnDWindow(tb.Window):
 # -----------------------------
 class App(tb.Window):
     def __init__(self):
-        super().__init__(themename="flatly")
+        self.cfg = load_config()
+        initial_theme_key = normalize_theme(getattr(self.cfg, "theme", "light"))
+        super().__init__(themename=theme_name_for_key(initial_theme_key))
         self.title(I18N["en"]["app.title"])
         self.geometry("1050x820")
         self.minsize(1000, 740)
@@ -112,7 +131,6 @@ class App(tb.Window):
         self.stop_flag = threading.Event()
         self.worker = None
         self.uiq = queue.Queue()
-        self.cfg = load_config()
 
         # State variables
         self.source_mode = tb.StringVar(value="youtube")
@@ -121,6 +139,8 @@ class App(tb.Window):
         self.local_path = tb.StringVar()
         self.out_dir = tb.StringVar(value=self.cfg.out_dir)
         self.lang = tb.StringVar(value=self.cfg.lang)
+        self.theme_key = tb.StringVar(value=initial_theme_key)
+        self.theme_label = tb.StringVar()
         self.use_gpu = tb.BooleanVar(value=self.cfg.use_gpu)
         self.auto_model = tb.BooleanVar(value=self.cfg.auto_model)
         self.model = tb.StringVar(value=self.cfg.whisper_model)
@@ -198,6 +218,7 @@ class App(tb.Window):
     def _save_current_config(self):
         self.cfg.out_dir = self.out_dir.get()
         self.cfg.lang = self.lang.get()
+        self.cfg.theme = normalize_theme(self.theme_key.get())
         self.cfg.use_gpu = self.use_gpu.get()
         self.cfg.auto_model = self.auto_model.get()
         self.cfg.whisper_model = self.model.get()
@@ -266,58 +287,97 @@ class App(tb.Window):
             while True:
                 item = self.uiq.get_nowait()
                 kind = item[0]
-                if kind == "log":
-                    self.log_txt.insert("end", item[1])
-                    if self.show_log.get():
-                        self.log_txt.see("end")
-                elif kind == "status":
-                    self.status_lbl.configure(text=item[1])
-                elif kind == "step":
-                    self._current_step_text = str(item[1])
-                    self.step_lbl.configure(text=self._current_step_text)
-                    self.step_bar.stop()
-                    self.step_bar.configure(mode="determinate")
-                    self.step_bar["value"] = 0
-                elif kind == "step_progress":
-                    v = max(0.0, min(100.0, float(item[1])))
-                    if str(self.step_bar["mode"]) != "determinate":
+                try:
+                    if kind == "log":
+                        self.log_txt.insert("end", item[1])
+                        if self.show_log.get():
+                            self.log_txt.see("end")
+                    elif kind == "status":
+                        self.status_lbl.configure(text=item[1])
+                    elif kind == "step":
+                        self._current_step_text = str(item[1])
+                        self.step_lbl.configure(text=self._current_step_text)
                         self.step_bar.stop()
                         self.step_bar.configure(mode="determinate")
-                    self.step_bar["value"] = v
-                    if self._current_step_text:
-                        self.step_lbl.configure(text=f"{self._current_step_text} — {v:.0f}%")
-                elif kind == "step_indeterminate":
-                    on = bool(item[1])
-                    if on:
-                        self.step_lbl.configure(text=self._current_step_text)
                         self.step_bar["value"] = 0
-                        self.step_bar.configure(mode="indeterminate")
-                        self.step_bar.start(12)
-                    else:
-                        self.step_bar.stop()
-                        self.step_bar.configure(mode="determinate")
-                        self.step_bar["value"] = 100
-                        self.step_lbl.configure(text=self._current_step_text)
-                elif kind == "overall":
-                    done, total = int(item[1]), int(item[2])
-                    self.overall_bar["maximum"] = max(1, total)
-                    self.overall_bar["value"] = done
-                    self.overall_lbl.configure(text=f"{done}/{total}")
-                elif kind == "buttons_reset":
-                    self.start_btn.configure(state="normal")
-                    self.stop_btn.configure(state="disabled")
-                elif kind == "gpu_info":
-                    self._apply_gpu_info(item[1])
-                elif kind == "notify":
-                    show_notification(item[1], item[2])
+                    elif kind == "step_progress":
+                        v = max(0.0, min(100.0, float(item[1])))
+                        if str(self.step_bar["mode"]) != "determinate":
+                            self.step_bar.stop()
+                            self.step_bar.configure(mode="determinate")
+                        self.step_bar["value"] = v
+                        if self._current_step_text:
+                            self.step_lbl.configure(text=f"{self._current_step_text} — {v:.0f}%")
+                    elif kind == "step_indeterminate":
+                        on = bool(item[1])
+                        if on:
+                            self.step_lbl.configure(text=self._current_step_text)
+                            self.step_bar["value"] = 0
+                            self.step_bar.configure(mode="indeterminate")
+                            self.step_bar.start(12)
+                        else:
+                            self.step_bar.stop()
+                            self.step_bar.configure(mode="determinate")
+                            self.step_bar["value"] = 100
+                            self.step_lbl.configure(text=self._current_step_text)
+                    elif kind == "overall":
+                        done, total = int(item[1]), int(item[2])
+                        self.overall_bar["maximum"] = max(1, total)
+                        self.overall_bar["value"] = done
+                        self.overall_lbl.configure(text=f"{done}/{total}")
+                    elif kind == "buttons_reset":
+                        # Ensure the UI can start another run even if a notification fails.
+                        self.worker = None
+                        self.stop_flag.clear()
+                        self.start_btn.configure(state="normal")
+                        self.stop_btn.configure(state="disabled")
+                    elif kind == "gpu_info":
+                        self._apply_gpu_info(item[1])
+                    elif kind == "notify":
+                        show_notification(item[1], item[2])
+                except Exception as exc:
+                    # Never let a single UI event break the queue pump.
+                    try:
+                        self.log_txt.insert("end", f"[WARN] UI queue error: {exc}\n")
+                        if self.show_log.get():
+                            self.log_txt.see("end")
+                    except Exception:
+                        pass
         except queue.Empty:
             pass
-        self.after(100, self._drain_uiq)
+        finally:
+            self.after(100, self._drain_uiq)
+
+    def _apply_style_overrides(self):
+        self.style.configure("TLabel", font=("Segoe UI", 10))
+        self.style.configure("Title.TLabel", font=("Segoe UI", 14, "bold"))
+
+    def _apply_theme(self, *, save: bool = False):
+        key = normalize_theme(self.theme_key.get())
+        self.theme_key.set(key)
+        theme_name = theme_name_for_key(key)
+        try:
+            self.style.theme_use(theme_name)
+        except Exception:
+            self.theme_key.set("light")
+            self.style.theme_use(theme_name_for_key("light"))
+
+        table = I18N.get(self.lang.get(), I18N["en"])
+        self.theme_label.set(table.get(f"theme.{self.theme_key.get()}", self.theme_key.get()))
+        self._apply_style_overrides()
+        if save:
+            self._save_current_config()
+
+    def _on_theme_changed(self):
+        selected_label = self.theme_label.get()
+        new_key = theme_label_to_key(selected_label)
+        self.theme_key.set(new_key)
+        self._apply_theme(save=True)
+
 
     # -------- UI --------
     def _build_ui(self):
-        self.style.configure("TLabel", font=("Segoe UI", 10))
-        self.style.configure("Title.TLabel", font=("Segoe UI", 14, "bold"))
+        self._apply_style_overrides()
 
         root = tb.Frame(self, padding=16)
         root.pack(fill="both", expand=True)
@@ -334,6 +394,19 @@ class App(tb.Window):
         self.lang_combo = tb.Combobox(lang_row, textvariable=self.lang, values=LANGUAGES, state="readonly", width=5)
         self.lang_combo.pack(side="left")
         self.lang_combo.bind("<<ComboboxSelected>>", lambda _e: self._apply_translations())
+
+        self.theme_lbl = tb.Label(lang_row, text="")
+        self.theme_lbl.pack(side="left", padx=(12, 6))
+        self.theme_combo = tb.Combobox(
+            lang_row,
+            textvariable=self.theme_label,
+            values=[],
+            state="readonly",
+            width=10,
+        )
+        self.theme_combo.pack(side="left")
+        self.theme_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_theme_changed())
+
         self.gpu_badge = tb.Label(header, text="", bootstyle="secondary")
         self.gpu_badge.pack(side="right")
 
@@ -1205,6 +1278,7 @@ class App(tb.Window):
         self.title(self.t("app.title"))
         self.header_title_lbl.configure(text=self.t("header.title"))
         self.lang_lbl.configure(text=self.t("header.language"))
+        self.theme_lbl.configure(text=self.t("header.theme"))
 
         self.source_frame.configure(text=self.t("source.title"))
         self.youtube_rb.configure(text=self.t("source.youtube"))
@@ -1257,11 +1331,18 @@ class App(tb.Window):
         self.activity_lbl_title.configure(text=self.t("progress.activity"))
         self.status_lbl.configure(text=self.t("status.ready"))
 
+        table = I18N.get(self.lang.get(), I18N["en"])
+
+        theme_vals = theme_labels(self.lang.get())
+        self.theme_combo.configure(values=theme_vals)
+        current_theme_key = normalize_theme(self.theme_key.get())
+        self.theme_key.set(current_theme_key)
+        self.theme_label.set(table.get(f"theme.{current_theme_key}", current_theme_key))
+
         labels = output_mode_labels(self.lang.get())
         self.output_combo.configure(values=labels)
         current_key = normalize_output_mode(self.output_mode_key.get())
         self.output_mode_key.set(current_key)
-        table = I18N.get(self.lang.get(), I18N["en"])
         self.output_mode.set(table.get(f"output_mode.{current_key}", current_key))
 
         quick_labels = quick_model_labels(self.lang.get())
