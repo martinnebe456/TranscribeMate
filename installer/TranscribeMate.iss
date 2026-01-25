@@ -1,5 +1,5 @@
 #define MyAppName "TranscribeMate"
-#define MyAppVersion "26.01.25.008"
+#define MyAppVersion "26.01.25.009"
 #define MyAppPublisher "Martin Nebehay"
 #define MyAppExeName "TranscribeMate.exe"
 
@@ -50,4 +50,5 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--install-gpu"; Description: "Install GPU dependencies (first run)"; Flags: postinstall skipifsilent waituntilterminated ignoreerrors
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent

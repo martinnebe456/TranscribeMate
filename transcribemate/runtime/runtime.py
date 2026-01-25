@@ -8,16 +8,26 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import urllib.request
 import zipfile
 from datetime import datetime
 from pathlib import Path
 
 from ..core.models import configure_model_environment
-from ..core.paths import FROZEN, ensure_assets_on_path, log_path, user_assets_dir
+from ..core.paths import (
+    FROZEN,
+    ensure_assets_on_path,
+    ensure_site_packages_on_path,
+    log_path,
+    user_assets_dir,
+    user_site_packages_dir,
+)
 
 FFMPEG_ZIP_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 FFMPEG_EXES = ("ffmpeg.exe", "ffprobe.exe", "ffplay.exe")
+TORCH_CUDA_EXTRA_INDEX = "https://download.pytorch.org/whl/cu121"
 
 LOG_FILE = log_path()
 
@@ -171,7 +181,7 @@ def _doctor_check_torch():
             log_warn("CUDA not available (CPU mode will be used)")
     except Exception as exc:
         log_fail(f"Torch not ready: {exc}")
-        log_info("Fix: reinstall the app or run the EXE again to complete setup")
+        log_info("Fix: run TranscribeMate.exe --install-gpu (installer runs this automatically)")
 
 
 def run_doctor():
@@ -190,7 +200,7 @@ def create_startup_splash():
 
         splash = tk.Tk()
         splash.title("TranscribeMate")
-        splash.geometry("440x160")
+        splash.geometry("520x180")
         splash.resizable(False, False)
         splash.attributes("-topmost", True)
         splash.protocol("WM_DELETE_WINDOW", lambda: None)
@@ -200,7 +210,7 @@ def create_startup_splash():
 
         ttk.Label(frame, text="TranscribeMate", font=("Segoe UI", 14, "bold")).pack(anchor="w")
         message_var = tk.StringVar(value="Starting...")
-        ttk.Label(frame, textvariable=message_var).pack(anchor="w", pady=(8, 8))
+        ttk.Label(frame, textvariable=message_var, wraplength=480).pack(anchor="w", pady=(8, 8))
 
         bar = ttk.Progressbar(frame, mode="indeterminate")
         bar.pack(fill="x")
@@ -248,11 +258,184 @@ def show_error_dialog(message: str):
         pass
 
 
+def _pip_main(args: list[str]) -> int:
+    try:
+        from pip._internal.cli.main import main as pip_main
+    except Exception as exc:  # pragma: no cover - environment issue
+        log_fail(f"pip is not available in the bundled app: {exc}")
+        return 1
+
+    class _LogRedirect:
+        def write(self, data: str):
+            text = data.strip()
+            if not text:
+                return None
+            # Avoid duplicating our own structured log lines when print() is redirected.
+            if text.startswith("[") and any(tag in text for tag in (" INFO ", " OK ", " WARN ", " FAIL ", " STEP ")):
+                return None
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            line = f"[{timestamp}] PIP {text}"
+            try:
+                with LOG_FILE.open("a", encoding="utf-8") as fh:
+                    fh.write(line + "\n")
+            except Exception:
+                pass
+            return None
+
+        def flush(self):
+            return None
+
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout = _LogRedirect()
+    sys.stderr = _LogRedirect()
+    try:
+        return int(pip_main(args))
+    finally:
+        sys.stdout = old_out
+        sys.stderr = old_err
+
+
+def _has_nvidia_gpu() -> bool:
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return False
+    try:
+        result = subprocess.run([smi, "-L"], capture_output=True, text=True, check=False)
+        return result.returncode == 0 and bool(result.stdout.strip())
+    except Exception:
+        return False
+
+
+def _torch_status() -> tuple[bool, bool, str]:
+    try:
+        import torch
+
+        cuda_ready = bool(torch.cuda.is_available())
+        version = getattr(torch, "__version__", "unknown")
+        return True, cuda_ready, str(version)
+    except Exception:
+        return False, False, ""
+
+
+def _run_with_splash(message: str, splash, splash_msg, fn) -> bool:
+    if not splash:
+        try:
+            fn()
+            return True
+        except Exception as exc:
+            log_fail(str(exc))
+            return False
+
+    error: list[Exception] = []
+
+    def runner():
+        try:
+            fn()
+        except Exception as exc:  # pragma: no cover - best effort
+            error.append(exc)
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    while thread.is_alive():
+        update_startup_splash(splash, splash_msg, message)
+        time.sleep(0.2)
+    update_startup_splash(splash, splash_msg, "Finalizing...")
+
+    if error:
+        log_fail(str(error[0]))
+        return False
+    return True
+
+
+def install_torch(*, prefer_gpu: bool, splash=None, splash_msg=None) -> bool:
+    ensure_site_packages_on_path()
+    site_dir = user_site_packages_dir()
+    log_step("Installing PyTorch")
+    log_info(f"Target site-packages: {site_dir}")
+
+    installed, cuda_ready, version = _torch_status()
+    if installed and (cuda_ready or not prefer_gpu):
+        status = "CUDA ready" if cuda_ready else "CPU ready"
+        log_success(f"Torch already installed: {version} ({status})")
+        return True
+
+    has_gpu = _has_nvidia_gpu()
+    want_gpu = prefer_gpu and has_gpu
+    if prefer_gpu and not has_gpu:
+        log_warn("NVIDIA GPU not detected via nvidia-smi. Falling back to CPU torch.")
+
+    base_args = [
+        "install",
+        "--upgrade",
+        "--force-reinstall",
+        "--no-warn-script-location",
+        "--target",
+        str(site_dir),
+        "--index-url",
+        "https://pypi.org/simple",
+    ]
+
+    def install_gpu():
+        log_step("Installing torch with CUDA support (cu121)")
+        args = base_args + ["--extra-index-url", TORCH_CUDA_EXTRA_INDEX, "torch"]
+        code = _pip_main(args)
+        if code != 0:
+            raise RuntimeError(f"GPU torch install failed with exit code {code}")
+
+    def install_cpu():
+        log_step("Installing CPU torch")
+        args = base_args + ["torch"]
+        code = _pip_main(args)
+        if code != 0:
+            raise RuntimeError(f"CPU torch install failed with exit code {code}")
+
+    ok = True
+    if want_gpu:
+        ok = _run_with_splash(
+            "Installing GPU dependencies (this can take several minutes)...",
+            splash,
+            splash_msg,
+            install_gpu,
+        )
+        ensure_site_packages_on_path()
+        installed, cuda_ready, version = _torch_status()
+        if ok and installed and cuda_ready:
+            try:
+                import torch as _torch  # type: ignore
+                gpu_name = _torch.cuda.get_device_name(0)
+            except Exception:
+                gpu_name = "CUDA"
+            log_success(f"Torch GPU ready: {version} ({gpu_name})")
+            return True
+        if ok and installed and not cuda_ready:
+            log_warn("Torch installed but CUDA is still not available. Falling back to CPU build.")
+        if not ok:
+            log_warn("GPU torch installation failed. Trying CPU build instead.")
+
+    ok = _run_with_splash(
+        "Installing CPU dependencies (fallback)...",
+        splash,
+        splash_msg,
+        install_cpu,
+    )
+    ensure_site_packages_on_path()
+    installed, cuda_ready, version = _torch_status()
+    if ok and installed:
+        status = "CUDA ready" if cuda_ready else "CPU ready"
+        log_success(f"Torch installed: {version} ({status})")
+        return True
+
+    log_fail("Torch installation did not complete successfully.")
+    return False
+
+
 def parse_args(argv: list[str] | None = None):
     parser = argparse.ArgumentParser(description="Launch TranscribeMate")
     parser.add_argument("--doctor", action="store_true", help="Only run environment checks")
     parser.add_argument("--no-ffmpeg-download", action="store_true", help="Do not auto-download FFmpeg")
     parser.add_argument("--no-cuda", action="store_true", help="Compatibility flag (no effect in EXE mode)")
+    parser.add_argument("--install-gpu", action="store_true", help="Install/upgrade torch with CUDA support")
+    parser.add_argument("--install-cpu", action="store_true", help=argparse.SUPPRESS)
     return parser.parse_args(argv)
 
 
@@ -265,6 +448,24 @@ def launch_app(argv: list[str] | None = None):
 
     configure_model_environment()
     ensure_assets_on_path()
+    ensure_site_packages_on_path()
+
+    if args.install_gpu or args.install_cpu:
+        splash, splash_msg = create_startup_splash()
+        try:
+            message = (
+                "Preparing GPU dependency setup..." if args.install_gpu else "Preparing dependency setup..."
+            )
+            update_startup_splash(splash, splash_msg, message)
+            ok = install_torch(prefer_gpu=args.install_gpu, splash=splash, splash_msg=splash_msg)
+            update_startup_splash(splash, splash_msg, "Dependency setup complete." if ok else "Dependency setup failed.")
+            time.sleep(0.6)
+        finally:
+            close_startup_splash(splash)
+
+        if not ok:
+            show_error_dialog("GPU setup failed. Please run the installer again or check bootstrap.log.")
+        return
 
     if args.doctor:
         run_doctor()

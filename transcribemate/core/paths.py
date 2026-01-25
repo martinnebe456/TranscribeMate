@@ -37,6 +37,26 @@ def user_data_dir() -> Path:
     return path
 
 
+def user_site_packages_dir() -> Path:
+    path = user_data_dir() / "site-packages"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def ensure_site_packages_on_path():
+    site_dir = user_site_packages_dir()
+    site_str = str(site_dir)
+    if site_str not in sys.path:
+        sys.path.insert(0, site_str)
+
+    current_py_path = os.environ.get("PYTHONPATH", "")
+    parts = current_py_path.split(os.pathsep) if current_py_path else []
+    if site_str not in parts:
+        os.environ["PYTHONPATH"] = (
+            f"{site_str}{os.pathsep}{current_py_path}" if current_py_path else site_str
+        )
+
+
 def user_assets_dir() -> Path:
     path = user_data_dir() / "assets"
     path.mkdir(parents=True, exist_ok=True)
@@ -104,3 +124,4 @@ def ensure_tools(is_youtube: bool):
 
 if FROZEN:
     ensure_assets_on_path()
+    ensure_site_packages_on_path()

@@ -23,6 +23,8 @@ No Python installation is required for end users.
 1. Run the installer.
 1. Launch TranscribeMate from the Desktop or Start Menu shortcut.
 
+During installation, TranscribeMate runs a one-time GPU dependency setup (PyTorch). This can take several minutes and requires internet access.
+
 On first launch the app may:
 - download FFmpeg,
 - download speech/translation models,
