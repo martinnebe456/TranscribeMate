@@ -1,6 +1,7 @@
 {
   "out_dir": "C:\\Users\\<user>\\Downloads",
   "lang": "en",
+  "theme": "light",
   "use_gpu": true,
   "auto_model": true,
   "whisper_model": "medium",

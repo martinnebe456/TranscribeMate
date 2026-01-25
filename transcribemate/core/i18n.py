@@ -41,6 +41,21 @@ QUICK_MODEL_MAP = {
     "medium": "medium",
     "quality": "large-v3",
 }
+THEME_KEYS = ["light", "dark", "dracula"]
+THEME_MAP = {
+    "light": "flatly",
+    "dark": "darkly",
+    "dracula": "vapor",
+}
+LEGACY_THEME_MAP = {
+    "light": "light",
+    "dark": "dark",
+    "dracula": "dracula",
+    "svetly": "light",
+    "světlý": "light",
+    "tmavy": "dark",
+    "tmavý": "dark",
+}
 LEGACY_QUICK_MODEL_MAP = {
     "malý": "small",
     "střední": "medium",
@@ -73,6 +88,7 @@ I18N: Dict[str, Dict[str, str]] = {
         "app.title": f"{APP_NAME} — Audio/Video → Transcript / Subtitles",
         "header.title": f"{APP_NAME} — Audio/Video → Transcript / Subtitles",
         "header.language": "Language",
+        "header.theme": "Theme",
         "source.title": "Source (drop a file or URL)",
         "source.youtube": "YouTube",
         "source.local": "Local file/folder",
@@ -173,6 +189,9 @@ I18N: Dict[str, Dict[str, str]] = {
         "quick_model.small": "Small",
         "quick_model.medium": "Medium",
         "quick_model.quality": "Quality",
+        "theme.light": "Light",
+        "theme.dark": "Dark",
+        "theme.dracula": "Dracula",
         "notify.error_title": "Error",
         "notify.done_title": "Processing complete",
         "notify.done_body": "Processed {done}/{total} items.",
@@ -181,6 +200,7 @@ I18N: Dict[str, Dict[str, str]] = {
         "app.title": f"{APP_NAME} — Audio/Video → Přepis / Titulky",
         "header.title": f"{APP_NAME} — Audio/Video → Přepis / Titulky",
         "header.language": "Jazyk",
+        "header.theme": "Motiv",
         "source.title": "Zdroj (přetáhni soubor nebo URL)",
         "source.youtube": "YouTube",
         "source.local": "Lokální soubor/složka",
@@ -281,6 +301,9 @@ I18N: Dict[str, Dict[str, str]] = {
         "quick_model.small": "Malý",
         "quick_model.medium": "Střední",
         "quick_model.quality": "Kvalitní",
+        "theme.light": "Světlý",
+        "theme.dark": "Tmavý",
+        "theme.dracula": "Dracula",
         "notify.error_title": "Chyba",
         "notify.done_title": "Zpracování dokončeno",
         "notify.done_body": "Zpracováno {done}/{total} položek.",
@@ -332,3 +355,32 @@ def quick_model_key_for_model(model_name: str) -> str:
         if model_name == mapped:
             return key
     return "medium"
+
+
+
+def normalize_theme(value: str) -> str:
+    if value in THEME_KEYS:
+        return value
+    lowered = value.strip().lower() if isinstance(value, str) else ""
+    if lowered in THEME_KEYS:
+        return lowered
+    return LEGACY_THEME_MAP.get(lowered, "light")
+
+
+def theme_labels(lang: str) -> List[str]:
+    table = I18N.get(lang, I18N["en"])
+    return [table.get(f"theme.{k}", k) for k in THEME_KEYS]
+
+
+def theme_label_to_key(label: str) -> str:
+    for lang in LANGUAGES:
+        table = I18N.get(lang, {})
+        for key in THEME_KEYS:
+            if label == table.get(f"theme.{key}"):
+                return key
+    return normalize_theme(label)
+
+
+def theme_name_for_key(key: str) -> str:
+    norm_key = normalize_theme(key)
+    return THEME_MAP.get(norm_key, THEME_MAP["light"])
