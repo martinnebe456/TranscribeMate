@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .i18n import LANGUAGES, normalize_output_mode, normalize_quick_model, normalize_theme
+from .i18n import LANGUAGES, normalize_output_mode, normalize_quick_model, normalize_summary_lang, normalize_theme
 from .paths import FROZEN, config_path, project_root
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -21,6 +24,7 @@ class AppConfig:
     whisper_model: str = "medium"
     source_lang: str = "auto"
     target_lang: str = "en→cs"
+    summary_lang: str = "auto"
     batch_size: int = 16
     subtitle_mode: str = "soft"
     video_quality: str = "best"
@@ -31,6 +35,8 @@ class AppConfig:
     summary_pack: bool = True
     split_minutes: int = 0
     keep_originals: bool = False
+    output_prefix: str = ""
+    notify_on_done: bool = False
     sub_font: str = "Arial"
     sub_size: int = 24
     sub_color: str = "#FFFFFF"
@@ -45,6 +51,7 @@ class AppConfig:
         self.theme = normalize_theme(self.theme)
         self.output_mode = normalize_output_mode(self.output_mode)
         self.quick_model = normalize_quick_model(self.quick_model)
+        self.summary_lang = normalize_summary_lang(getattr(self, "summary_lang", "auto"))
         try:
             self.split_minutes = max(0, int(self.split_minutes))
         except Exception:
@@ -53,6 +60,8 @@ class AppConfig:
         self.export_md = bool(self.export_md)
         self.summary_pack = bool(self.summary_pack)
         self.keep_originals = bool(self.keep_originals)
+        self.output_prefix = str(self.output_prefix).strip()
+        self.notify_on_done = bool(self.notify_on_done)
 
 
 def load_config() -> AppConfig:
@@ -65,14 +74,14 @@ def load_config() -> AppConfig:
             try:
                 shutil.copy2(legacy_path, cfg_path)
             except Exception:
-                pass
+                LOGGER.exception("Failed to migrate legacy config from %s", legacy_path)
 
         if cfg_path.exists():
             data = json.loads(cfg_path.read_text(encoding="utf-8"))
             filtered = {k: v for k, v in data.items() if k in AppConfig.__dataclass_fields__}
             return AppConfig(**filtered)
     except Exception:
-        pass
+        LOGGER.exception("Failed to load config from %s", cfg_path)
     return AppConfig()
 
 
@@ -82,4 +91,4 @@ def save_config(cfg: AppConfig):
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
         cfg_path.write_text(json.dumps(asdict(cfg), indent=2, ensure_ascii=False), encoding="utf-8")
     except Exception:
-        pass
+        LOGGER.exception("Failed to save config to %s", cfg_path)

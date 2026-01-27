@@ -90,7 +90,7 @@ def init_log():
             try:
                 shutil.copy2(legacy, LOG_FILE)
             except Exception:
-                pass
+                log_warn(f"Failed to migrate legacy log from {legacy}")
         with LOG_FILE.open("a", encoding="utf-8") as fh:
             fh.write("\n" + session_header + "\n")
     except PermissionError:
@@ -246,6 +246,7 @@ def create_startup_splash():
         splash.update()
         return splash, message_var
     except Exception:
+        log_warn("Startup splash initialization failed.")
         return None, None
 
 
@@ -275,7 +276,7 @@ def update_startup_splash(splash, message_var, message: str):
         splash.update_idletasks()
         splash.update()
     except Exception:
-        pass
+        log_warn("Failed to update startup splash.")
 
 
 def pump_startup_splash(splash, message_var=None):
@@ -294,7 +295,7 @@ def pump_startup_splash(splash, message_var=None):
         splash.update_idletasks()
         splash.update()
     except Exception:
-        pass
+        log_warn("Failed to pump startup splash.")
 
 
 def close_startup_splash(splash):
@@ -303,7 +304,7 @@ def close_startup_splash(splash):
     try:
         splash.destroy()
     except Exception:
-        pass
+        log_warn("Failed to close startup splash.")
 
 
 def show_error_dialog(message: str):
@@ -318,7 +319,7 @@ def show_error_dialog(message: str):
         messagebox.showerror("TranscribeMate", message)
         root.destroy()
     except Exception:
-        pass
+        log_warn("Failed to show error dialog.")
 
 
 def _pip_main(args: list[str], *, splash=None, splash_msg=None) -> int:
@@ -387,6 +388,7 @@ def _has_nvidia_gpu() -> bool:
         result = subprocess.run([smi, "-L"], capture_output=True, text=True, check=False)
         return result.returncode == 0 and bool(result.stdout.strip())
     except Exception:
+        log_warn("Failed to query nvidia-smi.")
         return False
 
 

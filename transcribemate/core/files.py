@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import shutil
 from datetime import datetime
@@ -9,6 +10,8 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from .i18n import AUDIO_EXTS, VIDEO_EXTS
+
+LOGGER = logging.getLogger(__name__)
 
 
 def sanitize_filename(stem: str) -> str:
@@ -22,12 +25,15 @@ def timestamp_for_path(path: Path) -> datetime:
         ts = path.stat().st_mtime
         return datetime.fromtimestamp(ts)
     except Exception:
+        LOGGER.debug("Failed to read timestamp for %s", path, exc_info=True)
         return datetime.now()
 
 
-def timestamped_base_name(path: Path) -> str:
+def timestamped_base_name(path: Path, prefix: str = "") -> str:
     ts = timestamp_for_path(path).strftime("%Y-%m-%d_%H-%M")
-    return f"{ts}_{sanitize_filename(path.stem)}"
+    base = f"{ts}_{sanitize_filename(path.stem)}"
+    cleaned_prefix = sanitize_filename(prefix) if prefix else ""
+    return f"{cleaned_prefix}_{base}" if cleaned_prefix else base
 
 
 def unique_path(directory: Path, filename: str) -> Path:
@@ -77,7 +83,7 @@ def cleanup_workdir(workdir: Optional[Path], log):
             shutil.rmtree(workdir, ignore_errors=True)
             log(f"[INFO] Cleaned workdir: {workdir}\n")
     except Exception:
-        pass
+        LOGGER.exception("Failed to cleanup workdir %s", workdir)
 
 
 def list_videos(folder: Path) -> List[Path]:

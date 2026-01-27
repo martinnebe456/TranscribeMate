@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -22,6 +25,7 @@ def get_gpu_info() -> GpuInfo:
         vram_gb = prop.total_memory / (1024**3)
         return GpuInfo(True, prop.name, float(vram_gb))
     except Exception:
+        LOGGER.debug("GPU detection failed", exc_info=True)
         return GpuInfo(False)
 
 
@@ -41,4 +45,5 @@ def torch_device(prefer_gpu: bool) -> str:
 
         return "cuda" if torch.cuda.is_available() else "cpu"
     except Exception:
+        LOGGER.debug("Torch device detection failed", exc_info=True)
         return "cpu"

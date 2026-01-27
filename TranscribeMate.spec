@@ -8,7 +8,7 @@ block_cipher = None
 
 root = Path.cwd()
 datas = []
-for name in ["config.example.json", "DISCLAIMER.md", "LICENSE", "README.md"]:
+for name in ["config.example.json", "DISCLAIMER.md", "LICENSE", "README.md", "version.txt"]:
     p = root / name
     if p.exists():
         datas.append((str(p), "."))

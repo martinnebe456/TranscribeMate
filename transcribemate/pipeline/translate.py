@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from pathlib import Path
+
+LOGGER = logging.getLogger(__name__)
 
 
 def translate_srt(
@@ -18,6 +21,10 @@ def translate_srt(
 ):
     import torch
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+    if batch_size < 1:
+        LOGGER.warning("Invalid batch_size=%s, defaulting to 1", batch_size)
+        batch_size = 1
 
     device = "cuda" if (prefer_gpu and torch.cuda.is_available()) else "cpu"
     log(f"[INFO] Translation settings: model={model_name}, device={device}, batch={batch_size}\n")

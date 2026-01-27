@@ -2,6 +2,8 @@
 
 from typing import Dict, List
 
+from .version import APP_VERSION
+
 # -----------------------------
 # Translation models (Helsinki-NLP)
 # -----------------------------
@@ -33,6 +35,7 @@ LANG_CODES: Dict[str, str] = {
 
 VIDEO_QUALITIES = ["best", "1080p", "720p", "480p", "360p"]
 APP_NAME = "TranscribeMate"
+APP_NAME_VERSION = f"{APP_NAME} {APP_VERSION}".strip()
 LANGUAGES = ["en", "cs"]
 OUTPUT_MODE_KEYS = ["conference", "video_subs", "srt_only", "txt_only"]
 QUICK_MODEL_KEYS = ["small", "medium", "quality"]
@@ -66,6 +69,7 @@ LEGACY_QUICK_MODEL_MAP = {
 }
 CLEAN_PAUSE_SECONDS = 2.0
 SOURCE_LANGUAGES = ["auto", "en", "cs", "sk", "de", "pl", "fr", "es", "it", "ru", "uk", "pt", "ja", "ko", "zh"]
+SUMMARY_LANG_KEYS = SOURCE_LANGUAGES
 
 VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".mov", ".avi", ".m4v", ".flv"}
 AUDIO_EXTS = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".wma"}
@@ -85,8 +89,8 @@ LEGACY_OUTPUT_MODE_MAP = {
 
 I18N: Dict[str, Dict[str, str]] = {
     "en": {
-        "app.title": f"{APP_NAME} — Audio/Video → Transcript / Subtitles",
-        "header.title": f"{APP_NAME} — Audio/Video → Transcript / Subtitles",
+        "app.title": f"{APP_NAME_VERSION} — Audio/Video → Transcript / Subtitles",
+        "header.title": f"{APP_NAME_VERSION} — Audio/Video → Transcript / Subtitles",
         "header.language": "Language",
         "header.theme": "Theme",
         "source.title": "Source (drop a file or URL)",
@@ -99,6 +103,13 @@ I18N: Dict[str, Dict[str, str]] = {
         "source.path": "Path",
         "source.file": "File…",
         "source.folder": "Folder…",
+        "source.prefix": "Prefix",
+        "source.prefix_hint": "Added to output filenames",
+        "source.files_hint_empty": "Drop files here. Double-click to open.",
+        "source.files_hint_count": "Selected files: {count}. Double-click to open.",
+        "conference.meta.title": "Conference metadata",
+        "conference.meta.speaker": "Speaker",
+        "conference.meta.topic": "Topic",
         "source.output": "Output",
         "source.pick": "Browse…",
         "source.mode": "Mode:",
@@ -110,10 +121,13 @@ I18N: Dict[str, Dict[str, str]] = {
         "mode.hint.txt_only": "Saves a clean speech transcript to .txt (no translation, no subtitles).",
         "transcribe.title": "Transcription",
         "transcribe.speech_language": "Speech language",
+        "transcribe.summary_lang": "Summary output language",
         "transcribe.clean_text": "Clean text export (dedupe + paragraphs)",
         "transcribe.export_md": "Also export Markdown (.md)",
         "transcribe.summary_pack": "Generate summary pack (ChatGPT + Confluence)",
+        "transcribe.notify_done": "Notify & open output on completion",
         "transcribe.split_minutes": "Split every (minutes, 0=off)",
+        "summary_lang.auto": "auto (detected)",
         "translate.title": "Translation",
         "translate.target_language": "Target language",
         "translate.batch": "Batch",
@@ -140,9 +154,15 @@ I18N: Dict[str, Dict[str, str]] = {
         "actions.open_output": "Open output folder",
         "actions.open_data": "Open app data folder",
         "actions.show_log": "Show log",
+        "system.title": "System usage",
+        "system.cpu": "CPU",
+        "system.ram": "RAM",
+        "system.gpu": "GPU",
+        "system.na": "N/A",
         "progress.title": "Progress",
         "progress.total": "Overall",
         "progress.activity": "Activity",
+        "progress.eta": "ETA",
         "status.ready": "Ready",
         "status.running": "Running…",
         "status.stopping": "Stopping…",
@@ -197,8 +217,8 @@ I18N: Dict[str, Dict[str, str]] = {
         "notify.done_body": "Processed {done}/{total} items.",
     },
     "cs": {
-        "app.title": f"{APP_NAME} — Audio/Video → Přepis / Titulky",
-        "header.title": f"{APP_NAME} — Audio/Video → Přepis / Titulky",
+        "app.title": f"{APP_NAME_VERSION} — Audio/Video → Přepis / Titulky",
+        "header.title": f"{APP_NAME_VERSION} — Audio/Video → Přepis / Titulky",
         "header.language": "Jazyk",
         "header.theme": "Motiv",
         "source.title": "Zdroj (přetáhni soubor nebo URL)",
@@ -211,6 +231,13 @@ I18N: Dict[str, Dict[str, str]] = {
         "source.path": "Cesta",
         "source.file": "Soubor…",
         "source.folder": "Složka…",
+        "source.prefix": "Prefix",
+        "source.prefix_hint": "Přidá se do názvu výstupů",
+        "source.files_hint_empty": "Přetáhni sem soubory. Dvojklikem otevřeš.",
+        "source.files_hint_count": "Vybrané soubory: {count}. Dvojklikem otevřeš.",
+        "conference.meta.title": "Konferenční metadata",
+        "conference.meta.speaker": "Mluvčí",
+        "conference.meta.topic": "Téma",
         "source.output": "Výstup",
         "source.pick": "Vybrat…",
         "source.mode": "Režim:",
@@ -222,10 +249,13 @@ I18N: Dict[str, Dict[str, str]] = {
         "mode.hint.txt_only": "Uloží čistý přepis řeči do .txt (bez překladu a titulků).",
         "transcribe.title": "Přepis",
         "transcribe.speech_language": "Jazyk řeči",
+        "transcribe.summary_lang": "Jazyk summary výstupu",
         "transcribe.clean_text": "Clean text export (bez duplicit + odstavce)",
         "transcribe.export_md": "Exportovat i Markdown (.md)",
         "transcribe.summary_pack": "Vytvořit summary pack (ChatGPT + Confluence)",
+        "transcribe.notify_done": "Po dokončení upozornit a otevřít výstup",
         "transcribe.split_minutes": "Rozdělit po (minuty, 0=vypnuto)",
+        "summary_lang.auto": "auto (detekovaný)",
         "translate.title": "Překlad",
         "translate.target_language": "Cílový jazyk",
         "translate.batch": "Batch",
@@ -252,9 +282,15 @@ I18N: Dict[str, Dict[str, str]] = {
         "actions.open_output": "Otevřít výstupní složku",
         "actions.open_data": "Otevřít složku aplikace",
         "actions.show_log": "Zobrazit log",
+        "system.title": "Využití systému",
+        "system.cpu": "CPU",
+        "system.ram": "RAM",
+        "system.gpu": "GPU",
+        "system.na": "N/A",
         "progress.title": "Postup",
         "progress.total": "Celkem",
         "progress.activity": "Aktivita",
+        "progress.eta": "ETA",
         "status.ready": "Připraveno",
         "status.running": "Běží…",
         "status.stopping": "Zastavuji…",
@@ -328,6 +364,44 @@ def output_mode_label_to_key(label: str) -> str:
             if label == table.get(f"output_mode.{key}"):
                 return key
     return LEGACY_OUTPUT_MODE_MAP.get(label, "video_subs")
+
+
+def normalize_summary_lang(value: str) -> str:
+    if value in SUMMARY_LANG_KEYS:
+        return value
+    lowered = value.strip().lower() if isinstance(value, str) else ""
+    if lowered in SUMMARY_LANG_KEYS:
+        return lowered
+    return "auto"
+
+
+def summary_lang_labels(lang: str) -> List[str]:
+    table = I18N.get(lang, I18N["en"])
+    labels: List[str] = []
+    for key in SUMMARY_LANG_KEYS:
+        if key == "auto":
+            labels.append(table.get("summary_lang.auto", "auto"))
+        else:
+            labels.append(key)
+    return labels
+
+
+def summary_lang_label_to_key(label: str) -> str:
+    for lang in LANGUAGES:
+        table = I18N.get(lang, {})
+        if label == table.get("summary_lang.auto"):
+            return "auto"
+    if label in SUMMARY_LANG_KEYS:
+        return label
+    return "auto"
+
+
+def summary_lang_label_for_key(key: str, lang: str) -> str:
+    norm_key = normalize_summary_lang(key)
+    if norm_key == "auto":
+        table = I18N.get(lang, I18N["en"])
+        return table.get("summary_lang.auto", "auto")
+    return norm_key
 
 
 def normalize_quick_model(value: str) -> str:
