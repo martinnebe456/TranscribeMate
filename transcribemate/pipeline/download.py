@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from ..core.paths import ffmpeg_path
+
+LOGGER = logging.getLogger(__name__)
 
 
 def quality_to_format(quality: str) -> str:
@@ -86,6 +89,7 @@ def download_single_or_playlist(
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
     except DownloadError as exc:
+        LOGGER.exception("yt-dlp download failed")
         if stop_flag and stop_flag.is_set():
             raise RuntimeError("Stopped by user.") from exc
         raise RuntimeError(str(exc)) from exc

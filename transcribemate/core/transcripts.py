@@ -147,6 +147,8 @@ def build_metadata(
     split_minutes: int,
     part_idx: int,
     part_total: int,
+    speaker: str | None = None,
+    topic: str | None = None,
 ) -> Dict[str, str]:
     generated = datetime.now().isoformat(timespec="minutes")
     device_label = result.device
@@ -168,13 +170,31 @@ def build_metadata(
     }
     if part_total > 1:
         metadata["Part"] = f"{part_idx}/{part_total}"
+    if speaker is not None:
+        cleaned_speaker = str(speaker).strip()
+        if cleaned_speaker:
+            metadata["Speaker"] = cleaned_speaker
+    if topic is not None:
+        cleaned_topic = str(topic).strip()
+        if cleaned_topic:
+            metadata["Topic"] = cleaned_topic
     return metadata
 
 
 def render_metadata_block(metadata: Dict[str, str]) -> str:
     lines = ["## Metadata", ""]
     for key, value in metadata.items():
-        lines.append(f"- {key}: `{value}`")
+        if value is None:
+            continue
+        value_str = str(value).strip()
+        if not value_str:
+            continue
+        if "\n" in value_str:
+            lines.append(f"- {key}:")
+            for line in value_str.splitlines():
+                lines.append(f"  {line}")
+        else:
+            lines.append(f"- {key}: `{value_str}`")
     lines.append("")
     return "\n".join(lines)
 
@@ -267,17 +287,28 @@ def _summary_instructions(style: str) -> str:
     )
 
 
+def _summary_language_line(summary_lang: str, detected_lang: str) -> str:
+    if summary_lang and summary_lang != "auto":
+        return f"Write the output in `{summary_lang}`."
+    if detected_lang:
+        return f"Write the output in the detected language (`{detected_lang}`)."
+    return "Write the output in the detected language."
+
+
 def render_summary_prompt(
     style: str,
     media_path: Path,
     metadata: Dict[str, str],
     transcript_ts: str,
+    summary_lang: str,
+    detected_lang: str,
 ) -> str:
     instructions = _summary_instructions(style)
+    language_line = _summary_language_line(summary_lang, detected_lang)
     metadata_block = render_metadata_block(metadata)
     return (
         f"# Summary Prompt — {style}\n\n"
-        f"## Instructions\n\n{instructions}\n\n"
+        f"## Instructions\n\n{language_line}\n\n{instructions}\n\n"
         f"{metadata_block}\n"
         "## Transcript (Timestamped)\n\n"
         f"{transcript_ts.strip()}\n"
@@ -329,6 +360,8 @@ def export_summary_pack(
     media_path: Path,
     metadata: Dict[str, str],
     transcript_ts: str,
+    summary_lang: str,
+    detected_lang: str,
     summaries_dir: Path,
     base_name: str,
     part_suffix: str,
@@ -348,7 +381,14 @@ def export_summary_pack(
 
     for style in SUMMARY_TEMPLATE_KEYS:
         prompt_path = unique_path(prompts_dir, f"{base_name}{part_suffix}.summary_{style}.md")
-        prompt_body = render_summary_prompt(style, media_path, metadata, transcript_ts)
+        prompt_body = render_summary_prompt(
+            style,
+            media_path,
+            metadata,
+            transcript_ts,
+            summary_lang,
+            detected_lang,
+        )
         prompt_path.write_text(prompt_body, encoding="utf-8")
         outputs.append(prompt_path)
         log(f"[OK] Summary prompt saved: {prompt_path}\n")
@@ -373,11 +413,15 @@ def export_transcripts(
     summaries_dir: Path,
     output_mode: str,
     model_name: str,
+    output_prefix: str,
     log,
+    speaker: str = "",
+    topic: str = "",
+    summary_lang: str = "auto",
 ) -> List[Path]:
     part_seconds = int(split_minutes) * 60 if int(split_minutes) > 0 else 0
     parts = split_segments(result.segments, part_seconds)
-    base_name = timestamped_base_name(media_path)
+    base_name = timestamped_base_name(media_path, prefix=output_prefix)
     outputs: List[Path] = []
 
     for idx, segs in enumerate(parts, start=1):
@@ -392,6 +436,8 @@ def export_transcripts(
             split_minutes=split_minutes,
             part_idx=idx,
             part_total=len(parts),
+            speaker=speaker,
+            topic=topic,
         )
 
         transcript_body = render_clean_transcript(segs) if clean_text else render_raw_transcript(segs)
@@ -414,6 +460,8 @@ def export_transcripts(
                     media_path=media_path,
                     metadata=metadata,
                     transcript_ts=transcript_ts,
+                    summary_lang=summary_lang,
+                    detected_lang=result.detected_lang,
                     summaries_dir=summaries_dir,
                     base_name=base_name,
                     part_suffix=part_suffix,

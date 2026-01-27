@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from ..core.paths import ffmpeg_path
 from ..core.process import safe_run
+
+LOGGER = logging.getLogger(__name__)
 
 
 def hex_to_ass_color(hex_color: str) -> str:

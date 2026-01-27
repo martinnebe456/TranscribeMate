@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import List
 
 from ..core.gpu import torch_device
 from ..core.types import TranscriptionResult
+
+LOGGER = logging.getLogger(__name__)
 
 
 def format_timestamp(seconds: float) -> str:
@@ -45,33 +48,38 @@ def faster_whisper_transcribe(
 
     whisper_lang = None if language == "auto" else language
     segments, info = wmodel.transcribe(str(media_path), language=whisper_lang, beam_size=5)
-    segment_list: List = list(segments)
+    segment_list: List = []
 
     detected_lang = info.language if info.language else "en"
     log(f"[INFO] Detected language: {detected_lang}\n")
 
-    duration_value = info.duration if info.duration and info.duration > 0 else (
-        float(segment_list[-1].end) if segment_list else 0.0
-    )
-    log(f"[INFO] Found {len(segment_list)} segments, duration: {duration_value:.1f}s\n")
+    duration_hint = float(info.duration) if info.duration and info.duration > 0 else 0.0
 
     srt_lines = []
     txt_lines = []
+    last_end = 0.0
 
-    for idx, seg in enumerate(segment_list, 1):
+    for idx, seg in enumerate(segments, 1):
         if stop_flag and stop_flag.is_set():
             raise RuntimeError("Stopped by user.")
 
+        segment_list.append(seg)
         start_ts = format_timestamp(seg.start)
         end_ts = format_timestamp(seg.end)
         text = seg.text.strip()
 
+        last_end = float(seg.end)
         srt_lines.append(f"{idx}\n{start_ts} --> {end_ts}\n{text}\n")
         if text:
             txt_lines.append(text)
 
-        progress = min(100.0, (idx / max(1, len(segment_list))) * 100)
-        set_step_progress(progress)
+        if duration_hint > 0:
+            progress = min(99.0, (last_end / duration_hint) * 100)
+            set_step_progress(progress)
+
+    duration_value = duration_hint if duration_hint > 0 else last_end
+    log(f"[INFO] Found {len(segment_list)} segments, duration: {duration_value:.1f}s\n")
+    set_step_progress(100.0)
 
     srt_path = out_dir / (media_path.stem + ".srt")
     srt_path.write_text("\n".join(srt_lines), encoding="utf-8")

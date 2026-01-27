@@ -7,3 +7,4 @@ safetensors
 ttkbootstrap
 tkinterdnd2
 win10toast
+psutil

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import os
 import queue
 import re
@@ -9,9 +11,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import threading
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 import tkinter as tk
 from tkinter import colorchooser, filedialog
@@ -35,6 +38,7 @@ from ..core.files import (
 from ..core.gpu import GpuInfo, auto_whisper_model, get_gpu_info
 from ..core.i18n import (
     APP_NAME,
+    AUDIO_EXTS,
     I18N,
     LANGUAGES,
     LANG_CODES,
@@ -43,15 +47,20 @@ from ..core.i18n import (
     QUICK_MODEL_MAP,
     SOURCE_LANGUAGES,
     TRANSLATION_MODELS,
+    VIDEO_EXTS,
     VIDEO_QUALITIES,
     normalize_output_mode,
     normalize_quick_model,
+    normalize_summary_lang,
     normalize_theme,
     output_mode_label_to_key,
     output_mode_labels,
     quick_model_key_for_model,
     quick_model_label_to_key,
     quick_model_labels,
+    summary_lang_label_for_key,
+    summary_lang_label_to_key,
+    summary_lang_labels,
     theme_label_to_key,
     theme_labels,
     theme_name_for_key,
@@ -71,6 +80,7 @@ _YT_URL_PATTERN = re.compile(
     r"^(https?://)?(www\.)?(youtube\.com|youtu\.be|youtube-nocookie\.com)/.+"
 )
 
+LOGGER = logging.getLogger(__name__)
 
 
 def show_notification(title: str, message: str):
@@ -82,48 +92,46 @@ def show_notification(title: str, message: str):
         toaster.show_toast(title, message, duration=6, threaded=True)
     except Exception:
         # Notifications are optional; never let them break the UI queue.
+        LOGGER.debug("Notification failed", exc_info=True)
         return
 
 # -----------------------------
 # Custom Window with DnD support
 # -----------------------------
-class DnDWindow(tb.Window):
-    """ttkbootstrap Window with drag-and-drop support"""
+class DnDWindow(TkinterDnD.Tk):
+    """TkinterDnD root with ttkbootstrap styling support."""
     def __init__(self, *args, **kwargs):
-        # Try to use TkinterDnD, fall back to regular window
         try:
-            self._dnd_enabled = True
-            # Create a TkinterDnD.Tk instance first
-            self._dnd_root = TkinterDnD.Tk()
-            self._dnd_root.withdraw()
             super().__init__(*args, **kwargs)
+            self._dnd_enabled = True
         except Exception:
             self._dnd_enabled = False
-            super().__init__(*args, **kwargs)
+            tk.Tk.__init__(self, *args, **kwargs)
 
     def drop_target_register(self, *args):
         if self._dnd_enabled:
             try:
                 return self.tk.call('tkdnd::drop_target', 'register', self._w, *args)
             except Exception:
-                pass
+                LOGGER.debug("DnD drop_target_register failed", exc_info=True)
 
     def dnd_bind(self, sequence, func):
         if self._dnd_enabled:
             try:
                 self.tk.call('tkdnd::bind', self._w, sequence, func)
             except Exception:
-                pass
+                LOGGER.debug("DnD bind failed", exc_info=True)
 
 
 # -----------------------------
 # Minimalist modern GUI
 # -----------------------------
-class App(tb.Window):
+class App(DnDWindow):
     def __init__(self):
         self.cfg = load_config()
         initial_theme_key = normalize_theme(getattr(self.cfg, "theme", "light"))
-        super().__init__(themename=theme_name_for_key(initial_theme_key))
+        super().__init__()
+        self.style = tb.Style(theme=theme_name_for_key(initial_theme_key))
         self.title(I18N["en"]["app.title"])
         self.geometry("1050x820")
         self.minsize(1000, 740)
@@ -148,6 +156,8 @@ class App(tb.Window):
         self.quick_model = tb.StringVar()
         self.source_lang = tb.StringVar(value=self.cfg.source_lang)
         self.target_lang = tb.StringVar(value=self.cfg.target_lang)
+        self.summary_lang_key = tb.StringVar(value=normalize_summary_lang(getattr(self.cfg, "summary_lang", "auto")))
+        self.summary_lang_label = tb.StringVar()
         self.batch = tb.IntVar(value=self.cfg.batch_size)
         self.video_quality = tb.StringVar(value=self.cfg.video_quality)
         self.output_mode_key = tb.StringVar(value=normalize_output_mode(self.cfg.output_mode))
@@ -157,9 +167,17 @@ class App(tb.Window):
         self.summary_pack = tb.BooleanVar(value=self.cfg.summary_pack)
         self.split_minutes = tb.IntVar(value=self.cfg.split_minutes)
         self.keep_originals = tb.BooleanVar(value=self.cfg.keep_originals)
+        self.output_prefix = tb.StringVar(value=getattr(self.cfg, "output_prefix", ""))
+        self.notify_on_done = tb.BooleanVar(value=getattr(self.cfg, "notify_on_done", False))
 
         self.subtitle_mode = tb.StringVar(value=self.cfg.subtitle_mode)
         self.show_log = tb.BooleanVar(value=True)
+
+        self._local_files: List[Path] = []
+        self._local_list_items: List[Path] = []
+        self._conf_meta: Dict[str, Dict[str, str]] = {}
+        self._conf_meta_path: Optional[Path] = None
+        self._conf_selected_path: Optional[Path] = None
 
         if not self.auto_model.get() and self.model.get() in QUICK_MODEL_MAP.values():
             self.quick_model_key.set(quick_model_key_for_model(self.model.get()))
@@ -171,18 +189,27 @@ class App(tb.Window):
         self.sub_outline_color = tb.StringVar(value=self.cfg.sub_outline_color)
         self.sub_outline_width = tb.IntVar(value=self.cfg.sub_outline_width)
 
+        self.conf_speaker = tb.StringVar()
+
         self.total_videos = 0
         self.done_videos = 0
         self.final_base_dir = Path(self.out_dir.get()) / "transcribemate_outputs"
 
         self._gpu_info_cache: Optional[GpuInfo] = None
         self._gpu_check_thread: Optional[threading.Thread] = None
+        self._gpu_usage_cache: Optional[float] = None
+        self._gpu_mem_cache: Optional[tuple[float, float]] = None
+        self._gpu_poll_inflight = False
+        self._gpu_smi_available = shutil.which("nvidia-smi") is not None
+        self._step_started_at: Optional[float] = None
 
         self._build_ui()
         self._setup_drag_drop()
         self.after(100, self._drain_uiq)
         self._update_source_ui()
         self._update_subtitle_options()
+        self.after(0, self._maximize_window)
+        self.after(200, self._start_system_monitor)
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -194,24 +221,47 @@ class App(tb.Window):
             self.dnd_bind('<<Drop>>', self._on_drop)
         except Exception:
             # DnD not available
-            pass
+            LOGGER.debug("DnD setup failed", exc_info=True)
 
     def _on_drop(self, event):
         """Handle dropped files/URLs"""
         data = event.data if hasattr(event, 'data') else str(event)
-        # Clean up the path (remove curly braces if present)
-        data = data.strip('{}').strip()
+        if not data:
+            return
 
-        if data.startswith('http'):
+        cleaned = data.strip()
+        if _YT_URL_PATTERN.match(cleaned):
             self.source_mode.set("youtube")
-            self.url.set(data)
+            self.url.set(cleaned)
+            self._local_files = []
+            self._update_local_list([])
             self._update_source_ui()
-        elif Path(data).exists():
-            self.source_mode.set("local")
-            self.local_path.set(data)
-            self._update_source_ui()
+            return
+
+        paths = self._parse_dnd_paths(cleaned)
+        if not paths:
+            return
+
+        path_objs = [Path(p) for p in paths if p]
+        existing = [p for p in path_objs if p.exists()]
+        if not existing:
+            return
+
+        self.source_mode.set("local")
+        if len(existing) == 1 and existing[0].is_dir():
+            self._set_local_path(existing[0])
+        else:
+            files = [p for p in existing if p.is_file()]
+            if files:
+                self._set_local_files(files)
+            else:
+                first_dir = next((p for p in existing if p.is_dir()), None)
+                if first_dir:
+                    self._set_local_path(first_dir)
+        self._update_source_ui()
 
     def _on_close(self):
+        self._save_conference_meta_from_ui()
         self._save_current_config()
         self.destroy()
 
@@ -225,6 +275,7 @@ class App(tb.Window):
         self.cfg.quick_model = normalize_quick_model(self.quick_model_key.get())
         self.cfg.source_lang = self.source_lang.get()
         self.cfg.target_lang = self.target_lang.get()
+        self.cfg.summary_lang = normalize_summary_lang(self.summary_lang_key.get())
         self.cfg.batch_size = self.batch.get()
         self.cfg.subtitle_mode = self.subtitle_mode.get()
         self.cfg.video_quality = self.video_quality.get()
@@ -237,6 +288,8 @@ class App(tb.Window):
         except Exception:
             self.cfg.split_minutes = 0
         self.cfg.keep_originals = bool(self.keep_originals.get())
+        self.cfg.output_prefix = self.output_prefix.get().strip()
+        self.cfg.notify_on_done = bool(self.notify_on_done.get())
         self.cfg.sub_font = self.sub_font.get()
         self.cfg.sub_size = self.sub_size.get()
         self.cfg.sub_color = self.sub_color.get()
@@ -300,6 +353,8 @@ class App(tb.Window):
                         self.step_bar.stop()
                         self.step_bar.configure(mode="determinate")
                         self.step_bar["value"] = 0
+                        self._step_started_at = time.monotonic()
+                        self.eta_lbl.configure(text="—")
                     elif kind == "step_progress":
                         v = max(0.0, min(100.0, float(item[1])))
                         if str(self.step_bar["mode"]) != "determinate":
@@ -308,6 +363,9 @@ class App(tb.Window):
                         self.step_bar["value"] = v
                         if self._current_step_text:
                             self.step_lbl.configure(text=f"{self._current_step_text} — {v:.0f}%")
+                        eta_text = self._estimate_eta_text(v)
+                        if eta_text:
+                            self.eta_lbl.configure(text=eta_text)
                     elif kind == "step_indeterminate":
                         on = bool(item[1])
                         if on:
@@ -315,11 +373,13 @@ class App(tb.Window):
                             self.step_bar["value"] = 0
                             self.step_bar.configure(mode="indeterminate")
                             self.step_bar.start(12)
+                            self.eta_lbl.configure(text="—")
                         else:
                             self.step_bar.stop()
                             self.step_bar.configure(mode="determinate")
                             self.step_bar["value"] = 100
                             self.step_lbl.configure(text=self._current_step_text)
+                            self.eta_lbl.configure(text=self._estimate_eta_text(100.0) or "—")
                     elif kind == "overall":
                         done, total = int(item[1]), int(item[2])
                         self.overall_bar["maximum"] = max(1, total)
@@ -359,6 +419,7 @@ class App(tb.Window):
         try:
             self.style.theme_use(theme_name)
         except Exception:
+            LOGGER.debug("Theme apply failed, falling back to light", exc_info=True)
             self.theme_key.set("light")
             self.style.theme_use(theme_name_for_key("light"))
 
@@ -457,10 +518,44 @@ class App(tb.Window):
         self.path_lbl.pack(side="left", padx=(0, 10))
         self.local_entry = tb.Entry(local_row, textvariable=self.local_path)
         self.local_entry.pack(side="left", fill="x", expand=True)
+        self.local_entry.bind("<FocusOut>", lambda _e: self._sync_local_entry())
+        self.local_entry.bind("<Return>", lambda _e: self._sync_local_entry())
         self.file_btn = tb.Button(local_row, text="", command=self._pick_local_file, bootstyle="secondary")
         self.file_btn.pack(side="left", padx=4)
         self.folder_btn = tb.Button(local_row, text="", command=self._pick_local_folder, bootstyle="secondary")
         self.folder_btn.pack(side="left")
+
+        local_list = tb.Frame(self.local_frame)
+        local_list.pack(fill="both", pady=(6, 0))
+        self.local_files_hint = tb.Label(local_list, text="", bootstyle="secondary")
+        self.local_files_hint.pack(anchor="w")
+        self.local_files_list = tk.Listbox(local_list, height=6, activestyle="none")
+        self.local_files_list.pack(side="left", fill="both", expand=True, pady=(4, 0))
+        self.local_files_list.bind("<Double-Button-1>", self._on_local_file_double_click)
+        self.local_files_scroll = tb.Scrollbar(local_list, orient="vertical", command=self.local_files_list.yview)
+        self.local_files_scroll.pack(side="right", fill="y", pady=(4, 0))
+        self.local_files_list.configure(yscrollcommand=self.local_files_scroll.set)
+        self.local_files_list.bind("<<ListboxSelect>>", self._on_local_file_selected)
+
+        self.conf_meta_frame = tb.Labelframe(self.local_frame, text="", padding=8)
+        self.conf_meta_frame.pack(fill="x", pady=(6, 0))
+
+        conf_speaker_row = tb.Frame(self.conf_meta_frame)
+        conf_speaker_row.pack(fill="x")
+        self.conf_speaker_lbl = tb.Label(conf_speaker_row, text="")
+        self.conf_speaker_lbl.pack(side="left", padx=(0, 6))
+        self.conf_speaker_entry = tb.Entry(conf_speaker_row, textvariable=self.conf_speaker)
+        self.conf_speaker_entry.pack(side="left", fill="x", expand=True)
+        self.conf_speaker_entry.bind("<FocusOut>", lambda _e: self._save_conference_meta_from_ui())
+        self.conf_speaker_entry.bind("<Return>", lambda _e: self._save_conference_meta_from_ui())
+
+        conf_topic_row = tb.Frame(self.conf_meta_frame)
+        conf_topic_row.pack(fill="both", pady=(6, 0))
+        self.conf_topic_lbl = tb.Label(conf_topic_row, text="")
+        self.conf_topic_lbl.pack(side="left", padx=(0, 6), anchor="n")
+        self.conf_topic_txt = tk.Text(conf_topic_row, height=4, wrap="word")
+        self.conf_topic_txt.pack(side="left", fill="both", expand=True)
+        self.conf_topic_txt.bind("<FocusOut>", lambda _e: self._save_conference_meta_from_ui())
 
         # Output directory & mode
         row_out = tb.Frame(self.source_frame)
@@ -476,6 +571,15 @@ class App(tb.Window):
                                         state="readonly", width=20)
         self.output_combo.pack(side="left")
         self.output_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_output_mode_changed())
+
+        prefix_row = tb.Frame(self.source_frame)
+        prefix_row.pack(fill="x", pady=(6, 0))
+        self.prefix_lbl = tb.Label(prefix_row, text="")
+        self.prefix_lbl.pack(side="left", padx=(0, 10))
+        self.prefix_entry = tb.Entry(prefix_row, textvariable=self.output_prefix, width=24)
+        self.prefix_entry.pack(side="left")
+        self.prefix_hint = tb.Label(prefix_row, text="", bootstyle="secondary")
+        self.prefix_hint.pack(side="left", padx=(8, 0))
 
         self.mode_hint = tb.Label(self.source_frame, text="", bootstyle="secondary")
         self.mode_hint.pack(anchor="w", pady=(6, 0))
@@ -496,6 +600,17 @@ class App(tb.Window):
         self.speech_lang_lbl.pack(side="left", padx=(0, 6))
         tb.Combobox(transcribe_row, textvariable=self.source_lang, values=SOURCE_LANGUAGES,
                     width=8).pack(side="left")
+        self.summary_lang_lbl = tb.Label(transcribe_row, text="")
+        self.summary_lang_lbl.pack(side="left", padx=(16, 6))
+        self.summary_lang_combo = tb.Combobox(
+            transcribe_row,
+            textvariable=self.summary_lang_label,
+            values=[],
+            state="readonly",
+            width=18,
+        )
+        self.summary_lang_combo.pack(side="left")
+        self.summary_lang_combo.bind("<<ComboboxSelected>>", lambda _e: self._on_summary_lang_changed())
 
         options_row = tb.Frame(self.transcribe_frame)
         options_row.pack(fill="x", pady=(8, 0))
@@ -505,6 +620,8 @@ class App(tb.Window):
         self.export_md_chk.pack(anchor="w")
         self.summary_pack_chk = tb.Checkbutton(options_row, text="", variable=self.summary_pack)
         self.summary_pack_chk.pack(anchor="w")
+        self.notify_chk = tb.Checkbutton(options_row, text="", variable=self.notify_on_done)
+        self.notify_chk.pack(anchor="w")
 
         split_row = tb.Frame(self.transcribe_frame)
         split_row.pack(fill="x", pady=(6, 0))
@@ -623,6 +740,40 @@ class App(tb.Window):
         self.show_log_chk = tb.Checkbutton(actions, text="", variable=self.show_log, command=self._toggle_log)
         self.show_log_chk.pack(side="right")
 
+        # System usage
+        self.sys_frame = tb.Labelframe(root, text="", padding=10)
+        self.sys_frame.pack(fill="x", pady=(0, 8))
+
+        cpu_row = tb.Frame(self.sys_frame)
+        cpu_row.pack(fill="x")
+        self.cpu_lbl = tb.Label(cpu_row, text="")
+        self.cpu_lbl.pack(side="left", padx=(0, 10))
+        self.cpu_bar = tb.Progressbar(cpu_row, mode="determinate", length=300)
+        self.cpu_bar.pack(side="left", fill="x", expand=True)
+        self.cpu_val = tb.Label(cpu_row, text="—")
+        self.cpu_val.pack(side="left", padx=(8, 0))
+        self.cpu_bar["maximum"] = 100
+
+        ram_row = tb.Frame(self.sys_frame)
+        ram_row.pack(fill="x", pady=(6, 0))
+        self.ram_lbl = tb.Label(ram_row, text="")
+        self.ram_lbl.pack(side="left", padx=(0, 10))
+        self.ram_bar = tb.Progressbar(ram_row, mode="determinate", length=300)
+        self.ram_bar.pack(side="left", fill="x", expand=True)
+        self.ram_val = tb.Label(ram_row, text="—")
+        self.ram_val.pack(side="left", padx=(8, 0))
+        self.ram_bar["maximum"] = 100
+
+        gpu_row = tb.Frame(self.sys_frame)
+        gpu_row.pack(fill="x", pady=(6, 0))
+        self.gpu_util_lbl = tb.Label(gpu_row, text="")
+        self.gpu_util_lbl.pack(side="left", padx=(0, 10))
+        self.gpu_util_bar = tb.Progressbar(gpu_row, mode="determinate", length=300)
+        self.gpu_util_bar.pack(side="left", fill="x", expand=True)
+        self.gpu_util_val = tb.Label(gpu_row, text="—")
+        self.gpu_util_val.pack(side="left", padx=(8, 0))
+        self.gpu_util_bar["maximum"] = 100
+
         # Progress
         self.prog_frame = tb.Labelframe(root, text="", padding=10)
         self.prog_frame.pack(fill="x")
@@ -645,6 +796,10 @@ class App(tb.Window):
         self._current_step_text = "—"
         self.step_bar = tb.Progressbar(row_p2, mode="determinate", length=600)
         self.step_bar.pack(side="left", fill="x", expand=True)
+        self.eta_lbl_title = tb.Label(row_p2, text="")
+        self.eta_lbl_title.pack(side="left", padx=(10, 4))
+        self.eta_lbl = tb.Label(row_p2, text="—")
+        self.eta_lbl.pack(side="left")
 
         self.status_lbl = tb.Label(root, text="", bootstyle="secondary")
         self.status_lbl.pack(anchor="w", pady=(10, 0))
@@ -733,11 +888,29 @@ class App(tb.Window):
         self.mode_hint.configure(text=f"{self.t('mode.hint.prefix')} {hint}")
         self._update_subtitle_options()
         self._update_source_ui()
+        self._update_conference_meta_visibility()
 
     def _on_output_mode_changed(self):
         selected_label = self.output_mode.get()
         self.output_mode_key.set(output_mode_label_to_key(selected_label))
         self._update_mode_ui()
+
+    def _on_summary_lang_changed(self):
+        selected_label = self.summary_lang_label.get()
+        new_key = summary_lang_label_to_key(selected_label)
+        self.summary_lang_key.set(new_key)
+        self._save_current_config()
+
+    def _update_conference_meta_visibility(self):
+        is_conference = (normalize_output_mode(self.output_mode_key.get()) == "conference")
+        if is_conference:
+            if not self.conf_meta_frame.winfo_ismapped():
+                self.conf_meta_frame.pack(fill="x", pady=(6, 0))
+            self._set_conference_meta_state(self._conf_selected_path is not None)
+        else:
+            if self.conf_meta_frame.winfo_ismapped():
+                self._save_conference_meta_from_ui()
+                self.conf_meta_frame.pack_forget()
 
     def _update_color_buttons(self):
         """Update color button appearance"""
@@ -880,6 +1053,7 @@ class App(tb.Window):
     def _pick_out(self):
         d = filedialog.askdirectory(initialdir=self.out_dir.get())
         if d:
+            self._save_conference_meta_from_ui()
             self.out_dir.set(d)
             self.final_base_dir = Path(d) / "transcribemate_outputs"
 
@@ -892,12 +1066,12 @@ class App(tb.Window):
             ]
         )
         if f:
-            self.local_path.set(f)
+            self._set_local_files([Path(f)])
 
     def _pick_local_folder(self):
         d = filedialog.askdirectory(title=self.t("folderpicker.title"))
         if d:
-            self.local_path.set(d)
+            self._set_local_path(Path(d))
 
     # -------- actions --------
     def update_models(self):
@@ -952,13 +1126,19 @@ class App(tb.Window):
                     Messagebox.show_error(self.t("dialog.error"), self.t("error.invalid_url"))
                     return
             else:
-                local_path = self.local_path.get().strip()
-                if not local_path:
-                    Messagebox.show_error(self.t("dialog.error"), self.t("error.enter_path"))
-                    return
-                if not Path(local_path).exists():
-                    Messagebox.show_error(self.t("dialog.error"), self.t("error.path_missing"))
-                    return
+                if self._local_files:
+                    missing = [p for p in self._local_files if not p.exists()]
+                    if missing:
+                        Messagebox.show_error(self.t("dialog.error"), self.t("error.path_missing"))
+                        return
+                else:
+                    local_path = self.local_path.get().strip()
+                    if not local_path:
+                        Messagebox.show_error(self.t("dialog.error"), self.t("error.enter_path"))
+                        return
+                    if not Path(local_path).exists():
+                        Messagebox.show_error(self.t("dialog.error"), self.t("error.path_missing"))
+                        return
 
         is_youtube = (source_mode == "youtube") and not is_conference
 
@@ -969,6 +1149,9 @@ class App(tb.Window):
             return
 
         self.final_base_dir = out_root / "transcribemate_outputs"
+        self._save_conference_meta_from_ui()
+        self._ensure_conference_meta_loaded()
+        conference_meta = dict(self._conf_meta)
         self._save_current_config()
         self.stop_flag.clear()
         self.start_btn.configure(state="disabled")
@@ -979,10 +1162,12 @@ class App(tb.Window):
         is_playlist = (self.yt_mode.get() == "playlist")
         url = self.url.get().strip() if is_youtube else None
         local_path = Path(self.local_path.get().strip()) if not is_youtube else None
+        local_files = list(self._local_files) if not is_youtube else []
         prefer_gpu = bool(self.use_gpu.get())
         model = self.model.get()
         src_language = self.source_lang.get().strip() or "auto"
         target_lang = self.target_lang.get()
+        summary_lang = normalize_summary_lang(self.summary_lang_key.get())
         translation_model = TRANSLATION_MODELS.get(target_lang, TRANSLATION_MODELS["en→cs"])
         lang_code = LANG_CODES.get(target_lang, "ces")
         batch = int(self.batch.get())
@@ -1099,11 +1284,13 @@ class App(tb.Window):
                     videos = downloaded_files
                     self.q_log(f"[INFO] Downloaded media files: {len(videos)}\n")
                 else:
-                    if not local_path:
+                    if not local_path and not local_files:
                         raise RuntimeError(t_local("error.enter_path"))
                     self.q_step(t_local("step.scan_media"))
                     self.q_step_indeterminate(True)
-                    if local_path.is_file():
+                    if local_files:
+                        videos = self._filter_media_files(local_files)
+                    elif local_path.is_file():
                         videos = [local_path]
                     else:
                         videos = list_videos(local_path)
@@ -1129,7 +1316,8 @@ class App(tb.Window):
 
                     self.q_status(f"{t_local('status.processing')} {i}/{len(videos)}: {v.name}")
                     self.q_log(f"\n[INFO] Processing {i}/{len(videos)}: {v.name}\n")
-                    base_name = timestamped_base_name(v)
+                    prefix = self.output_prefix.get().strip()
+                    base_name = timestamped_base_name(v, prefix=prefix)
 
                     # Transcribe
                     self.q_step(step_with_file("step.transcribe", i, len(videos), v.name))
@@ -1152,6 +1340,13 @@ class App(tb.Window):
                     export_step_key = "step.export_with_summary" if generate_summary_pack else "step.export_txt"
                     self.q_step(step_with_file(export_step_key, i, len(videos), v.name))
                     self.q_step_indeterminate(True)
+                    speaker = ""
+                    topic = ""
+                    if output_mode == "conference":
+                        entry = conference_meta.get(str(v), {})
+                        if isinstance(entry, dict):
+                            speaker = entry.get("speaker", "")
+                            topic = entry.get("topic", "")
                     export_transcripts(
                         media_path=v,
                         result=transcription,
@@ -1164,6 +1359,10 @@ class App(tb.Window):
                         output_mode=output_mode,
                         model_name=model,
                         log=self.q_log,
+                        output_prefix=prefix,
+                        speaker=speaker,
+                        topic=topic,
+                        summary_lang=summary_lang,
                     )
                     self.q_step_indeterminate(False)
 
@@ -1252,6 +1451,8 @@ class App(tb.Window):
                     t_local("notify.done_title"),
                     t_local("notify.done_body").format(done=self.done_videos, total=self.total_videos),
                 )
+                if self.notify_on_done.get():
+                    self._notify_completion(final_base_dir)
             except Exception as e:
                 err_msg = str(e)
                 self.q_log(f"\n[ERROR] {err_msg}\n")
@@ -1290,16 +1491,24 @@ class App(tb.Window):
         self.path_lbl.configure(text=self.t("source.path"))
         self.file_btn.configure(text=self.t("source.file"))
         self.folder_btn.configure(text=self.t("source.folder"))
+        self._update_local_list_hint()
+        self.conf_meta_frame.configure(text=self.t("conference.meta.title"))
+        self.conf_speaker_lbl.configure(text=self.t("conference.meta.speaker"))
+        self.conf_topic_lbl.configure(text=self.t("conference.meta.topic"))
         self.output_lbl.configure(text=self.t("source.output"))
         self.pick_out_btn.configure(text=self.t("source.pick"))
         self.mode_lbl.configure(text=self.t("source.mode"))
         self.keep_originals_chk.configure(text=self.t("source.keep_originals"))
+        self.prefix_lbl.configure(text=self.t("source.prefix"))
+        self.prefix_hint.configure(text=self.t("source.prefix_hint"))
 
         self.transcribe_frame.configure(text=self.t("transcribe.title"))
         self.speech_lang_lbl.configure(text=self.t("transcribe.speech_language"))
+        self.summary_lang_lbl.configure(text=self.t("transcribe.summary_lang"))
         self.clean_text_chk.configure(text=self.t("transcribe.clean_text"))
         self.export_md_chk.configure(text=self.t("transcribe.export_md"))
         self.summary_pack_chk.configure(text=self.t("transcribe.summary_pack"))
+        self.notify_chk.configure(text=self.t("transcribe.notify_done"))
         self.split_lbl.configure(text=self.t("transcribe.split_minutes"))
         self.trans_frame.configure(text=self.t("translate.title"))
         self.target_lang_lbl.configure(text=self.t("translate.target_language"))
@@ -1326,9 +1535,15 @@ class App(tb.Window):
         self.open_data_btn.configure(text=self.t("actions.open_data"))
         self.show_log_chk.configure(text=self.t("actions.show_log"))
 
+        self.sys_frame.configure(text=self.t("system.title"))
+        self.cpu_lbl.configure(text=self.t("system.cpu"))
+        self.ram_lbl.configure(text=self.t("system.ram"))
+        self.gpu_util_lbl.configure(text=self.t("system.gpu"))
+
         self.prog_frame.configure(text=self.t("progress.title"))
         self.overall_lbl_title.configure(text=self.t("progress.total"))
         self.activity_lbl_title.configure(text=self.t("progress.activity"))
+        self.eta_lbl_title.configure(text=self.t("progress.eta"))
         self.status_lbl.configure(text=self.t("status.ready"))
 
         table = I18N.get(self.lang.get(), I18N["en"])
@@ -1351,6 +1566,12 @@ class App(tb.Window):
         self.quick_model_key.set(current_quick_key)
         self._sync_quick_model_label()
 
+        summary_labels = summary_lang_labels(self.lang.get())
+        self.summary_lang_combo.configure(values=summary_labels)
+        current_summary_key = normalize_summary_lang(self.summary_lang_key.get())
+        self.summary_lang_key.set(current_summary_key)
+        self.summary_lang_label.set(summary_lang_label_for_key(current_summary_key, self.lang.get()))
+
         self._update_mode_ui()
         if self._gpu_info_cache:
             self._apply_gpu_info(self._gpu_info_cache)
@@ -1358,3 +1579,333 @@ class App(tb.Window):
             self.gpu_badge.configure(text=self.t("performance.gpu_idle"), bootstyle="secondary")
             self._apply_auto_model()
         self._save_current_config()
+
+    def _maximize_window(self):
+        try:
+            self.state("zoomed")
+        except Exception:
+            try:
+                self.attributes("-zoomed", True)
+            except Exception:
+                width = self.winfo_screenwidth()
+                height = self.winfo_screenheight()
+                self.geometry(f"{width}x{height}+0+0")
+
+    def _start_system_monitor(self):
+        try:
+            import psutil  # type: ignore
+
+            psutil.cpu_percent(interval=None)
+        except Exception:
+            LOGGER.debug("psutil not available for system monitor", exc_info=True)
+        self._update_system_metrics()
+
+    def _update_system_metrics(self):
+        if not self.winfo_exists():
+            return
+
+        cpu_pct, ram_pct = self._get_cpu_ram()
+        self._apply_metric(self.cpu_bar, self.cpu_val, cpu_pct)
+        self._apply_metric(self.ram_bar, self.ram_val, ram_pct)
+        self._update_gpu_metric()
+        self._schedule_gpu_poll()
+
+        self.after(1000, self._update_system_metrics)
+
+    def _apply_metric(self, bar, label, value: Optional[float]):
+        if value is None:
+            bar["value"] = 0
+            label.configure(text=self.t("system.na"))
+            return
+        clamped = max(0.0, min(100.0, float(value)))
+        bar["value"] = clamped
+        label.configure(text=f"{clamped:.0f}%")
+
+    def _get_cpu_ram(self) -> tuple[Optional[float], Optional[float]]:
+        try:
+            import psutil  # type: ignore
+
+            cpu_pct = psutil.cpu_percent(interval=None)
+            ram_pct = psutil.virtual_memory().percent
+            return float(cpu_pct), float(ram_pct)
+        except Exception:
+            LOGGER.debug("Failed to read CPU/RAM metrics", exc_info=True)
+            return None, None
+
+    def _update_gpu_metric(self):
+        if self._gpu_usage_cache is None:
+            self.gpu_util_bar["value"] = 0
+            self.gpu_util_val.configure(text=self.t("system.na"))
+            return
+        usage = max(0.0, min(100.0, float(self._gpu_usage_cache)))
+        self.gpu_util_bar["value"] = usage
+        if self._gpu_mem_cache:
+            used, total = self._gpu_mem_cache
+            self.gpu_util_val.configure(text=f"{usage:.0f}% | {used:.1f}/{total:.1f} GB")
+        else:
+            self.gpu_util_val.configure(text=f"{usage:.0f}%")
+
+    def _schedule_gpu_poll(self):
+        if self._gpu_poll_inflight or not self._gpu_smi_available:
+            return
+        self._gpu_poll_inflight = True
+        thread = threading.Thread(target=self._poll_gpu_usage, daemon=True)
+        thread.start()
+
+    def _poll_gpu_usage(self):
+        usage, mem = self._get_gpu_usage()
+
+        def apply():
+            self._gpu_usage_cache = usage
+            self._gpu_mem_cache = mem
+            self._gpu_poll_inflight = False
+            self._update_gpu_metric()
+
+        self.after(0, apply)
+
+    def _get_gpu_usage(self) -> tuple[Optional[float], Optional[tuple[float, float]]]:
+        try:
+            kwargs = {
+                "capture_output": True,
+                "text": True,
+                "timeout": 1.0,
+            }
+            if sys.platform == "win32":
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                kwargs["startupinfo"] = startupinfo
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=utilization.gpu,memory.used,memory.total",
+                    "--format=csv,noheader,nounits",
+                ],
+                **kwargs,
+            )
+            if result.returncode != 0:
+                return None, None
+            line = result.stdout.strip().splitlines()[0].strip()
+            if not line:
+                return None, None
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) < 3:
+                return None, None
+            usage = float(parts[0])
+            mem_used = float(parts[1]) / 1024.0
+            mem_total = float(parts[2]) / 1024.0
+            return usage, (mem_used, mem_total)
+        except Exception:
+            LOGGER.debug("Failed to read GPU usage", exc_info=True)
+            return None, None
+
+    def _parse_dnd_paths(self, data: str) -> List[str]:
+        try:
+            return list(self.tk.splitlist(data))
+        except Exception:
+            parts = re.findall(r"\{[^}]*\}|[^ ]+", data)
+            return [p.strip("{}") for p in parts]
+
+    def _filter_media_files(self, paths: Sequence[Path]) -> List[Path]:
+        media_exts = VIDEO_EXTS | AUDIO_EXTS
+        return sorted([p for p in paths if p.suffix.lower() in media_exts])
+
+    def _update_local_list(self, items: Sequence[Path]):
+        self._local_list_items = list(items)
+        self.local_files_list.delete(0, tk.END)
+        for p in self._local_list_items:
+            self.local_files_list.insert(tk.END, p.name)
+        self.local_files_list.selection_clear(0, tk.END)
+        self._conf_selected_path = None
+        self._clear_conference_meta_fields()
+        self._set_conference_meta_state(False)
+        self._update_local_list_hint()
+
+    def _update_local_list_hint(self):
+        count = len(self._local_list_items)
+        if count == 0:
+            self.local_files_hint.configure(text=self.t("source.files_hint_empty"))
+        else:
+            self.local_files_hint.configure(
+                text=self.t("source.files_hint_count").format(count=count)
+            )
+
+    def _conference_meta_path_for_output(self) -> Path:
+        out_root = Path(self.out_dir.get()).expanduser()
+        return out_root / "transcribemate_outputs" / "conference_meta.json"
+
+    def _ensure_conference_meta_loaded(self):
+        meta_path = self._conference_meta_path_for_output()
+        if self._conf_meta_path == meta_path:
+            return
+        self._conf_meta_path = meta_path
+        self._conf_meta = {}
+        try:
+            if meta_path.exists():
+                data = json.loads(meta_path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    files = data.get("files", data)
+                    if isinstance(files, dict):
+                        for key, entry in files.items():
+                            if isinstance(entry, dict):
+                                speaker = str(entry.get("speaker") or "").strip()
+                                topic = str(entry.get("topic") or "").strip()
+                            else:
+                                speaker = ""
+                                topic = ""
+                            if speaker or topic:
+                                self._conf_meta[key] = {"speaker": speaker, "topic": topic}
+        except Exception:
+            LOGGER.exception("Failed to load conference metadata from %s", meta_path)
+            self._conf_meta = {}
+
+    def _save_conference_meta(self):
+        if self._conf_meta_path is None:
+            self._conf_meta_path = self._conference_meta_path_for_output()
+        try:
+            self._conf_meta_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"version": 1, "files": self._conf_meta}
+            self._conf_meta_path.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception:
+            LOGGER.exception("Failed to save conference metadata to %s", self._conf_meta_path)
+
+    def _conference_meta_key(self, path: Path) -> str:
+        return str(path)
+
+    def _get_conference_meta_for_path(self, path: Path) -> Dict[str, str]:
+        self._ensure_conference_meta_loaded()
+        return self._conf_meta.get(self._conference_meta_key(path), {})
+
+    def _set_conference_meta_for_path(self, path: Path, speaker: str, topic: str):
+        self._ensure_conference_meta_loaded()
+        key = self._conference_meta_key(path)
+        if speaker or topic:
+            self._conf_meta[key] = {"speaker": speaker, "topic": topic}
+        else:
+            self._conf_meta.pop(key, None)
+        self._save_conference_meta()
+
+    def _get_topic_text(self) -> str:
+        return self.conf_topic_txt.get("1.0", tk.END).rstrip("\n")
+
+    def _set_topic_text(self, text: str):
+        prev_state = self.conf_topic_txt.cget("state")
+        self.conf_topic_txt.configure(state="normal")
+        self.conf_topic_txt.delete("1.0", tk.END)
+        if text:
+            self.conf_topic_txt.insert("1.0", text)
+        self.conf_topic_txt.configure(state=prev_state)
+
+    def _clear_conference_meta_fields(self):
+        self.conf_speaker.set("")
+        self._set_topic_text("")
+
+    def _set_conference_meta_state(self, enabled: bool):
+        state = "normal" if enabled else "disabled"
+        self.conf_speaker_entry.configure(state=state)
+        self.conf_topic_txt.configure(state=state)
+
+    def _save_conference_meta_from_ui(self):
+        if not self._conf_selected_path:
+            return
+        speaker = self.conf_speaker.get().strip()
+        topic = self._get_topic_text().strip()
+        self._set_conference_meta_for_path(self._conf_selected_path, speaker, topic)
+
+    def _on_local_file_selected(self, _event):
+        self._save_conference_meta_from_ui()
+        selection = self.local_files_list.curselection()
+        if not selection:
+            self._conf_selected_path = None
+            self._clear_conference_meta_fields()
+            self._set_conference_meta_state(False)
+            return
+        idx = selection[0]
+        if idx < 0 or idx >= len(self._local_list_items):
+            return
+        path = self._local_list_items[idx]
+        self._conf_selected_path = path
+        meta = self._get_conference_meta_for_path(path)
+        self.conf_speaker.set(meta.get("speaker", ""))
+        self._set_topic_text(meta.get("topic", ""))
+        self._set_conference_meta_state(True)
+
+    def _set_local_path(self, path: Path):
+        self.local_path.set(str(path))
+        self._local_files = []
+        items = list_videos(path) if path.is_dir() else [path]
+        self._update_local_list(items)
+
+    def _set_local_files(self, files: Sequence[Path]):
+        media = self._filter_media_files(files)
+        self._local_files = list(media)
+        self.local_path.set("")
+        self._update_local_list(self._local_files)
+
+    def _sync_local_entry(self):
+        path_str = self.local_path.get().strip()
+        if not path_str:
+            self._local_files = []
+            self._update_local_list([])
+            return
+        path = Path(path_str)
+        if not path.exists():
+            self._local_files = []
+            self._update_local_list([])
+            return
+        self._set_local_path(path)
+
+    def _on_local_file_double_click(self, _event):
+        selection = self.local_files_list.curselection()
+        if not selection:
+            return
+        idx = selection[0]
+        if idx < 0 or idx >= len(self._local_list_items):
+            return
+        self._open_external(self._local_list_items[idx])
+
+    def _open_external(self, target: Path):
+        try:
+            if sys.platform == "win32":
+                os.startfile(target)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(target)])
+            else:
+                subprocess.Popen(["xdg-open", str(target)])
+        except Exception as exc:
+            self._show_error_async(str(exc))
+
+    def _notify_completion(self, output_dir: Path):
+        try:
+            if sys.platform == "win32":
+                import winsound
+
+                winsound.MessageBeep()
+            else:
+                print("\a", end="", flush=True)
+        except Exception:
+            LOGGER.debug("Completion beep failed", exc_info=True)
+        self._open_external(output_dir)
+
+    def _estimate_eta_text(self, pct: float) -> Optional[str]:
+        if pct <= 0.0:
+            return None
+        if not self._step_started_at:
+            return None
+        if pct >= 99.9:
+            return "0:00"
+        elapsed = max(0.0, time.monotonic() - self._step_started_at)
+        remaining = elapsed * (100.0 - pct) / max(pct, 0.1)
+        return self._format_eta_seconds(remaining)
+
+    def _format_eta_seconds(self, seconds: float) -> str:
+        total = max(0, int(seconds))
+        hours = total // 3600
+        minutes = (total % 3600) // 60
+        secs = total % 60
+        if hours > 0:
+            return f"{hours}:{minutes:02}:{secs:02}"
+        return f"{minutes}:{secs:02}"

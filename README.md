@@ -62,6 +62,13 @@ Temporary working folders named `_tm_work_*` are created inside your output dire
 - Python 3.12 (64-bit recommended)
 - Inno Setup 6 (https://jrsoftware.org/isinfo.php)
 
+### Testing
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m pytest
+```
+Tests currently cover core helpers, i18n summary language helpers, pipeline utility functions, runtime version parsing, and transcript metadata formatting.
+
 ### Run From Source
 ```powershell
 py -3.12 -m venv .venv
