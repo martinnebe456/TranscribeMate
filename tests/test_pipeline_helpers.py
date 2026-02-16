@@ -1,6 +1,7 @@
 from transcribemate.pipeline.download import quality_to_format
 from transcribemate.pipeline.subtitles import hex_to_ass_color
 from transcribemate.pipeline.transcribe import format_timestamp
+from transcribemate.pipeline.translate import _split_speaker_prefix
 
 
 def test_quality_to_format_best():
@@ -19,3 +20,9 @@ def test_hex_to_ass_color_rgb_order():
 
 def test_format_timestamp_zero():
     assert format_timestamp(0.0) == "00:00:00,000"
+
+
+def test_split_speaker_prefix_parses_prefix_and_body():
+    prefix, body = _split_speaker_prefix("Alice: Hello there")
+    assert prefix == "Alice: "
+    assert body == "Hello there"

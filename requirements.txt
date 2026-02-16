@@ -1,6 +1,7 @@
 yt-dlp
 faster-whisper
 transformers
+huggingface_hub>=0.34,<1.0
 sentencepiece
 accelerate
 safetensors
@@ -8,3 +9,4 @@ ttkbootstrap
 tkinterdnd2
 win10toast
 psutil
+pyannote.audio>=3.1,<4

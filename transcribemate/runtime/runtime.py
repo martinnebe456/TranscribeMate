@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import importlib
+import json
+import os
 import queue
 import platform
 import re
@@ -15,6 +18,7 @@ import time
 import traceback
 import urllib.request
 import zipfile
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -28,6 +32,7 @@ from ..core.paths import (
     log_path,
     project_root,
     user_assets_dir,
+    user_data_dir,
     user_site_packages_dir,
 )
 
@@ -38,9 +43,17 @@ TORCH_PYPI_INDEX = "https://pypi.org/simple"
 # Pin to a known-good version that matches the previous installer behavior.
 TORCH_VERSION = "2.5.1"
 TORCH_CUDA_VERSION = "2.5.1+cu121"
+TORCHAUDIO_VERSION = "2.5.1"
+HF_HUB_PIP_SPEC = "huggingface_hub>=0.34,<1.0"
+PYANNOTE_PIP_SPEC = "pyannote.audio>=3.1,<4"
+DIARIZATION_PIP_PACKAGES = [
+    PYANNOTE_PIP_SPEC,
+    HF_HUB_PIP_SPEC,
+]
 
 LOG_FILE = log_path()
 _SPLASH_UPDATES: "queue.Queue[str]" = queue.Queue()
+_HELD_LOCKS: set[str] = set()
 
 
 def _log(level: str, message: str):
@@ -61,7 +74,7 @@ def _log(level: str, message: str):
 
 
 def log_step(message: str):
-    _log("STEP", f"➤ {message}")
+    _log("STEP", message)
 
 
 def log_info(message: str):
@@ -69,15 +82,15 @@ def log_info(message: str):
 
 
 def log_success(message: str):
-    _log("OK", f"✅ {message}")
+    _log("OK", message)
 
 
 def log_warn(message: str):
-    _log("WARN", f"⚠️ {message}")
+    _log("WARN", message)
 
 
 def log_fail(message: str):
-    _log("FAIL", f"❌ {message}")
+    _log("FAIL", message)
 
 
 def init_log():
@@ -100,6 +113,73 @@ def init_log():
         with LOG_FILE.open("a", encoding="utf-8") as fh:
             fh.write("\n" + session_header + "\n")
     log_info(f"Logging to: {LOG_FILE}")
+
+
+def _lock_file(name: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "-", str(name or "lock")).strip("-") or "lock"
+    locks_dir = user_data_dir() / "locks"
+    locks_dir.mkdir(parents=True, exist_ok=True)
+    return locks_dir / f"{safe}.lock"
+
+
+@contextmanager
+def _dependency_lock(name: str, *, wait_seconds: int = 1800, stale_seconds: int = 6 * 3600):
+    if name in _HELD_LOCKS:
+        yield True
+        return
+
+    lock_path = _lock_file(name)
+    started = time.time()
+    last_wait_log = 0.0
+
+    while True:
+        try:
+            fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(f"pid={os.getpid()} created={int(time.time())}\n")
+            _HELD_LOCKS.add(name)
+            log_info(f"Acquired dependency lock: {name}")
+            break
+        except FileExistsError:
+            try:
+                age = time.time() - lock_path.stat().st_mtime
+            except Exception:
+                age = 0.0
+            if age > stale_seconds:
+                try:
+                    lock_path.unlink(missing_ok=True)
+                    log_warn(f"Removed stale dependency lock: {name}")
+                    continue
+                except Exception as exc:
+                    log_warn(f"Could not remove stale dependency lock '{name}': {exc}")
+
+            waited = time.time() - started
+            if waited >= wait_seconds:
+                log_fail(f"Timeout waiting for dependency lock: {name}")
+                yield False
+                return
+
+            now = time.time()
+            if now - last_wait_log >= 10.0:
+                log_info(f"Waiting for dependency lock: {name}")
+                last_wait_log = now
+            time.sleep(1.5)
+        except Exception as exc:
+            log_warn(f"Could not create dependency lock '{name}': {exc}")
+            # Continue without hard-failing; better to attempt setup than to block forever.
+            yield True
+            return
+
+    try:
+        yield True
+    finally:
+        if name in _HELD_LOCKS:
+            _HELD_LOCKS.discard(name)
+            try:
+                lock_path.unlink(missing_ok=True)
+                log_info(f"Released dependency lock: {name}")
+            except Exception:
+                pass
 
 
 def run_capture(cmd: list[str]) -> subprocess.CompletedProcess[str]:
@@ -332,11 +412,18 @@ def _pip_main(args: list[str], *, splash=None, splash_msg=None) -> int:
     class _LogRedirect:
         def __init__(self):
             self._last_ui_update = 0.0
+            self._last_text = ""
+            self._last_text_ts = 0.0
 
         def write(self, data: str):
             text = data.strip()
             if not text:
                 return None
+            now = time.time()
+            if text == self._last_text and (now - self._last_text_ts) < 0.35:
+                return None
+            self._last_text = text
+            self._last_text_ts = now
             # Avoid duplicating our own structured log lines when print() is redirected.
             if text.startswith("[") and any(tag in text for tag in (" INFO ", " OK ", " WARN ", " FAIL ", " STEP ")):
                 return None
@@ -349,7 +436,6 @@ def _pip_main(args: list[str], *, splash=None, splash_msg=None) -> int:
                 pass
 
             if splash and splash_msg:
-                now = time.time()
                 if now - self._last_ui_update >= 0.12:
                     ui_text = text
                     if len(ui_text) > 120:
@@ -362,8 +448,9 @@ def _pip_main(args: list[str], *, splash=None, splash_msg=None) -> int:
             return None
 
     old_out, old_err = sys.stdout, sys.stderr
-    sys.stdout = _LogRedirect()
-    sys.stderr = _LogRedirect()
+    redirect = _LogRedirect()
+    sys.stdout = redirect
+    sys.stderr = redirect
     try:
         return int(pip_main(args))
     finally:
@@ -406,7 +493,7 @@ def _remove_tree(path: Path, label: str):
 
 
 def _cleanup_stale_torch_metadata():
-    """Remove stale torch/torchaudio/torchvision bundles from older builds."""
+    """Remove stale bundled torch stack artifacts from older builds."""
     internal_dir = project_root() / "_internal"
     metadata_patterns = (
         "torch-*.dist-info",
@@ -430,7 +517,7 @@ def _cleanup_stale_torch_metadata():
 
     site_dir = user_site_packages_dir()
     cleanup_patterns = (
-        "torchaudio*",
+        # Keep user-installed torchaudio (needed by pyannote/speaker diarization).
         "torchvision*",
     )
     for pattern in cleanup_patterns:
@@ -477,9 +564,67 @@ def _torch_metadata_ready(site_dir: Path, desired_version: str) -> bool:
 
 def _cleanup_user_torch_install(site_dir: Path):
     """Remove old torch installs from the per-user site-packages before reinstalling."""
-    for pattern in ("torch", "torchgen", "functorch", "torch-*.dist-info", "functorch-*.dist-info"):
+    for pattern in (
+        "torch",
+        "torchgen",
+        "functorch",
+        "torchaudio",
+        "torch-*.dist-info",
+        "functorch-*.dist-info",
+        "torchaudio-*.dist-info",
+    ):
         for entry in site_dir.glob(pattern):
             _remove_tree(entry, "torch install")
+
+
+def _locked_torch_entries(site_dir: Path) -> list[Path]:
+    entries: list[Path] = []
+    for pattern in (
+        "torch",
+        "torchgen",
+        "functorch",
+        "torchaudio",
+        "torch-*.dist-info",
+        "functorch-*.dist-info",
+        "torchaudio-*.dist-info",
+    ):
+        entries.extend([p for p in site_dir.glob(pattern) if p.exists()])
+    # deterministic ordering for stable logs/errors
+    return sorted(entries, key=lambda p: str(p).lower())
+
+
+def _cleanup_user_speaker_install(site_dir: Path):
+    """Remove stale speaker-diarization packages before full reinstall."""
+    patterns = (
+        "pyannote*",
+        "lightning*",
+        "lightning_fabric*",
+        "pytorch_lightning*",
+        "speechbrain*",
+        "torchmetrics*",
+        "torch_audiomentations*",
+        "asteroid_filterbanks*",
+        "pytorch_metric_learning*",
+        "hyperpyyaml*",
+        # Keep torchaudio aligned with pinned torch version used by the app.
+        "torchaudio",
+        "torchaudio-*.dist-info",
+    )
+    for pattern in patterns:
+        for entry in site_dir.glob(pattern):
+            _remove_tree(entry, "speaker install")
+
+
+def _cleanup_legacy_speaker_site_packages_dir():
+    """Backwards-compat cleanup from older builds that used a separate speaker directory."""
+    legacy_dir = user_data_dir() / "site-packages-speakers"
+    if not legacy_dir.exists():
+        return
+    try:
+        shutil.rmtree(legacy_dir, ignore_errors=False)
+        log_info(f"Removed legacy speaker site-packages directory: {legacy_dir}")
+    except Exception as exc:
+        log_warn(f"Could not remove legacy speaker site-packages directory: {exc}")
 
 
 def _torch_status(*, verbose: bool = False) -> tuple[bool, bool, str]:
@@ -501,6 +646,49 @@ def _torch_status(*, verbose: bool = False) -> tuple[bool, bool, str]:
             tb_lines = traceback.format_exc().splitlines()
             for line in tb_lines[:12]:
                 log_info(f"TRACE {line}")
+        return False, False, ""
+
+
+def _torch_status_isolated(*, verbose: bool = False) -> tuple[bool, bool, str]:
+    """Validate torch import in a subprocess so parent process does not lock torch DLLs."""
+    code = (
+        "import json\n"
+        "import torch\n"
+        "print(json.dumps({"
+        "'ok': True, "
+        "'cuda': bool(torch.cuda.is_available()), "
+        "'version': str(getattr(torch, '__version__', 'unknown'))"
+        "}))\n"
+    )
+    try:
+        cmd = [sys.executable, "--torch-self-check"] if FROZEN else [sys.executable, "-c", code]
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except Exception as exc:
+        if verbose:
+            log_warn(f"Torch isolated check failed: {type(exc).__name__}: {exc}")
+        return False, False, ""
+
+    if result.returncode != 0:
+        if verbose:
+            stderr = (result.stderr or "").strip()
+            stdout = (result.stdout or "").strip()
+            detail = stderr or stdout or f"exit={result.returncode}"
+            log_fail(f"Torch isolated import failed: {detail}")
+        return False, False, ""
+
+    try:
+        payload = (result.stdout or "").strip().splitlines()[-1]
+        parsed = json.loads(payload)
+        return bool(parsed.get("ok", False)), bool(parsed.get("cuda", False)), str(parsed.get("version", ""))
+    except Exception as exc:
+        if verbose:
+            log_warn(f"Torch isolated status parse failed: {exc}")
         return False, False, ""
 
 
@@ -568,12 +756,19 @@ def install_torch(*, prefer_gpu: bool, splash=None, splash_msg=None) -> bool:
     def install_gpu():
         log_step("Installing torch with CUDA support (cu121)")
         _cleanup_user_torch_install(site_dir)
+        leftovers = _locked_torch_entries(site_dir)
+        if leftovers:
+            raise RuntimeError(
+                "Old torch files are still locked. Close all TranscribeMate windows and retry. "
+                f"Locked path: {leftovers[0]}"
+            )
         args = base_args_common + [
             "--index-url",
             TORCH_CUDA_EXTRA_INDEX,
             "--extra-index-url",
             TORCH_PYPI_INDEX,
             f"torch=={TORCH_CUDA_VERSION}",
+            f"torchaudio=={TORCHAUDIO_VERSION}",
         ]
         code = _pip_main(args, splash=splash, splash_msg=splash_msg)
         if code != 0:
@@ -582,10 +777,17 @@ def install_torch(*, prefer_gpu: bool, splash=None, splash_msg=None) -> bool:
     def install_cpu():
         log_step("Installing CPU torch")
         _cleanup_user_torch_install(site_dir)
+        leftovers = _locked_torch_entries(site_dir)
+        if leftovers:
+            raise RuntimeError(
+                "Old torch files are still locked. Close all TranscribeMate windows and retry. "
+                f"Locked path: {leftovers[0]}"
+            )
         args = base_args_common + [
             "--index-url",
             TORCH_PYPI_INDEX,
             f"torch=={TORCH_VERSION}",
+            f"torchaudio=={TORCHAUDIO_VERSION}",
         ]
         code = _pip_main(args, splash=splash, splash_msg=splash_msg)
         if code != 0:
@@ -618,7 +820,7 @@ def install_torch(*, prefer_gpu: bool, splash=None, splash_msg=None) -> bool:
             return False
 
     ensure_site_packages_on_path()
-    installed, cuda_ready, version = _torch_status(verbose=True)
+    installed, cuda_ready, version = _torch_status_isolated(verbose=True)
     if installed:
         status = "CUDA ready" if cuda_ready else "CPU ready"
         log_success(f"Torch installed: {version} ({status})")
@@ -632,42 +834,355 @@ def install_torch(*, prefer_gpu: bool, splash=None, splash_msg=None) -> bool:
 def ensure_torch_ready(*, splash=None, splash_msg=None) -> bool:
     """Ensure torch is installed and CUDA-ready when requested."""
     log_step("Checking PyTorch availability")
+    with _dependency_lock("core-deps") as locked:
+        if not locked:
+            return False
 
-    cfg = load_config()
-    gpu_requested = bool(getattr(cfg, "use_gpu", True))
-    has_gpu = _has_nvidia_gpu()
-    prefer_gpu = gpu_requested and has_gpu
+        cfg = load_config()
+        gpu_requested = bool(getattr(cfg, "use_gpu", True))
+        has_gpu = _has_nvidia_gpu()
+        prefer_gpu = gpu_requested and has_gpu
 
-    if gpu_requested and not has_gpu:
-        log_warn("GPU is enabled in settings but no NVIDIA GPU was detected (nvidia-smi).")
+        if gpu_requested and not has_gpu:
+            log_warn("GPU is enabled in settings but no NVIDIA GPU was detected (nvidia-smi).")
 
-    site_dir = user_site_packages_dir()
-    desired_version = TORCH_CUDA_VERSION if prefer_gpu else TORCH_VERSION
-    detected_version = _torch_version_detected(site_dir)
-    if detected_version:
-        log_info(f"Detected torch version: {detected_version}")
-    needs_install = not _torch_metadata_ready(site_dir, desired_version)
+        site_dir = user_site_packages_dir()
+        desired_version = TORCH_CUDA_VERSION if prefer_gpu else TORCH_VERSION
+        detected_version = _torch_version_detected(site_dir)
+        if detected_version:
+            log_info(f"Detected torch version: {detected_version}")
+        needs_install = not _torch_metadata_ready(site_dir, desired_version)
 
-    if needs_install:
-        update_startup_splash(
-            splash,
-            splash_msg,
-            "Preparing PyTorch (first run may take several minutes)...",
-        )
+        if needs_install:
+            update_startup_splash(
+                splash,
+                splash_msg,
+                "Preparing PyTorch (first run may take several minutes)...",
+            )
+            ok = install_torch(prefer_gpu=prefer_gpu, splash=splash, splash_msg=splash_msg)
+            return ok
+
+        installed, cuda_ready, version = _torch_status_isolated(verbose=True)
+        if installed:
+            if prefer_gpu and not cuda_ready:
+                log_warn("CUDA build is installed but CUDA is not available. The app will run on CPU.")
+            status = "CUDA ready" if cuda_ready else "CPU ready"
+            log_success(f"Torch ready: {version} ({status})")
+            return True
+
+        log_warn("Torch appears installed but import failed. Reinstalling.")
         ok = install_torch(prefer_gpu=prefer_gpu, splash=splash, splash_msg=splash_msg)
-        return ok
+        if ok:
+            return True
 
-    installed, cuda_ready, version = _torch_status(verbose=True)
-    if installed:
-        if prefer_gpu and not cuda_ready:
-            log_warn("CUDA build is installed but CUDA is not available. The app will run on CPU.")
-        status = "CUDA ready" if cuda_ready else "CPU ready"
-        log_success(f"Torch ready: {version} ({status})")
+        log_fail("Torch installation did not complete successfully.")
+        log_info(f"Fix: close the app and delete: {site_dir / 'torch'}")
+        return False
+
+
+def _module_available(module_name: str) -> bool:
+    try:
+        importlib.import_module(module_name)
+        return True
+    except Exception:
+        return False
+
+
+def _prioritize_user_site_packages():
+    ensure_site_packages_on_path()
+    site_str = str(user_site_packages_dir())
+    try:
+        sys.path.remove(site_str)
+    except ValueError:
+        pass
+    sys.path.insert(0, site_str)
+
+
+def _pyannote_audio_available(*, verbose: bool = False) -> bool:
+    _prioritize_user_site_packages()
+    try:
+        mod = importlib.import_module("pyannote.audio")
+        if verbose:
+            mod_file = str(getattr(mod, "__file__", "") or "")
+            if mod_file:
+                log_info(f"pyannote.audio import OK: {mod_file}")
+        return True
+    except Exception as exc:
+        if verbose:
+            log_warn(f"pyannote.audio import failed: {type(exc).__name__}: {exc}")
+            for line in traceback.format_exc().splitlines()[:20]:
+                log_info(f"TRACE {line}")
+        return False
+
+
+def _hf_hub_version_is_compatible(version: str) -> bool:
+    match = re.match(r"^\s*(\d+)\.(\d+)", str(version or ""))
+    if not match:
+        return True
+    major = int(match.group(1))
+    minor = int(match.group(2))
+    if major >= 1:
+        return False
+    if major == 0 and minor < 34:
+        return False
+    return True
+
+
+def _install_python_packages(
+    packages: list[str],
+    *,
+    target_dir: Path | None = None,
+    upgrade: bool = True,
+    no_deps: bool = False,
+    constraints: list[str] | None = None,
+    splash=None,
+    splash_msg=None,
+    splash_message: str,
+) -> bool:
+    ensure_site_packages_on_path()
+    install_dir = target_dir or user_site_packages_dir()
+    install_dir.mkdir(parents=True, exist_ok=True)
+
+    def runner():
+        constraints_file: Path | None = None
+        args = ["install"]
+        if upgrade:
+            args.append("--upgrade")
+        if no_deps:
+            args.append("--no-deps")
+        if constraints:
+            constraints_data = "\n".join(str(c).strip() for c in constraints if str(c).strip()).strip()
+            if constraints_data:
+                constraints_file = Path(tempfile.gettempdir()) / f"tm-pip-constraints-{os.getpid()}.txt"
+                constraints_file.write_text(constraints_data + "\n", encoding="utf-8")
+                args.extend(["--constraint", str(constraints_file)])
+        args.extend(
+            [
+                "--no-warn-script-location",
+                "--prefer-binary",
+                "--target",
+                str(install_dir),
+                *packages,
+            ]
+        )
+        try:
+            code = _pip_main(args, splash=splash, splash_msg=splash_msg)
+            if code != 0:
+                raise RuntimeError(f"Package install failed with exit code {code}")
+        finally:
+            if constraints_file:
+                try:
+                    constraints_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    return _run_with_splash(splash_message, splash, splash_msg, runner)
+
+
+def ensure_hf_hub_compatible(*, splash=None, splash_msg=None) -> bool:
+    """Repair incompatible huggingface_hub versions left from older installs."""
+    ensure_site_packages_on_path()
+    try:
+        import huggingface_hub  # type: ignore
+    except Exception:
         return True
 
-    log_fail("Torch appears installed but could not be imported.")
-    log_info(f"Fix: close the app and delete: {site_dir / 'torch'}")
-    return False
+    current_version = str(getattr(huggingface_hub, "__version__", "") or "")
+    if _hf_hub_version_is_compatible(current_version):
+        return True
+
+    log_warn(
+        "Incompatible huggingface_hub version detected "
+        f"({current_version}). Repairing to '{HF_HUB_PIP_SPEC}'."
+    )
+    ok = _install_python_packages(
+        [HF_HUB_PIP_SPEC],
+        upgrade=True,
+        no_deps=True,
+        splash=splash,
+        splash_msg=splash_msg,
+        splash_message="Repairing huggingface_hub compatibility...",
+    )
+    if not ok:
+        return False
+
+    importlib.invalidate_caches()
+    sys.modules.pop("huggingface_hub", None)
+    try:
+        import huggingface_hub as hf_after  # type: ignore
+
+        fixed_version = str(getattr(hf_after, "__version__", "") or "")
+        if _hf_hub_version_is_compatible(fixed_version):
+            log_success(f"huggingface_hub repaired: {fixed_version}")
+            return True
+        log_fail(f"huggingface_hub is still incompatible after repair: {fixed_version}")
+        return False
+    except Exception as exc:
+        log_fail(f"Could not import huggingface_hub after repair: {exc}")
+        return False
+
+
+def ensure_speaker_deps_ready(*, allow_full_install: bool = True, splash=None, splash_msg=None) -> bool:
+    log_step("Checking speaker diarization dependencies")
+    with _dependency_lock("speaker-deps") as locked:
+        if not locked:
+            return False
+
+        _cleanup_legacy_speaker_site_packages_dir()
+        ensure_site_packages_on_path()
+        site_dir = user_site_packages_dir()
+
+        # Do not pre-import huggingface_hub here. Importing it can load requests/charset_normalizer
+        # from target site-packages and then lock files that pip may need to replace.
+        if _pyannote_audio_available():
+            log_success("Speaker diarization dependencies already available")
+            return True
+
+        log_info("Speaker diarization dependencies missing, installing...")
+        speaker_constraints = [
+            f"torch=={TORCH_VERSION}",
+            f"torchaudio=={TORCHAUDIO_VERSION}",
+        ]
+        ok = True
+        if allow_full_install:
+            _cleanup_user_speaker_install(site_dir)
+            ok = _install_python_packages(
+                DIARIZATION_PIP_PACKAGES,
+                target_dir=site_dir,
+                upgrade=False,
+                no_deps=False,
+                constraints=speaker_constraints,
+                splash=splash,
+                splash_msg=splash_msg,
+                splash_message="Installing speaker diarization dependencies...",
+            )
+        else:
+            log_info("Using lightweight speaker repair (pyannote only, no dependency upgrades).")
+            ok = _install_python_packages(
+                [PYANNOTE_PIP_SPEC],
+                target_dir=site_dir,
+                upgrade=False,
+                no_deps=True,
+                splash=splash,
+                splash_msg=splash_msg,
+                splash_message="Repairing speaker backend (light mode)...",
+            )
+            if not _pyannote_audio_available():
+                log_warn("Lightweight speaker repair did not recover backend. Retrying full speaker install.")
+                _cleanup_user_speaker_install(site_dir)
+                ok = _install_python_packages(
+                    DIARIZATION_PIP_PACKAGES,
+                    target_dir=site_dir,
+                    upgrade=False,
+                    no_deps=False,
+                    constraints=speaker_constraints,
+                    splash=splash,
+                    splash_msg=splash_msg,
+                    splash_message="Installing full speaker dependency set...",
+                )
+        if not ensure_hf_hub_compatible(splash=splash, splash_msg=splash_msg):
+            return False
+        if ok and _pyannote_audio_available(verbose=True):
+            log_success("Speaker diarization dependencies installed")
+            return True
+        if _pyannote_audio_available(verbose=True):
+            log_warn("Speaker dependency install returned warnings, but pyannote.audio is importable.")
+            return True
+        log_fail("Speaker diarization dependencies are not ready")
+        return False
+
+
+def prefetch_default_models(*, splash=None, splash_msg=None) -> bool:
+    log_step("Prefetching default models")
+    if not ensure_torch_ready(splash=splash, splash_msg=splash_msg):
+        log_warn("Skipping model prefetch because PyTorch is not healthy.")
+        return False
+    if not ensure_hf_hub_compatible(splash=splash, splash_msg=splash_msg):
+        return False
+    cfg = load_config()
+    whisper_model = str(getattr(cfg, "whisper_model", "") or "medium")
+
+    from ..core.i18n import TRANSLATION_MODELS
+
+    target_lang = str(getattr(cfg, "target_lang", "") or "en→cs")
+    translation_model = TRANSLATION_MODELS.get(target_lang, TRANSLATION_MODELS["en→cs"])
+
+    def runner():
+        queue_startup_splash(f"Prefetching whisper model '{whisper_model}'...")
+        log_info(f"Prefetch whisper model: {whisper_model}")
+        from faster_whisper import WhisperModel
+
+        WhisperModel(whisper_model, device="cpu", compute_type="int8")
+
+        queue_startup_splash(f"Prefetching translation model '{translation_model}'...")
+        log_info(f"Prefetch translation model: {translation_model}")
+        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+        AutoTokenizer.from_pretrained(translation_model)
+        try:
+            AutoModelForSeq2SeqLM.from_pretrained(
+                translation_model,
+                use_safetensors=True,
+                torch_dtype="auto",
+            )
+        except (OSError, ValueError):
+            AutoModelForSeq2SeqLM.from_pretrained(
+                translation_model,
+                torch_dtype="auto",
+            )
+
+    ok = _run_with_splash(
+        "Prefetching default models (first setup may take a while)...",
+        splash,
+        splash_msg,
+        runner,
+    )
+    if ok:
+        log_success("Default models prefetched")
+    else:
+        log_warn("Default model prefetch did not complete")
+    return ok
+
+
+def install_dependencies(
+    *,
+    do_core: bool,
+    do_speakers: bool,
+    do_models: bool,
+    splash=None,
+    splash_msg=None,
+    allow_ffmpeg_download: bool = True,
+) -> bool:
+    log_step("Running dependency setup")
+    overall_ok = True
+
+    if do_core:
+        queue_startup_splash("Checking core dependencies...")
+        core_ok = ensure_torch_ready(splash=splash, splash_msg=splash_msg)
+        if not core_ok:
+            overall_ok = False
+            log_warn("Core dependency setup: PyTorch failed")
+        try:
+            ensure_ffmpeg_assets(allow_download=allow_ffmpeg_download, splash=splash, splash_msg=splash_msg)
+        except Exception as exc:
+            overall_ok = False
+            log_warn(f"Core dependency setup: FFmpeg failed ({exc})")
+
+    if do_speakers:
+        speaker_ok = ensure_speaker_deps_ready(splash=splash, splash_msg=splash_msg)
+        if not speaker_ok:
+            overall_ok = False
+
+    if do_models:
+        model_ok = prefetch_default_models(splash=splash, splash_msg=splash_msg)
+        if not model_ok:
+            overall_ok = False
+
+    if overall_ok:
+        log_success("Dependency setup completed")
+    else:
+        log_warn("Dependency setup finished with warnings/errors")
+    return overall_ok
 
 
 def parse_args(argv: list[str] | None = None):
@@ -677,11 +1192,34 @@ def parse_args(argv: list[str] | None = None):
     parser.add_argument("--no-cuda", action="store_true", help="Compatibility flag (no effect in EXE mode)")
     parser.add_argument("--install-gpu", action="store_true", help="Install/upgrade torch with CUDA support")
     parser.add_argument("--install-cpu", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--install-deps", action="store_true", help="Install app dependencies without launching GUI")
+    parser.add_argument("--deps-core", action="store_true", help="Install core dependencies (torch + ffmpeg)")
+    parser.add_argument("--deps-speakers", action="store_true", help="Install optional speaker dependencies")
+    parser.add_argument("--deps-models", action="store_true", help="Prefetch default whisper/translation models")
+    parser.add_argument("--ensure-speakers", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--torch-self-check", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--non-interactive", action="store_true", help="Run setup without splash window")
     return parser.parse_args(argv)
 
 
 def launch_app(argv: list[str] | None = None):
     args = parse_args(argv)
+
+    if args.torch_self_check:
+        # Frozen EXE cannot run `python -c ...`; this mode is used by _torch_status_isolated.
+        ensure_site_packages_on_path()
+        payload = {"ok": False, "cuda": False, "version": "", "error": ""}
+        try:
+            import torch  # type: ignore
+
+            payload["ok"] = True
+            payload["cuda"] = bool(torch.cuda.is_available())
+            payload["version"] = str(getattr(torch, "__version__", "unknown"))
+        except Exception as exc:
+            payload["error"] = f"{type(exc).__name__}: {exc}"
+        print(json.dumps(payload))
+        return
+
     init_log()
 
     log_info(f"Platform: {platform.platform()}")
@@ -691,6 +1229,16 @@ def launch_app(argv: list[str] | None = None):
     ensure_assets_on_path()
     ensure_site_packages_on_path()
     _cleanup_stale_torch_metadata()
+
+    if args.ensure_speakers:
+        ok = ensure_speaker_deps_ready(
+            allow_full_install=True,
+            splash=None,
+            splash_msg=None,
+        )
+        if not ok:
+            raise SystemExit(1)
+        return
 
     if args.install_gpu or args.install_cpu:
         splash, splash_msg = create_startup_splash()
@@ -707,6 +1255,39 @@ def launch_app(argv: list[str] | None = None):
 
         if not ok:
             show_error_dialog("GPU setup failed. Please run the installer again or check runtime.log.")
+        return
+
+    if args.install_deps:
+        flags_selected = any([args.deps_core, args.deps_speakers, args.deps_models])
+        do_core = args.deps_core or not flags_selected
+        do_speakers = args.deps_speakers or not flags_selected
+        do_models = args.deps_models or not flags_selected
+
+        allow_ffmpeg_download = not args.no_ffmpeg_download
+        splash = None
+        splash_msg = None
+        if not args.non_interactive:
+            splash, splash_msg = create_startup_splash()
+        try:
+            ok = install_dependencies(
+                do_core=do_core,
+                do_speakers=do_speakers,
+                do_models=do_models,
+                splash=splash,
+                splash_msg=splash_msg,
+                allow_ffmpeg_download=allow_ffmpeg_download,
+            )
+            if splash and splash_msg:
+                update_startup_splash(
+                    splash,
+                    splash_msg,
+                    "Dependency setup complete." if ok else "Dependency setup finished with warnings.",
+                )
+                time.sleep(0.5)
+        finally:
+            close_startup_splash(splash)
+        if not ok and not args.non_interactive:
+            show_error_dialog("Dependency setup finished with warnings. Check runtime.log.")
         return
 
     if args.doctor:

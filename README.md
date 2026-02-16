@@ -4,6 +4,8 @@ TranscribeMate is a Windows desktop GUI for:
 - downloading media from YouTube (optional, via `yt-dlp`),
 - speech-to-text transcription (via `faster-whisper`),
 - subtitle translation,
+- optional speaker diarization with post-process speaker mapping (`*.diarization.json` sidecar),
+- optional speaker-labeled SRT subtitles and batch speaker post-processing from sidecars,
 - conference-style folder transcription to `.txt` / `.md`,
 - exporting video with subtitles, `.srt`, timestamped transcripts, and summary packs for ChatGPT / Confluence.
 
@@ -23,7 +25,10 @@ No Python installation is required for end users.
 1. Run the installer.
 1. Launch TranscribeMate from the Desktop or Start Menu shortcut.
 
-During installation, TranscribeMate starts GPU dependency setup (PyTorch). On every launch it re-checks Torch/CUDA and automatically repairs missing GPU dependencies while showing progress. This can take several minutes and requires internet access.
+During installation, setup installs speaker diarization dependencies automatically and can optionally install core deps/model prefetch so first launch is faster.
+- On a fresh install, optional dependency tasks are preselected.
+- On upgrades, optional dependency tasks default to off to avoid unnecessary redownloads.
+- On every launch the app still validates dependencies and repairs missing parts if needed.
 
 On first launch the app may:
 - download FFmpeg,
@@ -54,6 +59,8 @@ The app saves outputs into:
 - `transcribemate_outputs/videos`
 - `transcribemate_outputs/originals` (only if enabled)
 
+When speaker diarization is enabled, transcript outputs include speaker prefixes and the app stores a diarization sidecar in `transcripts/` for later speaker-name post-processing (single file or batch folder mode).
+
 Temporary working folders named `_tm_work_*` are created inside your output directory and deleted automatically after each run.
 
 ## Developer Setup
@@ -61,6 +68,12 @@ Temporary working folders named `_tm_work_*` are created inside your output dire
 ### Requirements
 - Python 3.12 (64-bit recommended)
 - Inno Setup 6 (https://jrsoftware.org/isinfo.php)
+
+Optional speaker diarization requires:
+- `pyannote.audio` Python package (included in `requirements.txt`; can also be installed via `requirements-diarization.txt`)
+- `HF_TOKEN` with access to `pyannote/speaker-diarization-3.1`
+
+If speaker diarization is enabled and `pyannote.audio` is missing, the app will attempt an automatic on-demand install into the per-user app data environment.
 
 ### Testing
 ```powershell
@@ -83,6 +96,8 @@ python main.py
 ```powershell
 ./build_exe.ps1
 ```
+
+If `requirements-diarization.txt` is present, the build script also attempts to install optional diarization dependencies so the speaker feature is available in the packaged EXE.
 
 Output:
 - `dist/TranscribeMate/TranscribeMate.exe`

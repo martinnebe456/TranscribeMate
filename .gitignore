@@ -24,6 +24,8 @@ config.json
 Thumbs.db
 .vscode/
 .idea/
+.codex/
+skills/
 
 # Logs
 *.log

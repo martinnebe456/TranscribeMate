@@ -37,6 +37,13 @@ class AppConfig:
     keep_originals: bool = False
     output_prefix: str = ""
     notify_on_done: bool = False
+    enable_diarization: bool = False
+    diarization_min_speakers: int = 0
+    diarization_max_speakers: int = 0
+    diarization_review_after_file: bool = False
+    speaker_prefix_in_srt: bool = False
+    show_unmapped_speakers: bool = True
+    speaker_profile_prefill: bool = True
     sub_font: str = "Arial"
     sub_size: int = 24
     sub_color: str = "#FFFFFF"
@@ -62,6 +69,25 @@ class AppConfig:
         self.keep_originals = bool(self.keep_originals)
         self.output_prefix = str(self.output_prefix).strip()
         self.notify_on_done = bool(self.notify_on_done)
+        self.enable_diarization = bool(self.enable_diarization)
+        try:
+            self.diarization_min_speakers = max(0, int(self.diarization_min_speakers))
+        except Exception:
+            self.diarization_min_speakers = 0
+        try:
+            self.diarization_max_speakers = max(0, int(self.diarization_max_speakers))
+        except Exception:
+            self.diarization_max_speakers = 0
+        if (
+            self.diarization_min_speakers > 0
+            and self.diarization_max_speakers > 0
+            and self.diarization_max_speakers < self.diarization_min_speakers
+        ):
+            self.diarization_max_speakers = self.diarization_min_speakers
+        self.diarization_review_after_file = bool(self.diarization_review_after_file)
+        self.speaker_prefix_in_srt = bool(self.speaker_prefix_in_srt)
+        self.show_unmapped_speakers = bool(self.show_unmapped_speakers)
+        self.speaker_profile_prefill = bool(self.speaker_profile_prefill)
 
 
 def load_config() -> AppConfig:
