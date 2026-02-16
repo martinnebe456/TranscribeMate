@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import List
 
 from ..core.gpu import torch_device
-from ..core.types import TranscriptionResult
+from ..core.types import TranscriptSegment, TranscriptionResult
 
 LOGGER = logging.getLogger(__name__)
 
@@ -48,7 +47,7 @@ def faster_whisper_transcribe(
 
     whisper_lang = None if language == "auto" else language
     segments, info = wmodel.transcribe(str(media_path), language=whisper_lang, beam_size=5)
-    segment_list: List = []
+    segment_list: list[TranscriptSegment] = []
 
     detected_lang = info.language if info.language else "en"
     log(f"[INFO] Detected language: {detected_lang}\n")
@@ -63,10 +62,16 @@ def faster_whisper_transcribe(
         if stop_flag and stop_flag.is_set():
             raise RuntimeError("Stopped by user.")
 
-        segment_list.append(seg)
         start_ts = format_timestamp(seg.start)
         end_ts = format_timestamp(seg.end)
         text = seg.text.strip()
+        segment_list.append(
+            TranscriptSegment(
+                start=float(seg.start),
+                end=float(seg.end),
+                text=text,
+            )
+        )
 
         last_end = float(seg.end)
         srt_lines.append(f"{idx}\n{start_ts} --> {end_ts}\n{text}\n")

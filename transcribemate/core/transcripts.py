@@ -33,19 +33,40 @@ def format_duration(seconds: float) -> str:
     return format_hms(seconds)
 
 
-def render_raw_transcript(segments: Iterable) -> str:
+def _speaker_display(seg, include_unmapped_speakers: bool = True) -> str:
+    speaker_name = str(getattr(seg, "speaker_name", "") or "").strip()
+    if speaker_name:
+        return speaker_name
+    if include_unmapped_speakers:
+        speaker_id = str(getattr(seg, "speaker_id", "") or "").strip()
+        if speaker_id:
+            return speaker_id
+    return ""
+
+
+def _speaker_prefix(seg, include_unmapped_speakers: bool = True) -> str:
+    speaker = _speaker_display(seg, include_unmapped_speakers=include_unmapped_speakers)
+    return f"{speaker}: " if speaker else ""
+
+
+def render_raw_transcript(segments: Iterable, include_unmapped_speakers: bool = True) -> str:
     lines: List[str] = []
     for seg in segments:
         text = seg.text.strip()
         if text:
-            lines.append(text)
+            lines.append(f"{_speaker_prefix(seg, include_unmapped_speakers=include_unmapped_speakers)}{text}")
     body = "\n".join(lines).strip()
     return body + ("\n" if body else "")
 
 
-def render_clean_transcript(segments: Iterable, pause_threshold: float = CLEAN_PAUSE_SECONDS) -> str:
+def render_clean_transcript(
+    segments: Iterable,
+    pause_threshold: float = CLEAN_PAUSE_SECONDS,
+    include_unmapped_speakers: bool = True,
+) -> str:
     paragraphs: List[str] = []
     current_parts: List[str] = []
+    current_speaker = ""
     prev_norm = ""
     prev_end = None
 
@@ -53,21 +74,37 @@ def render_clean_transcript(segments: Iterable, pause_threshold: float = CLEAN_P
         text = seg.text.strip()
         if not text:
             continue
+        speaker = _speaker_display(seg, include_unmapped_speakers=include_unmapped_speakers)
         norm = " ".join(text.lower().split())
-        if prev_norm == norm:
+        norm_key = f"{speaker}::{norm}"
+        if prev_norm == norm_key:
             continue
 
         gap = (float(seg.start) - prev_end) if prev_end is not None else 0.0
-        if prev_end is not None and gap >= pause_threshold and current_parts:
-            paragraphs.append(" ".join(current_parts).strip())
+        speaker_changed = bool(current_parts and speaker != current_speaker)
+        if (prev_end is not None and gap >= pause_threshold and current_parts) or speaker_changed:
+            paragraph_text = " ".join(current_parts).strip()
+            if paragraph_text:
+                if current_speaker:
+                    paragraphs.append(f"{current_speaker}: {paragraph_text}")
+                else:
+                    paragraphs.append(paragraph_text)
             current_parts = []
+
+        if not current_parts:
+            current_speaker = speaker
 
         current_parts.append(text)
         prev_end = float(seg.end)
-        prev_norm = norm
+        prev_norm = norm_key
 
     if current_parts:
-        paragraphs.append(" ".join(current_parts).strip())
+        paragraph_text = " ".join(current_parts).strip()
+        if paragraph_text:
+            if current_speaker:
+                paragraphs.append(f"{current_speaker}: {paragraph_text}")
+            else:
+                paragraphs.append(paragraph_text)
 
     body = "\n\n".join(p for p in paragraphs if p).strip()
     return body + ("\n" if body else "")
@@ -76,10 +113,12 @@ def render_clean_transcript(segments: Iterable, pause_threshold: float = CLEAN_P
 def _clean_paragraphs_with_timestamps(
     segments: Iterable,
     pause_threshold: float = CLEAN_PAUSE_SECONDS,
+    include_unmapped_speakers: bool = True,
 ) -> List[Tuple[float, str]]:
     paragraphs: List[Tuple[float, str]] = []
     current_parts: List[str] = []
     current_start: float | None = None
+    current_speaker = ""
     prev_norm = ""
     prev_end = None
 
@@ -87,36 +126,56 @@ def _clean_paragraphs_with_timestamps(
         text = seg.text.strip()
         if not text:
             continue
+        speaker = _speaker_display(seg, include_unmapped_speakers=include_unmapped_speakers)
         norm = " ".join(text.lower().split())
-        if prev_norm == norm:
+        norm_key = f"{speaker}::{norm}"
+        if prev_norm == norm_key:
             continue
 
         seg_start = float(seg.start)
         gap = (seg_start - prev_end) if prev_end is not None else 0.0
-        if prev_end is not None and gap >= pause_threshold and current_parts:
-            paragraphs.append((current_start or seg_start, " ".join(current_parts).strip()))
+        speaker_changed = bool(current_parts and speaker != current_speaker)
+        if (prev_end is not None and gap >= pause_threshold and current_parts) or speaker_changed:
+            paragraph_text = " ".join(current_parts).strip()
+            if paragraph_text:
+                if current_speaker:
+                    paragraph_text = f"{current_speaker}: {paragraph_text}"
+                paragraphs.append((current_start or seg_start, paragraph_text))
             current_parts = []
             current_start = None
 
         if current_start is None:
             current_start = seg_start
+            current_speaker = speaker
         current_parts.append(text)
         prev_end = float(seg.end)
-        prev_norm = norm
+        prev_norm = norm_key
 
     if current_parts:
-        paragraphs.append((current_start or 0.0, " ".join(current_parts).strip()))
+        paragraph_text = " ".join(current_parts).strip()
+        if paragraph_text:
+            if current_speaker:
+                paragraph_text = f"{current_speaker}: {paragraph_text}"
+            paragraphs.append((current_start or 0.0, paragraph_text))
 
     return [(ts, text) for ts, text in paragraphs if text]
 
 
-def _raw_lines_with_timestamps(segments: Iterable) -> List[Tuple[float, str]]:
+def _raw_lines_with_timestamps(
+    segments: Iterable,
+    include_unmapped_speakers: bool = True,
+) -> List[Tuple[float, str]]:
     lines: List[Tuple[float, str]] = []
     for seg in segments:
         text = seg.text.strip()
         if not text:
             continue
-        lines.append((float(seg.start), text))
+        lines.append(
+            (
+                float(seg.start),
+                f"{_speaker_prefix(seg, include_unmapped_speakers=include_unmapped_speakers)}{text}",
+            )
+        )
     return lines
 
 
@@ -124,11 +183,16 @@ def render_timestamped_transcript(
     segments: Iterable,
     clean_text: bool,
     pause_threshold: float = CLEAN_PAUSE_SECONDS,
+    include_unmapped_speakers: bool = True,
 ) -> str:
     entries = (
-        _clean_paragraphs_with_timestamps(segments, pause_threshold)
+        _clean_paragraphs_with_timestamps(
+            segments,
+            pause_threshold,
+            include_unmapped_speakers=include_unmapped_speakers,
+        )
         if clean_text
-        else _raw_lines_with_timestamps(segments)
+        else _raw_lines_with_timestamps(segments, include_unmapped_speakers=include_unmapped_speakers)
     )
     lines: List[str] = []
     for ts, text in entries:
@@ -149,6 +213,7 @@ def build_metadata(
     part_total: int,
     speaker: str | None = None,
     topic: str | None = None,
+    speaker_map: Dict[str, str] | None = None,
 ) -> Dict[str, str]:
     generated = datetime.now().isoformat(timespec="minutes")
     device_label = result.device
@@ -178,6 +243,16 @@ def build_metadata(
         cleaned_topic = str(topic).strip()
         if cleaned_topic:
             metadata["Topic"] = cleaned_topic
+    if speaker_map:
+        lines: List[str] = []
+        for speaker_id in sorted(speaker_map.keys()):
+            speaker_name = str(speaker_map[speaker_id] or "").strip()
+            if speaker_name:
+                lines.append(f"{speaker_id} = {speaker_name}")
+            else:
+                lines.append(speaker_id)
+        if lines:
+            metadata["Speakers"] = "\n".join(lines)
     return metadata
 
 
@@ -418,10 +493,12 @@ def export_transcripts(
     speaker: str = "",
     topic: str = "",
     summary_lang: str = "auto",
+    base_name_override: str = "",
+    include_unmapped_speakers: bool = True,
 ) -> List[Path]:
     part_seconds = int(split_minutes) * 60 if int(split_minutes) > 0 else 0
     parts = split_segments(result.segments, part_seconds)
-    base_name = timestamped_base_name(media_path, prefix=output_prefix)
+    base_name = base_name_override.strip() or timestamped_base_name(media_path, prefix=output_prefix)
     outputs: List[Path] = []
 
     for idx, segs in enumerate(parts, start=1):
@@ -438,9 +515,14 @@ def export_transcripts(
             part_total=len(parts),
             speaker=speaker,
             topic=topic,
+            speaker_map=result.speaker_map,
         )
 
-        transcript_body = render_clean_transcript(segs) if clean_text else render_raw_transcript(segs)
+        transcript_body = (
+            render_clean_transcript(segs, include_unmapped_speakers=include_unmapped_speakers)
+            if clean_text
+            else render_raw_transcript(segs, include_unmapped_speakers=include_unmapped_speakers)
+        )
         txt_path = unique_path(transcripts_dir, f"{base_name}{part_suffix}.txt")
         txt_path.write_text(transcript_body, encoding="utf-8")
         outputs.append(txt_path)
@@ -454,7 +536,11 @@ def export_transcripts(
             log(f"[OK] Markdown saved: {md_path}\n")
 
         if generate_summary_pack:
-            transcript_ts = render_timestamped_transcript(segs, clean_text=clean_text)
+            transcript_ts = render_timestamped_transcript(
+                segs,
+                clean_text=clean_text,
+                include_unmapped_speakers=include_unmapped_speakers,
+            )
             outputs.extend(
                 export_summary_pack(
                     media_path=media_path,

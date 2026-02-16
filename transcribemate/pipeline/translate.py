@@ -7,6 +7,19 @@ import re
 from pathlib import Path
 
 LOGGER = logging.getLogger(__name__)
+_SPEAKER_PREFIX_PATTERN = re.compile(r"^(?P<prefix>[^:\n]{1,80}):\s*(?P<body>.+)$", re.DOTALL)
+
+
+def _split_speaker_prefix(text: str) -> tuple[str, str]:
+    cleaned = str(text or "").strip()
+    match = _SPEAKER_PREFIX_PATTERN.match(cleaned)
+    if not match:
+        return "", cleaned
+    prefix = match.group("prefix").strip()
+    body = match.group("body").strip()
+    if not body:
+        return "", cleaned
+    return f"{prefix}: ", body
 
 
 def translate_srt(
@@ -50,6 +63,7 @@ def translate_srt(
     blocks = re.split(r"\n{2,}", srt.strip())
 
     texts = []
+    speaker_prefixes = []
     parsed = []
     for block in blocks:
         lines = block.splitlines()
@@ -60,7 +74,9 @@ def translate_srt(
         ts = lines[1].strip()
         text = "\n".join(lines[2:]).strip()
         parsed.append(([idx, ts], text))
-        texts.append(text.replace("\n", " "))
+        prefix, body = _split_speaker_prefix(text.replace("\n", " "))
+        texts.append(body)
+        speaker_prefixes.append(prefix)
 
     total = max(1, len(texts))
     log(f"[INFO] Subtitle lines to translate: {len(texts)}\n")
@@ -86,8 +102,10 @@ def translate_srt(
             out_blocks.append("\n".join(header))
         else:
             translated = out[j].strip()
+            prefix = speaker_prefixes[j] if j < len(speaker_prefixes) else ""
             j += 1
-            out_blocks.append("\n".join([header[0], header[1], translated]))
+            rendered = f"{prefix}{translated}".strip()
+            out_blocks.append("\n".join([header[0], header[1], rendered]))
 
     out_srt.parent.mkdir(parents=True, exist_ok=True)
     out_srt.write_text("\n\n".join(out_blocks) + "\n", encoding="utf-8")

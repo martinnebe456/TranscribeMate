@@ -13,11 +13,12 @@ import sys
 import tempfile
 import time
 import threading
+import traceback
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 import tkinter as tk
-from tkinter import colorchooser, filedialog
+from tkinter import colorchooser, filedialog, ttk
 
 import ttkbootstrap as tb
 from tkinterdnd2 import DND_FILES, TkinterDnD
@@ -67,6 +68,19 @@ from ..core.i18n import (
 )
 from ..core.models import force_refresh_models
 from ..core.paths import ensure_tools, user_data_dir
+from ..core.runlog import append_run_log, create_run_log
+from ..core.types import TranscriptSegment, TranscriptionResult
+from ..pipeline.diarize import (
+    apply_speaker_mapping,
+    assign_speakers_to_segments,
+    build_speaker_sidecar,
+    build_speakerized_srt,
+    diarize_media,
+    load_speaker_sidecar,
+    rewrite_srt_speaker_prefixes,
+    save_speaker_sidecar,
+    speaker_ids_in_order,
+)
 from ..pipeline.subtitles import hard_subtitles, soft_subtitles
 from ..pipeline.transcribe import faster_whisper_transcribe
 from ..core.transcripts import export_transcripts
@@ -139,6 +153,8 @@ class App(DnDWindow):
         self.stop_flag = threading.Event()
         self.worker = None
         self.uiq = queue.Queue()
+        self._run_log_path: Optional[Path] = None
+        self._run_log_lock = threading.Lock()
 
         # State variables
         self.source_mode = tb.StringVar(value="youtube")
@@ -169,6 +185,15 @@ class App(DnDWindow):
         self.keep_originals = tb.BooleanVar(value=self.cfg.keep_originals)
         self.output_prefix = tb.StringVar(value=getattr(self.cfg, "output_prefix", ""))
         self.notify_on_done = tb.BooleanVar(value=getattr(self.cfg, "notify_on_done", False))
+        self.enable_diarization = tb.BooleanVar(value=getattr(self.cfg, "enable_diarization", False))
+        self.diarization_min_speakers = tb.IntVar(value=getattr(self.cfg, "diarization_min_speakers", 0))
+        self.diarization_max_speakers = tb.IntVar(value=getattr(self.cfg, "diarization_max_speakers", 0))
+        self.diarization_review_after_file = tb.BooleanVar(
+            value=getattr(self.cfg, "diarization_review_after_file", False)
+        )
+        self.speaker_prefix_in_srt = tb.BooleanVar(value=getattr(self.cfg, "speaker_prefix_in_srt", False))
+        self.show_unmapped_speakers = tb.BooleanVar(value=getattr(self.cfg, "show_unmapped_speakers", True))
+        self.speaker_profile_prefill = tb.BooleanVar(value=getattr(self.cfg, "speaker_profile_prefill", True))
 
         self.subtitle_mode = tb.StringVar(value=self.cfg.subtitle_mode)
         self.show_log = tb.BooleanVar(value=True)
@@ -178,6 +203,7 @@ class App(DnDWindow):
         self._conf_meta: Dict[str, Dict[str, str]] = {}
         self._conf_meta_path: Optional[Path] = None
         self._conf_selected_path: Optional[Path] = None
+        self._speaker_profiles: Dict[str, Dict[str, str]] = {"by_label": {}, "recent_names": {}}
 
         if not self.auto_model.get() and self.model.get() in QUICK_MODEL_MAP.values():
             self.quick_model_key.set(quick_model_key_for_model(self.model.get()))
@@ -203,6 +229,7 @@ class App(DnDWindow):
         self._gpu_smi_available = shutil.which("nvidia-smi") is not None
         self._step_started_at: Optional[float] = None
 
+        self._load_speaker_profiles()
         self._build_ui()
         self._setup_drag_drop()
         self.after(100, self._drain_uiq)
@@ -290,6 +317,25 @@ class App(DnDWindow):
         self.cfg.keep_originals = bool(self.keep_originals.get())
         self.cfg.output_prefix = self.output_prefix.get().strip()
         self.cfg.notify_on_done = bool(self.notify_on_done.get())
+        self.cfg.enable_diarization = bool(self.enable_diarization.get())
+        try:
+            self.cfg.diarization_min_speakers = max(0, int(self.diarization_min_speakers.get()))
+        except Exception:
+            self.cfg.diarization_min_speakers = 0
+        try:
+            self.cfg.diarization_max_speakers = max(0, int(self.diarization_max_speakers.get()))
+        except Exception:
+            self.cfg.diarization_max_speakers = 0
+        if (
+            self.cfg.diarization_min_speakers > 0
+            and self.cfg.diarization_max_speakers > 0
+            and self.cfg.diarization_max_speakers < self.cfg.diarization_min_speakers
+        ):
+            self.cfg.diarization_max_speakers = self.cfg.diarization_min_speakers
+        self.cfg.diarization_review_after_file = bool(self.diarization_review_after_file.get())
+        self.cfg.speaker_prefix_in_srt = bool(self.speaker_prefix_in_srt.get())
+        self.cfg.show_unmapped_speakers = bool(self.show_unmapped_speakers.get())
+        self.cfg.speaker_profile_prefill = bool(self.speaker_profile_prefill.get())
         self.cfg.sub_font = self.sub_font.get()
         self.cfg.sub_size = self.sub_size.get()
         self.cfg.sub_color = self.sub_color.get()
@@ -304,8 +350,60 @@ class App(DnDWindow):
             return table[key]
         return I18N["en"].get(key, key)
 
+    def _append_run_log(self, message: str):
+        with self._run_log_lock:
+            log_file = self._run_log_path
+        if not log_file:
+            return
+        try:
+            append_run_log(log_file, message)
+        except Exception:
+            # Logging must never break the UI pipeline.
+            pass
+
+    def _open_pipeline_run_log(
+        self,
+        *,
+        source_mode: str,
+        output_mode: str,
+        out_root: Path,
+        model: str,
+        src_language: str,
+        target_lang: str,
+        enable_diarization: bool,
+    ) -> Optional[Path]:
+        try:
+            log_file = create_run_log(prefix="pipeline", keep=10)
+        except Exception:
+            return None
+
+        with self._run_log_lock:
+            self._run_log_path = log_file
+
+        self._append_run_log("=== Pipeline session start ===")
+        self._append_run_log(f"[INFO] Log file: {log_file}")
+        self._append_run_log(f"[INFO] Source mode: {source_mode}")
+        self._append_run_log(f"[INFO] Output mode: {output_mode}")
+        self._append_run_log(f"[INFO] Output root: {out_root}")
+        self._append_run_log(
+            f"[INFO] Settings snapshot: model={model}, src_lang={src_language}, target={target_lang}, diarization={enable_diarization}"
+        )
+        return log_file
+
+    def _close_pipeline_run_log(self):
+        with self._run_log_lock:
+            log_file = self._run_log_path
+            self._run_log_path = None
+        if not log_file:
+            return
+        try:
+            append_run_log(log_file, "=== Pipeline session end ===")
+        except Exception:
+            pass
+
     # -------- UI queue helpers --------
     def q_log(self, s: str):
+        self._append_run_log(s)
         self.uiq.put(("log", s))
 
     def q_status(self, s: str):
@@ -622,6 +720,20 @@ class App(DnDWindow):
         self.summary_pack_chk.pack(anchor="w")
         self.notify_chk = tb.Checkbutton(options_row, text="", variable=self.notify_on_done)
         self.notify_chk.pack(anchor="w")
+        self.diarization_chk = tb.Checkbutton(options_row, text="", variable=self.enable_diarization)
+        self.diarization_chk.pack(anchor="w")
+        self.diarization_review_chk = tb.Checkbutton(
+            options_row,
+            text="",
+            variable=self.diarization_review_after_file,
+        )
+        self.diarization_review_chk.pack(anchor="w")
+        self.srt_speakers_chk = tb.Checkbutton(options_row, text="", variable=self.speaker_prefix_in_srt)
+        self.srt_speakers_chk.pack(anchor="w")
+        self.show_unmapped_chk = tb.Checkbutton(options_row, text="", variable=self.show_unmapped_speakers)
+        self.show_unmapped_chk.pack(anchor="w")
+        self.profile_prefill_chk = tb.Checkbutton(options_row, text="", variable=self.speaker_profile_prefill)
+        self.profile_prefill_chk.pack(anchor="w")
 
         split_row = tb.Frame(self.transcribe_frame)
         split_row.pack(fill="x", pady=(6, 0))
@@ -629,6 +741,30 @@ class App(DnDWindow):
         self.split_lbl.pack(side="left", padx=(0, 6))
         self.split_spin = tb.Spinbox(split_row, from_=0, to=120, textvariable=self.split_minutes, width=6)
         self.split_spin.pack(side="left")
+
+        diarize_limits_row = tb.Frame(self.transcribe_frame)
+        diarize_limits_row.pack(fill="x", pady=(6, 0))
+        self.diarization_min_lbl = tb.Label(diarize_limits_row, text="")
+        self.diarization_min_lbl.pack(side="left", padx=(0, 6))
+        self.diarization_min_spin = tb.Spinbox(
+            diarize_limits_row,
+            from_=0,
+            to=20,
+            textvariable=self.diarization_min_speakers,
+            width=5,
+        )
+        self.diarization_min_spin.pack(side="left")
+        self.diarization_max_lbl = tb.Label(diarize_limits_row, text="")
+        self.diarization_max_lbl.pack(side="left", padx=(12, 6))
+        self.diarization_max_spin = tb.Spinbox(
+            diarize_limits_row,
+            from_=0,
+            to=20,
+            textvariable=self.diarization_max_speakers,
+            width=5,
+        )
+        self.diarization_max_spin.pack(side="left")
+        self.enable_diarization.trace_add("write", lambda *_args: self._update_diarization_options_state())
 
         # Translation (hidden for transcript-only mode)
         self.trans_frame = tb.Labelframe(opt, text="", padding=10)
@@ -733,6 +869,20 @@ class App(DnDWindow):
 
         self.update_models_btn = tb.Button(actions, text="", command=self.update_models, bootstyle="warning")
         self.update_models_btn.pack(side="left", padx=8)
+        self.review_speakers_btn = tb.Button(
+            actions,
+            text="",
+            command=self.review_speakers_postprocess,
+            bootstyle="secondary",
+        )
+        self.review_speakers_btn.pack(side="left", padx=(0, 8))
+        self.batch_speakers_btn = tb.Button(
+            actions,
+            text="",
+            command=self.batch_review_speakers_postprocess,
+            bootstyle="secondary",
+        )
+        self.batch_speakers_btn.pack(side="left", padx=(0, 8))
         self.open_output_btn = tb.Button(actions, text="", command=self._open_output_dir, bootstyle="secondary")
         self.open_output_btn.pack(side="left", padx=(0, 8))
         self.open_data_btn = tb.Button(actions, text="", command=self._open_app_data_dir, bootstyle="secondary")
@@ -850,6 +1000,16 @@ class App(DnDWindow):
         else:
             self.style_frame.pack_forget()
 
+    def _update_diarization_options_state(self):
+        enabled = bool(self.enable_diarization.get())
+        state = "normal" if enabled else "disabled"
+        self.diarization_min_spin.configure(state=state)
+        self.diarization_max_spin.configure(state=state)
+        self.diarization_review_chk.configure(state=state)
+        self.srt_speakers_chk.configure(state=state)
+        self.show_unmapped_chk.configure(state=state)
+        self.profile_prefill_chk.configure(state=state)
+
     def _update_mode_ui(self):
         mode = normalize_output_mode(self.output_mode_key.get())
         self.output_mode_key.set(mode)
@@ -887,6 +1047,7 @@ class App(DnDWindow):
         self.mdl_frame.pack(side="left", fill="both", expand=True)
         self.mode_hint.configure(text=f"{self.t('mode.hint.prefix')} {hint}")
         self._update_subtitle_options()
+        self._update_diarization_options_state()
         self._update_source_ui()
         self._update_conference_meta_visibility()
 
@@ -1073,6 +1234,76 @@ class App(DnDWindow):
         if d:
             self._set_local_path(Path(d))
 
+    def _speaker_profiles_path(self) -> Path:
+        return user_data_dir() / "speaker_profiles.json"
+
+    def _load_speaker_profiles(self):
+        path = self._speaker_profiles_path()
+        self._speaker_profiles = {"by_label": {}, "recent_names": {}}
+        try:
+            if not path.exists():
+                return
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return
+
+            labels = data.get("by_label")
+            if isinstance(labels, dict):
+                self._speaker_profiles["by_label"] = {
+                    str(key).strip().upper(): str(value or "").strip()
+                    for key, value in labels.items()
+                    if str(value or "").strip()
+                }
+
+            names = data.get("recent_names")
+            if isinstance(names, dict):
+                cleaned = {}
+                for key, value in names.items():
+                    name = str(value or "").strip()
+                    if name:
+                        cleaned[str(key)] = name
+                self._speaker_profiles["recent_names"] = cleaned
+        except Exception:
+            LOGGER.exception("Failed to load speaker profiles")
+
+    def _save_speaker_profiles(self):
+        path = self._speaker_profiles_path()
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": 1,
+                "by_label": self._speaker_profiles.get("by_label", {}),
+                "recent_names": self._speaker_profiles.get("recent_names", {}),
+            }
+            path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        except Exception:
+            LOGGER.exception("Failed to save speaker profiles")
+
+    def _prefill_speaker_map_from_profiles(self, speaker_map: Dict[str, str]) -> Dict[str, str]:
+        merged = {str(key).strip().upper(): str(value or "").strip() for key, value in speaker_map.items()}
+        if not self.speaker_profile_prefill.get():
+            return merged
+
+        defaults = self._speaker_profiles.get("by_label", {})
+        if isinstance(defaults, dict):
+            for label, name in defaults.items():
+                if label and name and not merged.get(label):
+                    merged[label] = str(name).strip()
+        return merged
+
+    def _update_speaker_profiles_from_map(self, speaker_map: Dict[str, str]):
+        labels = self._speaker_profiles.setdefault("by_label", {})
+        names = self._speaker_profiles.setdefault("recent_names", {})
+        for label, value in speaker_map.items():
+            key = str(label).strip().upper()
+            name = str(value or "").strip()
+            if not key:
+                continue
+            if name:
+                labels[key] = name
+                names[name.lower()] = name
+        self._save_speaker_profiles()
+
     # -------- actions --------
     def update_models(self):
         if Messagebox.okcancel(self.t("dialog.update_models.title"), self.t("dialog.update_models.body")) != "OK":
@@ -1082,6 +1313,515 @@ class App(DnDWindow):
             Messagebox.show_info(self.t("dialog.ok"), self.t("dialog.update_models.done"))
         except Exception as e:
             Messagebox.show_error(self.t("dialog.error"), str(e))
+
+    def _speaker_preview_text(
+        self,
+        segments: Sequence[TranscriptSegment],
+        speaker_map: Dict[str, str],
+        limit: int = 350,
+    ) -> str:
+        def fmt(seconds: float) -> str:
+            total = max(0, int(seconds))
+            hours = total // 3600
+            minutes = (total % 3600) // 60
+            secs = total % 60
+            if hours:
+                return f"{hours:02}:{minutes:02}:{secs:02}"
+            return f"{minutes:02}:{secs:02}"
+
+        lines: List[str] = []
+        for seg in list(segments)[:limit]:
+            text = seg.text.strip()
+            if not text:
+                continue
+            speaker_id = seg.speaker_id.strip() or "SPEAKER_00"
+            mapped = speaker_map.get(speaker_id, "").strip()
+            speaker = mapped or seg.speaker_name.strip() or speaker_id
+            lines.append(f"[{fmt(float(seg.start))}] {speaker}: {text}")
+        if len(segments) > limit:
+            lines.append("...")
+        body = "\n".join(lines).strip()
+        return body + ("\n" if body else "")
+
+    def _format_segment_time(self, seconds: float) -> str:
+        total = max(0, int(seconds))
+        hours = total // 3600
+        minutes = (total % 3600) // 60
+        secs = total % 60
+        if hours:
+            return f"{hours:02}:{minutes:02}:{secs:02}"
+        return f"{minutes:02}:{secs:02}"
+
+    def _normalize_ui_speaker_id(self, value: str) -> str:
+        text = str(value or "").strip().upper().replace(" ", "_")
+        if not text:
+            return "SPEAKER_00"
+        if text.startswith("SPEAKER_"):
+            suffix = text.removeprefix("SPEAKER_")
+            if suffix.isdigit():
+                return f"SPEAKER_{int(suffix):02d}"
+            return text
+        if text.isdigit():
+            return f"SPEAKER_{int(text):02d}"
+        return text
+
+    def _open_speaker_review_dialog(
+        self,
+        media_label: str,
+        segments: Sequence[TranscriptSegment],
+        speaker_map: Dict[str, str],
+    ) -> Optional[Dict[str, str]]:
+        editable_segments: List[TranscriptSegment] = (
+            segments if isinstance(segments, list) else list(segments)
+        )
+        speaker_map = self._prefill_speaker_map_from_profiles(speaker_map)
+        speaker_ids = speaker_ids_in_order(editable_segments)
+        for sid in sorted(speaker_map.keys()):
+            sid_norm = self._normalize_ui_speaker_id(sid)
+            if sid_norm not in speaker_ids:
+                speaker_ids.append(sid_norm)
+        if not speaker_ids:
+            speaker_ids = ["SPEAKER_00"]
+        speaker_ids = sorted(set(speaker_ids))
+
+        dialog = tk.Toplevel(self)
+        dialog.title(f"{self.t('speaker.review.title')} — {media_label}")
+        dialog.transient(self)
+        dialog.geometry("1100x760")
+        dialog.minsize(920, 640)
+
+        container = tb.Frame(dialog, padding=12)
+        container.pack(fill="both", expand=True)
+
+        mapping_frame = tb.Labelframe(container, text=self.t("speaker.review.mapping"), padding=8)
+        mapping_frame.pack(fill="x")
+
+        recent_names = sorted(self._speaker_profiles.get("recent_names", {}).values())
+        vars_by_id: Dict[str, tk.StringVar] = {}
+        for speaker_id in speaker_ids:
+            row = tb.Frame(mapping_frame)
+            row.pack(fill="x", pady=2)
+            tb.Label(row, text=speaker_id, width=16).pack(side="left")
+            var = tk.StringVar(value=speaker_map.get(speaker_id, ""))
+            vars_by_id[speaker_id] = var
+            if recent_names:
+                cb = tb.Combobox(row, textvariable=var, values=recent_names, width=32)
+                cb.pack(side="left", fill="x", expand=True, padx=(6, 0))
+            else:
+                tb.Entry(row, textvariable=var).pack(side="left", fill="x", expand=True, padx=(6, 0))
+
+        editor_frame = tb.Labelframe(container, text=self.t("speaker.review.preview"), padding=8)
+        editor_frame.pack(fill="both", expand=True, pady=(8, 0))
+
+        segments_wrap = tb.Frame(editor_frame)
+        segments_wrap.pack(side="left", fill="both", expand=True)
+
+        cols = ("start", "end", "speaker", "text")
+        segments_tree = ttk.Treeview(segments_wrap, columns=cols, show="headings", height=14)
+        segments_tree.heading("start", text="Start")
+        segments_tree.heading("end", text="End")
+        segments_tree.heading("speaker", text=self.t("speaker.review.segment_speaker"))
+        segments_tree.heading("text", text="Text")
+        segments_tree.column("start", width=74, anchor="center")
+        segments_tree.column("end", width=74, anchor="center")
+        segments_tree.column("speaker", width=170, anchor="w")
+        segments_tree.column("text", width=560, anchor="w")
+        segments_tree.pack(side="left", fill="both", expand=True)
+        segments_scroll = tb.Scrollbar(segments_wrap, orient="vertical", command=segments_tree.yview)
+        segments_scroll.pack(side="right", fill="y")
+        segments_tree.configure(yscrollcommand=segments_scroll.set)
+
+        controls = tb.Frame(editor_frame)
+        controls.pack(side="left", fill="y", padx=(8, 0))
+        segment_speaker_var = tk.StringVar(value=speaker_ids[0])
+        tb.Label(controls, text=self.t("speaker.review.segment_speaker")).pack(anchor="w")
+        segment_speaker_cb = tb.Combobox(
+            controls,
+            textvariable=segment_speaker_var,
+            values=speaker_ids,
+            state="readonly",
+            width=20,
+        )
+        segment_speaker_cb.pack(anchor="w", pady=(2, 6))
+
+        preview_txt = tk.Text(controls, wrap="word", width=38, height=20)
+        preview_txt.pack(fill="both", expand=True)
+        preview_txt.configure(state="disabled")
+
+        result: Dict[str, Optional[Dict[str, str]]] = {"mapping": None}
+
+        def current_mapping() -> Dict[str, str]:
+            mapping = {speaker_id: var.get().strip() for speaker_id, var in vars_by_id.items()}
+            for label in speaker_ids_in_order(editable_segments):
+                mapping.setdefault(label, "")
+            return mapping
+
+        def row_speaker_text(seg: TranscriptSegment) -> str:
+            speaker_id = seg.speaker_id.strip() or "SPEAKER_00"
+            mapped = current_mapping().get(speaker_id, "").strip()
+            return f"{speaker_id} ({mapped})" if mapped else speaker_id
+
+        def refresh_segments(selected_idx: Optional[int] = None):
+            segments_tree.delete(*segments_tree.get_children())
+            for idx, seg in enumerate(editable_segments):
+                segments_tree.insert(
+                    "",
+                    "end",
+                    iid=str(idx),
+                    values=(
+                        self._format_segment_time(float(seg.start)),
+                        self._format_segment_time(float(seg.end)),
+                        row_speaker_text(seg),
+                        seg.text.strip(),
+                    ),
+                )
+            if selected_idx is not None and 0 <= selected_idx < len(editable_segments):
+                item_id = str(selected_idx)
+                segments_tree.selection_set(item_id)
+                segments_tree.focus(item_id)
+
+        def selected_index() -> Optional[int]:
+            sel = segments_tree.selection()
+            if not sel:
+                return None
+            try:
+                idx = int(sel[0])
+            except Exception:
+                return None
+            if idx < 0 or idx >= len(editable_segments):
+                return None
+            return idx
+
+        def refresh_preview(*_args):
+            preview_body = self._speaker_preview_text(editable_segments, current_mapping())
+            preview_txt.configure(state="normal")
+            preview_txt.delete("1.0", tk.END)
+            preview_txt.insert("1.0", preview_body)
+            preview_txt.configure(state="disabled")
+            current_idx = selected_index()
+            refresh_segments(selected_idx=current_idx)
+
+        def on_tree_select(_event=None):
+            idx = selected_index()
+            if idx is None:
+                return
+            segment_speaker_var.set(self._normalize_ui_speaker_id(editable_segments[idx].speaker_id))
+
+        def apply_segment_speaker():
+            idx = selected_index()
+            if idx is None:
+                return
+            new_speaker = self._normalize_ui_speaker_id(segment_speaker_var.get())
+            editable_segments[idx].speaker_id = new_speaker
+            if new_speaker not in speaker_ids:
+                speaker_ids.append(new_speaker)
+                speaker_ids.sort()
+                segment_speaker_cb.configure(values=speaker_ids)
+                if new_speaker not in vars_by_id:
+                    vars_by_id[new_speaker] = tk.StringVar(value="")
+            refresh_preview()
+
+        def merge_with_previous():
+            idx = selected_index()
+            if idx is None or idx <= 0:
+                return
+            prev = editable_segments[idx - 1]
+            cur = editable_segments[idx]
+            prev.end = float(cur.end)
+            prev.text = f"{prev.text.strip()} {cur.text.strip()}".strip()
+            del editable_segments[idx]
+            refresh_preview()
+            refresh_segments(selected_idx=idx - 1)
+
+        def split_selected():
+            idx = selected_index()
+            if idx is None:
+                return
+            seg = editable_segments[idx]
+            words = seg.text.strip().split()
+            if len(words) < 2:
+                return
+            midpoint = len(words) // 2
+            left_text = " ".join(words[:midpoint]).strip()
+            right_text = " ".join(words[midpoint:]).strip()
+            if not left_text or not right_text:
+                return
+            start = float(seg.start)
+            end = float(seg.end)
+            if end <= start:
+                return
+            mid_ts = start + (end - start) / 2.0
+            seg.end = mid_ts
+            seg.text = left_text
+            inserted = TranscriptSegment(
+                start=mid_ts,
+                end=end,
+                text=right_text,
+                speaker_id=seg.speaker_id,
+                speaker_name=seg.speaker_name,
+                speaker_confidence=seg.speaker_confidence,
+            )
+            editable_segments.insert(idx + 1, inserted)
+            refresh_preview()
+            refresh_segments(selected_idx=idx + 1)
+
+        def on_apply():
+            mapping = current_mapping()
+            mapping = apply_speaker_mapping(editable_segments, mapping)
+            if isinstance(segments, list) and editable_segments is not segments:
+                segments[:] = editable_segments
+            result["mapping"] = mapping
+            dialog.destroy()
+
+        def on_skip():
+            result["mapping"] = None
+            dialog.destroy()
+
+        for var in vars_by_id.values():
+            var.trace_add("write", refresh_preview)
+
+        tb.Button(controls, text=self.t("speaker.review.segment_speaker"), command=apply_segment_speaker).pack(
+            fill="x",
+            pady=(6, 0),
+        )
+        tb.Button(controls, text=self.t("speaker.review.merge_prev"), command=merge_with_previous).pack(
+            fill="x",
+            pady=(6, 0),
+        )
+        tb.Button(controls, text=self.t("speaker.review.split_mid"), command=split_selected).pack(
+            fill="x",
+            pady=(6, 8),
+        )
+
+        btn_row = tb.Frame(container)
+        btn_row.pack(fill="x", pady=(8, 0))
+        tb.Button(btn_row, text=self.t("speaker.review.skip"), command=on_skip, bootstyle="secondary").pack(
+            side="right",
+            padx=(8, 0),
+        )
+        tb.Button(btn_row, text=self.t("speaker.review.apply"), command=on_apply, bootstyle="success").pack(side="right")
+
+        segments_tree.bind("<<TreeviewSelect>>", on_tree_select)
+        refresh_preview()
+        refresh_segments(selected_idx=0 if editable_segments else None)
+        dialog.protocol("WM_DELETE_WINDOW", on_skip)
+        dialog.grab_set()
+        self.wait_window(dialog)
+        return result["mapping"]
+
+    def _review_speakers_from_worker(
+        self,
+        media_label: str,
+        segments: Sequence[TranscriptSegment],
+        speaker_map: Dict[str, str],
+    ) -> Optional[Dict[str, str]]:
+        done = threading.Event()
+        payload: Dict[str, object] = {}
+
+        def open_dialog():
+            try:
+                payload["mapping"] = self._open_speaker_review_dialog(
+                    media_label,
+                    segments,
+                    self._prefill_speaker_map_from_profiles(speaker_map),
+                )
+            except Exception as exc:
+                payload["error"] = exc
+            finally:
+                done.set()
+
+        self.after(0, open_dialog)
+        done.wait()
+        err = payload.get("error")
+        if isinstance(err, Exception):
+            raise err
+        mapping = payload.get("mapping")
+        return mapping if isinstance(mapping, dict) else None
+
+    def _apply_sidecar_mapping_and_reexport(
+        self,
+        sidecar_path: Path,
+        reviewed_map: Dict[str, str],
+    ) -> bool:
+        sidecar = load_speaker_sidecar(sidecar_path)
+        segments: List[TranscriptSegment] = list(sidecar.get("segments", []))
+        if not segments:
+            return False
+
+        merged_map = dict(sidecar.get("speaker_map", {}))
+        for key, value in reviewed_map.items():
+            merged_map[self._normalize_ui_speaker_id(key)] = str(value or "").strip()
+        speaker_map = apply_speaker_mapping(segments, merged_map)
+        include_unmapped = bool(sidecar.get("include_unmapped_speakers", True))
+        speaker_prefix_in_srt = bool(sidecar.get("speaker_prefix_in_srt", False))
+
+        result = TranscriptionResult(
+            srt_path=Path("."),
+            raw_txt_path=Path("."),
+            segments=segments,
+            detected_lang=str(sidecar.get("detected_lang") or "en"),
+            duration=float(sidecar.get("duration", 0.0) or 0.0),
+            device=str(sidecar.get("device") or "cpu"),
+            compute_type=str(sidecar.get("compute_type") or "int8"),
+            speaker_turns=list(sidecar.get("speaker_turns", [])),
+            speaker_map=speaker_map,
+        )
+
+        transcripts_dir = Path(str(sidecar.get("transcripts_dir") or sidecar_path.parent))
+        summaries_dir = Path(str(sidecar.get("summaries_dir") or (transcripts_dir.parent / "summaries")))
+        srt_source_path = Path(str(sidecar.get("srt_source_path") or "")) if sidecar.get("srt_source_path") else None
+        srt_translated_path = (
+            Path(str(sidecar.get("srt_translated_path") or "")) if sidecar.get("srt_translated_path") else None
+        )
+
+        export_transcripts(
+            media_path=Path(str(sidecar.get("media_path") or sidecar_path.stem)),
+            result=result,
+            transcripts_dir=transcripts_dir,
+            clean_text=bool(sidecar.get("clean_text", True)),
+            export_md=bool(sidecar.get("export_md", True)),
+            split_minutes=int(sidecar.get("split_minutes", 0) or 0),
+            generate_summary_pack=bool(sidecar.get("generate_summary_pack", False)),
+            summaries_dir=summaries_dir,
+            output_mode=normalize_output_mode(str(sidecar.get("output_mode") or "txt_only")),
+            model_name=str(sidecar.get("model_name") or "medium"),
+            log=self.q_log,
+            output_prefix=str(sidecar.get("output_prefix") or ""),
+            speaker=str(sidecar.get("speaker") or ""),
+            topic=str(sidecar.get("topic") or ""),
+            summary_lang=str(sidecar.get("summary_lang") or "auto"),
+            base_name_override=str(sidecar.get("base_name") or ""),
+            include_unmapped_speakers=include_unmapped,
+        )
+
+        if speaker_prefix_in_srt:
+            if srt_source_path and srt_source_path.exists():
+                rewrite_srt_speaker_prefixes(
+                    srt_source_path,
+                    srt_source_path,
+                    segments,
+                    include_unmapped_speakers=include_unmapped,
+                )
+            if srt_translated_path and srt_translated_path.exists():
+                rewrite_srt_speaker_prefixes(
+                    srt_translated_path,
+                    srt_translated_path,
+                    segments,
+                    include_unmapped_speakers=include_unmapped,
+                )
+
+        payload = build_speaker_sidecar(
+            media_path=Path(str(sidecar.get("media_path") or sidecar_path.stem)),
+            base_name=str(sidecar.get("base_name") or ""),
+            result=result,
+            model_name=str(sidecar.get("model_name") or "medium"),
+            output_mode=normalize_output_mode(str(sidecar.get("output_mode") or "txt_only")),
+            output_prefix=str(sidecar.get("output_prefix") or ""),
+            clean_text=bool(sidecar.get("clean_text", True)),
+            export_md=bool(sidecar.get("export_md", True)),
+            split_minutes=int(sidecar.get("split_minutes", 0) or 0),
+            generate_summary_pack=bool(sidecar.get("generate_summary_pack", False)),
+            summary_lang=str(sidecar.get("summary_lang") or "auto"),
+            speaker=str(sidecar.get("speaker") or ""),
+            topic=str(sidecar.get("topic") or ""),
+            include_unmapped_speakers=include_unmapped,
+            speaker_prefix_in_srt=speaker_prefix_in_srt,
+            transcripts_dir=transcripts_dir,
+            summaries_dir=summaries_dir,
+            srt_source_path=srt_source_path,
+            srt_translated_path=srt_translated_path,
+        )
+        save_speaker_sidecar(sidecar_path, payload)
+        self._update_speaker_profiles_from_map(speaker_map)
+        return True
+
+    def review_speakers_postprocess(self):
+        if self.worker and self.worker.is_alive():
+            Messagebox.show_error(self.t("dialog.error"), self.t("error.already_running"))
+            return
+
+        initial_dir = Path(self.out_dir.get()) / "transcribemate_outputs" / "transcripts"
+        sidecar_path_str = filedialog.askopenfilename(
+            title=self.t("speaker.review.pick_sidecar"),
+            initialdir=str(initial_dir),
+            filetypes=[
+                ("Diarization sidecar", "*.diarization.json"),
+                ("JSON", "*.json"),
+            ],
+        )
+        if not sidecar_path_str:
+            return
+
+        sidecar_path = Path(sidecar_path_str)
+        try:
+            sidecar = load_speaker_sidecar(sidecar_path)
+        except Exception as exc:
+            Messagebox.show_error(self.t("dialog.error"), f"{self.t('error.sidecar_invalid')}\n{exc}")
+            return
+
+        segments: List[TranscriptSegment] = list(sidecar.get("segments", []))
+        if not segments:
+            Messagebox.show_error(self.t("dialog.error"), self.t("error.sidecar_invalid"))
+            return
+        media_path = Path(str(sidecar.get("media_path") or sidecar_path.stem))
+        reviewed_map = self._open_speaker_review_dialog(
+            media_path.name,
+            segments,
+            self._prefill_speaker_map_from_profiles(dict(sidecar.get("speaker_map", {}))),
+        )
+        if reviewed_map is None:
+            return
+
+        self._apply_sidecar_mapping_and_reexport(sidecar_path, reviewed_map)
+        Messagebox.show_info(self.t("dialog.ok"), self.t("speaker.review.saved"))
+
+    def batch_review_speakers_postprocess(self):
+        if self.worker and self.worker.is_alive():
+            Messagebox.show_error(self.t("dialog.error"), self.t("error.already_running"))
+            return
+
+        initial_dir = Path(self.out_dir.get()) / "transcribemate_outputs" / "transcripts"
+        folder = filedialog.askdirectory(
+            title=self.t("speaker.review.pick_folder"),
+            initialdir=str(initial_dir),
+        )
+        if not folder:
+            return
+
+        folder_path = Path(folder)
+        sidecars = sorted(folder_path.glob("*.diarization.json"))
+        if not sidecars:
+            Messagebox.show_info(self.t("dialog.ok"), self.t("speaker.review.none_found"))
+            return
+
+        try:
+            first = load_speaker_sidecar(sidecars[0])
+        except Exception as exc:
+            Messagebox.show_error(self.t("dialog.error"), f"{self.t('error.sidecar_invalid')}\n{exc}")
+            return
+
+        first_segments = list(first.get("segments", []))
+        if not first_segments:
+            Messagebox.show_error(self.t("dialog.error"), self.t("error.sidecar_invalid"))
+            return
+
+        reviewed_map = self._open_speaker_review_dialog(
+            f"{folder_path.name} ({len(sidecars)})",
+            first_segments,
+            self._prefill_speaker_map_from_profiles(dict(first.get("speaker_map", {}))),
+        )
+        if reviewed_map is None:
+            return
+
+        done = 0
+        for sidecar_path in sidecars:
+            try:
+                if self._apply_sidecar_mapping_and_reexport(sidecar_path, reviewed_map):
+                    done += 1
+            except Exception as exc:
+                self.q_log(f"[WARN] Batch speaker update failed for {sidecar_path}: {exc}\n")
+
+        Messagebox.show_info(self.t("dialog.ok"), self.t("speaker.review.batch_saved").format(count=done))
 
     def start(self):
         if self.worker and self.worker.is_alive():
@@ -1180,6 +1920,25 @@ class App(DnDWindow):
             split_minutes = max(0, int(self.split_minutes.get()))
         except Exception:
             split_minutes = 0
+        enable_diarization = bool(self.enable_diarization.get())
+        try:
+            diarization_min_speakers = max(0, int(self.diarization_min_speakers.get()))
+        except Exception:
+            diarization_min_speakers = 0
+        try:
+            diarization_max_speakers = max(0, int(self.diarization_max_speakers.get()))
+        except Exception:
+            diarization_max_speakers = 0
+        if (
+            diarization_min_speakers > 0
+            and diarization_max_speakers > 0
+            and diarization_max_speakers < diarization_min_speakers
+        ):
+            diarization_max_speakers = diarization_min_speakers
+        diarization_review_after_file = bool(self.diarization_review_after_file.get()) and enable_diarization
+        speaker_prefix_in_srt = bool(self.speaker_prefix_in_srt.get()) and enable_diarization
+        include_unmapped_speakers = bool(self.show_unmapped_speakers.get())
+        speaker_profile_prefill = bool(self.speaker_profile_prefill.get())
         keep_originals = bool(self.keep_originals.get()) and is_youtube
         final_base_dir = self.final_base_dir
 
@@ -1190,6 +1949,15 @@ class App(DnDWindow):
         sub_outline_color = self.sub_outline_color.get()
         sub_outline_width = self.sub_outline_width.get()
         t_local = self.t
+        run_log_path = self._open_pipeline_run_log(
+            source_mode=source_mode,
+            output_mode=output_mode,
+            out_root=out_root,
+            model=model,
+            src_language=src_language,
+            target_lang=target_lang,
+            enable_diarization=enable_diarization,
+        )
 
         def worker():
             nonlocal model
@@ -1201,12 +1969,24 @@ class App(DnDWindow):
 
             try:
                 self.q_log("[INFO] Starting TranscribeMate pipeline\n")
+                if run_log_path:
+                    self.q_log(f"[INFO] Run log file: {run_log_path}\n")
                 self.q_log(f"[INFO] Mode: {output_mode}\n")
                 self.q_log(f"[INFO] Output root: {out_root}\n")
                 if output_mode == "conference" and generate_summary_pack:
                     self.q_log("[INFO] Conference Flow: transcripts + summary pack + Confluence templates\n")
                 self.q_log(
                     f"[INFO] Settings: clean_text={clean_text}, export_md={export_md}, summary_pack={generate_summary_pack}, split_minutes={split_minutes}\n"
+                )
+                self.q_log(
+                    "[INFO] Speaker diarization: "
+                    f"enabled={enable_diarization}, "
+                    f"min={diarization_min_speakers or 'auto'}, "
+                    f"max={diarization_max_speakers or 'auto'}, "
+                    f"review={diarization_review_after_file}, "
+                    f"srt_prefix={speaker_prefix_in_srt}, "
+                    f"show_unmapped={include_unmapped_speakers}, "
+                    f"profile_prefill={speaker_profile_prefill}\n"
                 )
                 self.q_log(
                     f"[INFO] Model: {model} | GPU requested: {prefer_gpu} | Auto model: {self.auto_model.get()}\n"
@@ -1336,17 +2116,70 @@ class App(DnDWindow):
                         f"[INFO] Transcription done: lang={transcription.detected_lang}, duration={transcription.duration:.1f}s\n"
                     )
 
-                    # Export transcripts (.txt/.md) + summary pack
-                    export_step_key = "step.export_with_summary" if generate_summary_pack else "step.export_txt"
-                    self.q_step(step_with_file(export_step_key, i, len(videos), v.name))
-                    self.q_step_indeterminate(True)
                     speaker = ""
                     topic = ""
+                    sidecar_path: Optional[Path] = None
+                    final_srt_src: Optional[Path] = None
+                    final_srt_trans: Optional[Path] = None
+                    srt_source_for_pipeline = transcription.srt_path
                     if output_mode == "conference":
                         entry = conference_meta.get(str(v), {})
                         if isinstance(entry, dict):
                             speaker = entry.get("speaker", "")
                             topic = entry.get("topic", "")
+
+                    if enable_diarization:
+                        self.q_step(step_with_file("step.diarize", i, len(videos), v.name))
+                        self.q_step_progress(0)
+                        speaker_turns = diarize_media(
+                            media_path=v,
+                            prefer_gpu=prefer_gpu,
+                            min_speakers=diarization_min_speakers,
+                            max_speakers=diarization_max_speakers,
+                            hf_token="",
+                            log=self.q_log,
+                            set_step_progress=self.q_step_progress,
+                            stop_flag=self.stop_flag,
+                        )
+                        transcription.speaker_turns = speaker_turns
+                        assign_speakers_to_segments(transcription.segments, speaker_turns)
+                        transcription.speaker_map = apply_speaker_mapping(transcription.segments, {})
+                        if speaker_profile_prefill:
+                            transcription.speaker_map = apply_speaker_mapping(
+                                transcription.segments,
+                                self._prefill_speaker_map_from_profiles(transcription.speaker_map),
+                            )
+
+                        if diarization_review_after_file:
+                            self.q_step(step_with_file("step.review_speakers", i, len(videos), v.name))
+                            reviewed_map = self._review_speakers_from_worker(
+                                v.name,
+                                transcription.segments,
+                                transcription.speaker_map,
+                            )
+                            if reviewed_map is not None:
+                                transcription.speaker_map = apply_speaker_mapping(
+                                    transcription.segments,
+                                    reviewed_map,
+                                )
+
+                        self._update_speaker_profiles_from_map(transcription.speaker_map)
+                        sidecar_path = unique_path(transcripts_dir, f"{base_name}.diarization.json")
+
+                        if speaker_prefix_in_srt:
+                            speaker_srt_tmp = srt_src_dir / f"{sanitize_filename(v.stem)}.{base_name}.speaker.srt"
+                            build_speakerized_srt(
+                                transcription.segments,
+                                speaker_srt_tmp,
+                                include_unmapped_speakers=include_unmapped_speakers,
+                            )
+                            srt_source_for_pipeline = speaker_srt_tmp
+                            self.q_log(f"[INFO] Speakerized source SRT prepared: {speaker_srt_tmp}\n")
+
+                    # Export transcripts (.txt/.md) + summary pack
+                    export_step_key = "step.export_with_summary" if generate_summary_pack else "step.export_txt"
+                    self.q_step(step_with_file(export_step_key, i, len(videos), v.name))
+                    self.q_step_indeterminate(True)
                     export_transcripts(
                         media_path=v,
                         result=transcription,
@@ -1363,8 +2196,33 @@ class App(DnDWindow):
                         speaker=speaker,
                         topic=topic,
                         summary_lang=summary_lang,
+                        base_name_override=base_name,
+                        include_unmapped_speakers=include_unmapped_speakers,
                     )
                     self.q_step_indeterminate(False)
+
+                    if enable_diarization and sidecar_path:
+                        sidecar_payload = build_speaker_sidecar(
+                            media_path=v,
+                            base_name=base_name,
+                            result=transcription,
+                            model_name=model,
+                            output_mode=output_mode,
+                            output_prefix=prefix,
+                            clean_text=clean_text,
+                            export_md=export_md,
+                            split_minutes=split_minutes,
+                            generate_summary_pack=generate_summary_pack,
+                            summary_lang=summary_lang,
+                            speaker=speaker,
+                            topic=topic,
+                            include_unmapped_speakers=include_unmapped_speakers,
+                            speaker_prefix_in_srt=speaker_prefix_in_srt,
+                            transcripts_dir=transcripts_dir,
+                            summaries_dir=summaries_dir,
+                        )
+                        save_speaker_sidecar(sidecar_path, sidecar_payload)
+                        self.q_log(f"[OK] Speaker sidecar saved: {sidecar_path}\n")
 
                     if not translation_needed:
                         self.done_videos += 1
@@ -1377,7 +2235,7 @@ class App(DnDWindow):
                     self.q_step_progress(0)
                     srt_trans_tmp = srt_trans_dir / f"{sanitize_filename(v.stem)}.{lang_suffix}.srt"
                     translate_srt(
-                        transcription.srt_path,
+                        srt_source_for_pipeline,
                         srt_trans_tmp,
                         translation_model,
                         prefer_gpu,
@@ -1398,11 +2256,35 @@ class App(DnDWindow):
                         subtitles_trans_final_dir,
                         f"{base_name}.{lang_suffix}.srt",
                     )
-                    shutil.copy(transcription.srt_path, final_srt_src)
+                    shutil.copy(srt_source_for_pipeline, final_srt_src)
                     shutil.copy(srt_trans_tmp, final_srt_trans)
                     self.q_step_indeterminate(False)
                     self.q_log(f"[OK] Saved: {final_srt_src}\n")
                     self.q_log(f"[OK] Saved: {final_srt_trans}\n")
+
+                    if enable_diarization and sidecar_path:
+                        sidecar_payload = build_speaker_sidecar(
+                            media_path=v,
+                            base_name=base_name,
+                            result=transcription,
+                            model_name=model,
+                            output_mode=output_mode,
+                            output_prefix=prefix,
+                            clean_text=clean_text,
+                            export_md=export_md,
+                            split_minutes=split_minutes,
+                            generate_summary_pack=generate_summary_pack,
+                            summary_lang=summary_lang,
+                            speaker=speaker,
+                            topic=topic,
+                            include_unmapped_speakers=include_unmapped_speakers,
+                            speaker_prefix_in_srt=speaker_prefix_in_srt,
+                            transcripts_dir=transcripts_dir,
+                            summaries_dir=summaries_dir,
+                            srt_source_path=final_srt_src,
+                            srt_translated_path=final_srt_trans,
+                        )
+                        save_speaker_sidecar(sidecar_path, sidecar_payload)
 
                     if output_mode == "srt_only":
                         self.done_videos += 1
@@ -1455,7 +2337,10 @@ class App(DnDWindow):
                     self._notify_completion(final_base_dir)
             except Exception as e:
                 err_msg = str(e)
+                self._append_run_log(f"[TRACE] {traceback.format_exc()}")
                 self.q_log(f"\n[ERROR] {err_msg}\n")
+                if run_log_path:
+                    self.q_log(f"[INFO] Detailed traceback written to: {run_log_path}\n")
                 if "Stopped by user" in err_msg or self.stop_flag.is_set():
                     self.q_status(t_local("status.stop"))
                 else:
@@ -1466,6 +2351,7 @@ class App(DnDWindow):
                 cleanup_workdir(workdir, self.q_log)
                 self.q_step_indeterminate(False)
                 self.q_buttons_reset()
+                self._close_pipeline_run_log()
 
         self.worker = threading.Thread(target=worker, daemon=True)
         self.worker.start()
@@ -1510,6 +2396,13 @@ class App(DnDWindow):
         self.summary_pack_chk.configure(text=self.t("transcribe.summary_pack"))
         self.notify_chk.configure(text=self.t("transcribe.notify_done"))
         self.split_lbl.configure(text=self.t("transcribe.split_minutes"))
+        self.diarization_chk.configure(text=self.t("transcribe.diarization"))
+        self.diarization_min_lbl.configure(text=self.t("transcribe.diarization_min"))
+        self.diarization_max_lbl.configure(text=self.t("transcribe.diarization_max"))
+        self.diarization_review_chk.configure(text=self.t("transcribe.diarization_review"))
+        self.srt_speakers_chk.configure(text=self.t("transcribe.srt_speakers"))
+        self.show_unmapped_chk.configure(text=self.t("transcribe.show_unmapped"))
+        self.profile_prefill_chk.configure(text=self.t("transcribe.profile_prefill"))
         self.trans_frame.configure(text=self.t("translate.title"))
         self.target_lang_lbl.configure(text=self.t("translate.target_language"))
         self.batch_lbl.configure(text=self.t("translate.batch"))
@@ -1531,6 +2424,8 @@ class App(DnDWindow):
         self.start_btn.configure(text=self.t("actions.start"))
         self.stop_btn.configure(text=self.t("actions.stop"))
         self.update_models_btn.configure(text=self.t("actions.update_models"))
+        self.review_speakers_btn.configure(text=self.t("actions.review_speakers"))
+        self.batch_speakers_btn.configure(text=self.t("actions.batch_speakers"))
         self.open_output_btn.configure(text=self.t("actions.open_output"))
         self.open_data_btn.configure(text=self.t("actions.open_data"))
         self.show_log_chk.configure(text=self.t("actions.show_log"))

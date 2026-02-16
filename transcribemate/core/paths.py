@@ -47,6 +47,7 @@ def ensure_site_packages_on_path():
     site_dir = user_site_packages_dir()
     site_str = str(site_dir)
     if site_str not in sys.path:
+        # Prefer per-user runtime packages over bundled copies.
         sys.path.insert(0, site_str)
 
     current_py_path = os.environ.get("PYTHONPATH", "")
@@ -73,6 +74,12 @@ def legacy_log_path() -> Path:
 
 def log_path() -> Path:
     return user_data_dir() / "runtime.log"
+
+
+def run_logs_dir() -> Path:
+    path = user_data_dir() / "logs"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
 
 
 def bundled_bin(name: str) -> Optional[Path]:
