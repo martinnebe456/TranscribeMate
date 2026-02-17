@@ -23,6 +23,8 @@
 <?import javafx.scene.layout.GridPane?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Priority?>
+<?import javafx.scene.layout.Region?>
+<?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
 
 <BorderPane fx:id="rootPane" xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.transcribemate.v2.fx.MainController">
@@ -31,36 +33,43 @@
     <String fx:value="theme-light"/>
   </styleClass>
   <top>
-    <VBox spacing="8.0" styleClass="top-pane">
+    <VBox spacing="10.0" styleClass="app-header-shell">
       <padding>
         <Insets top="12.0" right="16.0" bottom="10.0" left="16.0"/>
       </padding>
-      <Label fx:id="appTitleLabel" text="TranscribeMate" styleClass="title"/>
-      <Label text="Modern JavaFX control center for transcription, translation and diarization" styleClass="subtitle"/>
 
-      <HBox spacing="10.0" alignment="CENTER_LEFT">
+      <HBox spacing="12.0" alignment="CENTER_LEFT" styleClass="app-titlebar card-pane">
         <children>
+          <VBox spacing="2.0">
+            <children>
+              <Label fx:id="appTitleLabel" text="TranscribeMate" styleClass="title"/>
+              <Label text="V2 Studio - transcription, translation, subtitle and speaker workflows" styleClass="subtitle"/>
+            </children>
+          </VBox>
+          <Region HBox.hgrow="ALWAYS"/>
           <Label text="Status" styleClass="small-label"/>
           <Label fx:id="statusLabel" text="Ready" styleClass="status-value"/>
           <Separator orientation="VERTICAL" prefHeight="20.0"/>
           <Label text="Step" styleClass="small-label"/>
           <Label fx:id="stepLabel" text="-" styleClass="status-value"/>
-          <ProgressBar fx:id="progressBar" HBox.hgrow="ALWAYS"/>
-          <Separator orientation="VERTICAL" prefHeight="20.0"/>
-          <Label text="Remaining" styleClass="small-label"/>
-          <Label fx:id="etaLabel" text="--:--" styleClass="eta-value"/>
-        </children>
-      </HBox>
-
-      <HBox spacing="10.0" alignment="CENTER_LEFT" styleClass="header-actions">
-        <children>
-          <CheckBox fx:id="simpleModeBox" text="Simple mode" selected="true" onAction="#onToggleSimpleMode"/>
-          <CheckBox fx:id="autoPreflightBox" text="Run preflight before Start" selected="true"/>
           <Button fx:id="monitorButton" text="System monitor" onAction="#onOpenMonitor" styleClass="accent-btn"/>
         </children>
       </HBox>
 
-      <FlowPane hgap="8.0" vgap="6.0" alignment="CENTER_LEFT" styleClass="action-row">
+      <HBox spacing="10.0" alignment="CENTER_LEFT" styleClass="status-strip card-pane">
+        <children>
+          <Label text="Progress" styleClass="small-label"/>
+          <ProgressBar fx:id="progressBar" HBox.hgrow="ALWAYS"/>
+          <Separator orientation="VERTICAL" prefHeight="20.0"/>
+          <Label text="Remaining" styleClass="small-label"/>
+          <Label fx:id="etaLabel" text="--:--" styleClass="eta-value"/>
+          <Separator orientation="VERTICAL" prefHeight="20.0"/>
+          <CheckBox fx:id="simpleModeBox" text="Simple mode" selected="true" onAction="#onToggleSimpleMode"/>
+          <CheckBox fx:id="autoPreflightBox" text="Run preflight before Start" selected="true"/>
+        </children>
+      </HBox>
+
+      <FlowPane hgap="8.0" vgap="6.0" alignment="CENTER_LEFT" styleClass="action-row card-pane">
         <children>
           <Button fx:id="startButton" text="Start" onAction="#onStart" styleClass="primary-btn"/>
           <Button fx:id="cancelButton" text="Cancel" onAction="#onCancel"/>
@@ -83,28 +92,88 @@
       </padding>
 
       <children>
-        <VBox spacing="8.0" styleClass="module-menu card-pane" prefWidth="210.0">
+        <VBox spacing="8.0" styleClass="main-nav card-pane" prefWidth="220.0">
           <padding>
             <Insets top="12.0" right="10.0" bottom="12.0" left="10.0"/>
           </padding>
           <children>
-            <Label text="Modules" styleClass="section-title"/>
-            <Button fx:id="runModuleButton" text="Offline A/V" onAction="#onModuleOffline" styleClass="button module-btn"/>
-            <Button fx:id="advancedModuleButton" text="YouTube Transcript" onAction="#onModuleYoutube" styleClass="button module-btn"/>
-            <Button fx:id="diarizationModuleButton" text="Speaker Transcript" onAction="#onModuleSpeaker" styleClass="button module-btn"/>
-            <Button fx:id="logsModuleButton" text="Conference Mode" onAction="#onModuleConference" styleClass="button module-btn"/>
-            <Button fx:id="jobsModuleButton" text="YouTube Subtitles" onAction="#onModuleYoutubeSubtitles" styleClass="button module-btn"/>
-            <Button fx:id="youtubeDubModuleButton" text="YouTube Dub" onAction="#onModuleYoutubeDub" styleClass="button module-btn"/>
-            <Button fx:id="settingsModuleButton" text="Settings" onAction="#onModuleSettings" styleClass="button module-btn"/>
+            <Label text="Main menu" styleClass="section-title"/>
+            <Button fx:id="navDashboardButton" text="Dashboard" onAction="#onNavDashboard" styleClass="button main-nav-btn"/>
+            <Button fx:id="navProjectsButton" text="Projects" onAction="#onNavProjects" styleClass="button main-nav-btn"/>
+            <Button fx:id="navFilesButton" text="Files" onAction="#onNavFiles" styleClass="button main-nav-btn"/>
+            <Button fx:id="navModulesButton" text="Modules" onAction="#onNavModules" styleClass="button main-nav-btn"/>
+            <Button fx:id="navJobsButton" text="Jobs" onAction="#onNavJobs" styleClass="button main-nav-btn"/>
+            <Button fx:id="navLogsButton" text="Logs" onAction="#onNavLogs" styleClass="button main-nav-btn"/>
+            <Button fx:id="navSettingsButton" text="Settings" onAction="#onNavSettings" styleClass="button main-nav-btn"/>
             <Separator/>
-            <Label fx:id="moduleFlowTitleLabel" text="Module: Offline A/V" styleClass="section-title"/>
-            <Label fx:id="moduleFlowLabel" text="1) Select local source.&#10;2) Configure model in Settings.&#10;3) Run Preflight and Start." wrapText="true" styleClass="small-label"/>
-            <Button fx:id="moduleFlowActionButton" text="Run Preflight" onAction="#onModuleFlowAction" styleClass="button accent-btn"/>
+            <Label text="Workspace shortcut" styleClass="section-title"/>
+            <Label text="Projects and Files will be fully enabled in the next phase. Current module workflows are already available in Modules." wrapText="true" styleClass="small-label"/>
           </children>
         </VBox>
 
-        <VBox spacing="10.0" HBox.hgrow="ALWAYS">
-          <TabPane fx:id="mainTabs" tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS" styleClass="module-tabs">
+        <StackPane fx:id="workspaceStack" HBox.hgrow="ALWAYS">
+          <children>
+            <VBox fx:id="dashboardPane" spacing="10.0" styleClass="workspace-pane">
+              <children>
+                <VBox spacing="10.0" styleClass="card-pane">
+                  <padding><Insets top="16.0" right="16.0" bottom="16.0" left="16.0"/></padding>
+                  <Label text="Dashboard" styleClass="section-title"/>
+                  <Label text="Welcome to the new V2 workspace shell. Use Main menu to navigate sections. Modules keep full existing functionality and settings." wrapText="true" styleClass="small-label"/>
+                  <HBox spacing="8.0">
+                    <children>
+                      <Button text="Open Modules" onAction="#onNavModules" styleClass="accent-btn"/>
+                      <Button text="Open Jobs" onAction="#onNavJobs"/>
+                      <Button text="Open Logs" onAction="#onNavLogs"/>
+                    </children>
+                  </HBox>
+                </VBox>
+              </children>
+            </VBox>
+
+            <VBox fx:id="projectsPane" spacing="10.0" styleClass="workspace-pane" visible="false" managed="false">
+              <children>
+                <VBox spacing="10.0" styleClass="card-pane">
+                  <padding><Insets top="16.0" right="16.0" bottom="16.0" left="16.0"/></padding>
+                  <Label text="Projects" styleClass="section-title"/>
+                  <Label text="Project workspace (create/open/manage) is planned for Phase 2." wrapText="true" styleClass="small-label"/>
+                </VBox>
+              </children>
+            </VBox>
+
+            <VBox fx:id="filesPane" spacing="10.0" styleClass="workspace-pane" visible="false" managed="false">
+              <children>
+                <VBox spacing="10.0" styleClass="card-pane">
+                  <padding><Insets top="16.0" right="16.0" bottom="16.0" left="16.0"/></padding>
+                  <Label text="Files" styleClass="section-title"/>
+                  <Label text="Integrated file manager and transcript editor are planned for Phase 2." wrapText="true" styleClass="small-label"/>
+                </VBox>
+              </children>
+            </VBox>
+
+            <HBox fx:id="modulesPane" spacing="12.0" visible="false" managed="false">
+              <children>
+                <VBox spacing="8.0" styleClass="module-menu card-pane" prefWidth="210.0">
+                  <padding>
+                    <Insets top="12.0" right="10.0" bottom="12.0" left="10.0"/>
+                  </padding>
+                  <children>
+                    <Label text="Modules" styleClass="section-title"/>
+                    <Button fx:id="runModuleButton" text="Offline A/V" onAction="#onModuleOffline" styleClass="button module-btn"/>
+                    <Button fx:id="advancedModuleButton" text="YouTube Transcript" onAction="#onModuleYoutube" styleClass="button module-btn"/>
+                    <Button fx:id="diarizationModuleButton" text="Speaker Transcript" onAction="#onModuleSpeaker" styleClass="button module-btn"/>
+                    <Button fx:id="logsModuleButton" text="Conference Mode" onAction="#onModuleConference" styleClass="button module-btn"/>
+                    <Button fx:id="jobsModuleButton" text="YouTube Subtitles" onAction="#onModuleYoutubeSubtitles" styleClass="button module-btn"/>
+                    <Button fx:id="youtubeDubModuleButton" text="YouTube Dub" onAction="#onModuleYoutubeDub" styleClass="button module-btn"/>
+                    <Button fx:id="settingsModuleButton" text="Settings" onAction="#onModuleSettings" styleClass="button module-btn"/>
+                    <Separator/>
+                    <Label fx:id="moduleFlowTitleLabel" text="Module: Offline A/V" styleClass="section-title"/>
+                    <Label fx:id="moduleFlowLabel" text="1) Select local source.&#10;2) Configure model in Settings.&#10;3) Run Preflight and Start." wrapText="true" styleClass="small-label"/>
+                    <Button fx:id="moduleFlowActionButton" text="Run Preflight" onAction="#onModuleFlowAction" styleClass="button accent-btn"/>
+                  </children>
+                </VBox>
+
+                <VBox spacing="10.0" HBox.hgrow="ALWAYS">
+                  <TabPane fx:id="mainTabs" tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS" styleClass="module-tabs">
             <tabs>
               <Tab fx:id="runTab" text="Run">
                 <ScrollPane fitToWidth="true" fitToHeight="true">
@@ -506,7 +575,11 @@
             </tabs>
           </TabPane>
 
-        </VBox>
+                </VBox>
+              </children>
+            </HBox>
+          </children>
+        </StackPane>
       </children>
     </HBox>
   </center>
