@@ -4,6 +4,9 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.transcribemate.v2.fx.modules.core.ModuleComponent;
+import com.transcribemate.v2.fx.modules.core.ModuleFlowSpec;
+import com.transcribemate.v2.fx.modules.registry.ModuleRegistry;
 import javafx.animation.KeyFrame;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
@@ -64,7 +67,6 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
-import java.util.prefs.Preferences;
 
 public class MainController {
     private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
@@ -93,14 +95,7 @@ public class MainController {
     private static final String MODULE_CONFERENCE = "conference_mode";
     private static final String MODULE_YOUTUBE_SUBS = "youtube_subtitles";
     private static final String MODULE_YOUTUBE_DUB = "youtube_dub";
-    private static final Set<String> SUPPORTED_MODULES = Set.of(
-            MODULE_OFFLINE,
-            MODULE_YOUTUBE,
-            MODULE_SPEAKER,
-            MODULE_CONFERENCE,
-            MODULE_YOUTUBE_SUBS,
-            MODULE_YOUTUBE_DUB
-    );
+    private static final Set<String> SUPPORTED_MODULES = ModuleRegistry.supportedModuleIds();
     private static final List<String> WHISPER_MODELS = List.of(
             "tiny",
             "tiny.en",
@@ -445,6 +440,15 @@ public class MainController {
     private ComboBox<String> themeBox;
 
     @FXML
+    private ComboBox<String> settingsModuleBox;
+
+    @FXML
+    private Button settingsLoadModuleButton;
+
+    @FXML
+    private Button settingsResetModuleDefaultsButton;
+
+    @FXML
     private Label moduleFlowTitleLabel;
 
     @FXML
@@ -454,12 +458,15 @@ public class MainController {
     private Button moduleFlowActionButton;
 
     private final ObjectMapper mapper = new ObjectMapper();
-    private final Preferences preferences = Preferences.userNodeForPackage(MainController.class);
+    private final JsonPreferences preferences = new JsonPreferences(mapper, resolveRuntimeAppDataDir().resolve("config.json"));
     private final ObservableList<JobRow> jobRows = FXCollections.observableArrayList();
     private final Map<String, JobRow> jobsById = new LinkedHashMap<>();
     private final ObservableList<SpeakerProfileRow> speakerProfiles = FXCollections.observableArrayList();
     private final ObservableList<ConferenceFileRow> conferenceFiles = FXCollections.observableArrayList();
     private final List<LogEntry> allLogs = new ArrayList<>();
+    private final Map<String, ModuleComponent> moduleComponents = ModuleRegistry.byId();
+    private final Map<String, String> moduleLabelsToId = ModuleRegistry.labelToId();
+    private final ModuleComponent.ModuleUiContext moduleUiContext = new ControllerModuleUiContext();
 
     private BackendClient backendClient;
     private String currentJobId;
@@ -470,6 +477,7 @@ public class MainController {
     private boolean themeInitializing;
     private boolean restoringPreferences;
     private boolean runtimeBootstrapRunning;
+    private boolean settingsModuleSelectorSync;
     private String moduleFlowActionKey = "";
     private String activeModule = MODULE_OFFLINE;
     private long etaAnchorMillis = -1L;
@@ -487,6 +495,7 @@ public class MainController {
         setupFilters();
         setupModuleNavigation();
         setupThemeSelector();
+        setupSettingsModuleSelector();
 
         sourceModeBox.valueProperty().addListener((obs, oldVal, newVal) -> updateSourceModeUi());
         translateSubtitlesBox.selectedProperty().addListener((obs, oldVal, newVal) -> updateTranslationUi());
@@ -543,6 +552,19 @@ public class MainController {
         backendClient.sendRequest("get_paths")
                 .thenAccept(result -> Platform.runLater(() -> {
                     appDataDir = result.path("user_data_dir").asText("");
+                    String cfgPathRaw = trimToEmpty(result.path("config_path").asText(""));
+                    if (!cfgPathRaw.isBlank()) {
+                        try {
+                            boolean changed = preferences.setPath(Path.of(cfgPathRaw));
+                            if (changed) {
+                                restoreUiPreferences();
+                                applyUiMode();
+                                activateModule(activeModule, false, true);
+                            }
+                        } catch (Exception ignored) {
+                            // Keep default config path fallback.
+                        }
+                    }
                     addUserLog("INFO", "App data: " + appDataDir);
                 }))
                 .exceptionally(ex -> {
@@ -1424,9 +1446,64 @@ public class MainController {
         themeInitializing = false;
     }
 
+    private void setupSettingsModuleSelector() {
+        if (settingsModuleBox == null) {
+            return;
+        }
+
+        settingsModuleSelectorSync = true;
+        settingsModuleBox.setItems(FXCollections.observableArrayList(moduleLabelsToId.keySet()));
+        String label = moduleLabel(activeModule);
+        if (settingsModuleBox.getItems().contains(label)) {
+            settingsModuleBox.getSelectionModel().select(label);
+        } else if (!settingsModuleBox.getItems().isEmpty()) {
+            settingsModuleBox.getSelectionModel().selectFirst();
+        }
+        settingsModuleSelectorSync = false;
+    }
+
+    @FXML
+    private void onSettingsModuleChanged() {
+        if (settingsModuleSelectorSync) {
+            return;
+        }
+        String selectedLabel = safeValue(settingsModuleBox);
+        String moduleId = moduleLabelsToId.get(selectedLabel);
+        if (moduleId == null || moduleId.isBlank()) {
+            return;
+        }
+        activateModule(moduleId, false, true);
+    }
+
+    @FXML
+    private void onLoadSettingsModule() {
+        onSettingsModuleChanged();
+        addUserLog("INFO", "Loaded settings scope: " + moduleLabel(activeModule));
+    }
+
+    @FXML
+    private void onResetSettingsModuleDefaults() {
+        String selectedLabel = safeValue(settingsModuleBox);
+        String moduleId = moduleLabelsToId.get(selectedLabel);
+        if (moduleId == null || moduleId.isBlank()) {
+            return;
+        }
+        activateModule(moduleId, false, true);
+        applyModuleDefaults(activeModule);
+        enforceModuleConstraints(activeModule, true);
+        saveActiveModuleState();
+        addUserLog("INFO", "Module defaults restored: " + moduleLabel(activeModule));
+    }
+
     private void restoreUiPreferences() {
         restoringPreferences = true;
         try {
+            String storedTheme = normalizeThemeName(preferences.get(PREF_THEME, THEME_LIGHT));
+            themeInitializing = true;
+            themeBox.getSelectionModel().select(storedTheme);
+            themeInitializing = false;
+            applyTheme(storedTheme, false);
+
             simpleModeBox.setSelected(preferences.getBoolean(PREF_SIMPLE_MODE, true));
             autoPreflightBox.setSelected(preferences.getBoolean(PREF_AUTO_PREFLIGHT, true));
             activeModule = normalizeModuleId(preferences.get(PREF_ACTIVE_MODULE, MODULE_OFFLINE));
@@ -1462,41 +1539,49 @@ public class MainController {
         simpleModeBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
             if (!restoringPreferences) {
                 preferences.putBoolean(PREF_SIMPLE_MODE, newVal);
+                preferences.flush();
             }
         });
         autoPreflightBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
             if (!restoringPreferences) {
                 preferences.putBoolean(PREF_AUTO_PREFLIGHT, newVal);
+                preferences.flush();
             }
         });
         sourceModeBox.valueProperty().addListener((obs, oldVal, newVal) -> {
             if (!restoringPreferences && newVal != null) {
                 preferences.put(PREF_SOURCE_MODE, newVal);
+                preferences.flush();
             }
         });
         outputModeBox.valueProperty().addListener((obs, oldVal, newVal) -> {
             if (!restoringPreferences && newVal != null) {
                 preferences.put(PREF_OUTPUT_MODE, newVal);
+                preferences.flush();
             }
         });
         modelField.valueProperty().addListener((obs, oldVal, newVal) -> {
             if (!restoringPreferences && newVal != null) {
                 preferences.put(PREF_MODEL, trimToEmpty(newVal));
+                preferences.flush();
             }
         });
         useGpuBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
             if (!restoringPreferences) {
                 preferences.putBoolean(PREF_USE_GPU, newVal);
+                preferences.flush();
             }
         });
         diarizationEnabledBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
             if (!restoringPreferences) {
                 preferences.putBoolean(PREF_DIARIZATION_ENABLED, newVal);
+                preferences.flush();
             }
         });
         diarizationBackendBox.valueProperty().addListener((obs, oldVal, newVal) -> {
             if (!restoringPreferences && newVal != null) {
                 preferences.put(PREF_DIARIZATION_BACKEND, newVal);
+                preferences.flush();
             }
         });
     }
@@ -1545,44 +1630,13 @@ public class MainController {
             return;
         }
 
-        switch (activeModule) {
-            case MODULE_YOUTUBE -> configureModuleFlow(
-                    "Module: YouTube Transcript",
-                    "1) Set YouTube URL and video/playlist mode.\n2) Tune model in Settings.\n3) Run Preflight and Start.",
-                    "open_run",
-                    "Open Run"
-            );
-            case MODULE_SPEAKER -> configureModuleFlow(
-                    "Module: Speaker Transcript",
-                    "1) Configure source in Run.\n2) Review diarization options in Diarization tab.\n3) Start and check speaker output.",
-                    "open_diarization",
-                    "Open Diarization"
-            );
-            case MODULE_CONFERENCE -> configureModuleFlow(
-                    "Module: Conference Mode",
-                    "1) Set local source and sync conference file rows.\n2) Fill speaker/description/date per file.\n3) Start to export conference transcripts.",
-                    "open_advanced",
-                    "Open Conference"
-            );
-            case MODULE_YOUTUBE_SUBS -> configureModuleFlow(
-                    "Module: YouTube Subtitles",
-                    "1) Set YouTube source in Run.\n2) Configure subtitle style + translation in Advanced.\n3) Start to render subtitled video.",
-                    "open_advanced",
-                    "Open Advanced"
-            );
-            case MODULE_YOUTUBE_DUB -> configureModuleFlow(
-                    "Module: YouTube Dub",
-                    "1) Set YouTube source in Run.\n2) Choose target language in Settings.\n3) Start to generate translated voice-over and replace video audio.",
-                    "open_advanced",
-                    "Open Advanced"
-            );
-            default -> configureModuleFlow(
-                    "Module: Offline A/V",
-                    "1) Select local audio/video source.\n2) Configure model in Settings.\n3) Run Preflight and Start.",
-                    "open_run",
-                    "Open Run"
-            );
-        }
+        ModuleFlowSpec flowSpec = getActiveModuleComponent().flowSpec();
+        configureModuleFlow(
+                flowSpec.title(),
+                flowSpec.details(),
+                flowSpec.actionKey(),
+                flowSpec.actionText()
+        );
     }
 
     private void configureModuleFlow(String title, String details, String actionKey, String actionText) {
@@ -1594,19 +1648,29 @@ public class MainController {
     }
 
     private void activateModule(String moduleId, boolean logChange) {
+        activateModule(moduleId, logChange, false);
+    }
+
+    private void activateModule(String moduleId, boolean logChange, boolean keepCurrentTab) {
         String normalized = normalizeModuleId(moduleId);
+        Tab selectedTab = mainTabs.getSelectionModel().getSelectedItem();
         if (!Objects.equals(activeModule, normalized)) {
             saveActiveModuleState();
             activeModule = normalized;
             preferences.put(PREF_ACTIVE_MODULE, activeModule);
+            preferences.flush();
         }
 
         boolean loaded = loadModuleState(activeModule);
         if (!loaded) {
             applyModuleDefaults(activeModule);
         }
-        enforceModuleConstraints(activeModule);
+        enforceModuleConstraints(activeModule, keepCurrentTab);
+        if (keepCurrentTab && selectedTab != null) {
+            selectModule(selectedTab);
+        }
         syncModuleButtons();
+        syncSettingsModuleSelector();
 
         if (logChange) {
             addUserLog("INFO", "Module selected: " + moduleLabel(activeModule));
@@ -1614,94 +1678,49 @@ public class MainController {
     }
 
     private void applyModuleDefaults(String moduleId) {
-        switch (normalizeModuleId(moduleId)) {
-            case MODULE_YOUTUBE -> {
-                sourceModeBox.getSelectionModel().select("youtube");
-                outputModeBox.getSelectionModel().select("txt_only");
-                diarizationEnabledBox.setSelected(false);
-                keepOriginalsBox.setSelected(true);
-            }
-            case MODULE_SPEAKER -> {
-                sourceModeBox.getSelectionModel().select("local");
-                outputModeBox.getSelectionModel().select("conference");
-                diarizationEnabledBox.setSelected(true);
-                diarizationBackendBox.getSelectionModel().select("stable_local");
-                diarizationProfilePrefillBox.setSelected(true);
-                diarizationPrefixSrtBox.setSelected(true);
-            }
-            case MODULE_CONFERENCE -> {
-                sourceModeBox.getSelectionModel().select("local");
-                outputModeBox.getSelectionModel().select("conference");
-                diarizationEnabledBox.setSelected(false);
-                cleanTextBox.setSelected(true);
-                summaryPackBox.setSelected(true);
-            }
-            case MODULE_YOUTUBE_SUBS -> {
-                sourceModeBox.getSelectionModel().select("youtube");
-                outputModeBox.getSelectionModel().select("video_subs");
-                diarizationEnabledBox.setSelected(false);
-                translateSubtitlesBox.setSelected(true);
-                subtitleModeBox.getSelectionModel().select("soft");
-                targetLangBox.getSelectionModel().select("en->cs");
-            }
-            case MODULE_YOUTUBE_DUB -> {
-                sourceModeBox.getSelectionModel().select("youtube");
-                outputModeBox.getSelectionModel().select("video_dub");
-                diarizationEnabledBox.setSelected(false);
-                translateSubtitlesBox.setSelected(true);
-                targetLangBox.getSelectionModel().select("en->cs");
-            }
-            default -> {
-                sourceModeBox.getSelectionModel().select("local");
-                outputModeBox.getSelectionModel().select("txt_only");
-                diarizationEnabledBox.setSelected(false);
-            }
+        ModuleComponent component = moduleComponents.get(normalizeModuleId(moduleId));
+        if (component == null) {
+            component = moduleComponents.get(MODULE_OFFLINE);
+        }
+        if (component != null) {
+            component.applyDefaults(moduleUiContext);
         }
     }
 
-    private void enforceModuleConstraints(String moduleId) {
-        String normalized = normalizeModuleId(moduleId);
-        switch (normalized) {
-            case MODULE_YOUTUBE -> {
-                sourceModeBox.getSelectionModel().select("youtube");
-                outputModeBox.getSelectionModel().select("txt_only");
-                diarizationEnabledBox.setSelected(false);
-                selectModule(runTab);
-            }
-            case MODULE_SPEAKER -> {
-                sourceModeBox.getSelectionModel().select("local");
-                outputModeBox.getSelectionModel().select("conference");
-                diarizationEnabledBox.setSelected(true);
-                selectModule(runTab);
-            }
-            case MODULE_CONFERENCE -> {
-                sourceModeBox.getSelectionModel().select("local");
-                outputModeBox.getSelectionModel().select("conference");
-                selectModule(advancedTab);
-            }
-            case MODULE_YOUTUBE_SUBS -> {
-                sourceModeBox.getSelectionModel().select("youtube");
-                outputModeBox.getSelectionModel().select("video_subs");
-                diarizationEnabledBox.setSelected(false);
-                selectModule(runTab);
-            }
-            case MODULE_YOUTUBE_DUB -> {
-                sourceModeBox.getSelectionModel().select("youtube");
-                outputModeBox.getSelectionModel().select("video_dub");
-                diarizationEnabledBox.setSelected(false);
-                selectModule(runTab);
-            }
-            default -> {
-                sourceModeBox.getSelectionModel().select("local");
-                outputModeBox.getSelectionModel().select("txt_only");
-                selectModule(runTab);
-            }
+    private void enforceModuleConstraints(String moduleId, boolean keepCurrentTab) {
+        ModuleComponent component = moduleComponents.get(normalizeModuleId(moduleId));
+        if (component == null) {
+            component = moduleComponents.get(MODULE_OFFLINE);
+        }
+        if (component != null) {
+            component.enforceConstraints(moduleUiContext, keepCurrentTab);
         }
 
         sourceModeBox.setDisable(true);
         outputModeBox.setDisable(true);
         updateSourceModeUi();
         updateTranslationUi();
+    }
+
+    private ModuleComponent getActiveModuleComponent() {
+        ModuleComponent component = moduleComponents.get(activeModule);
+        if (component != null) {
+            return component;
+        }
+        return ModuleRegistry.get(MODULE_OFFLINE);
+    }
+
+    private void syncSettingsModuleSelector() {
+        if (settingsModuleBox == null) {
+            return;
+        }
+        String activeLabel = moduleLabel(activeModule);
+        if (Objects.equals(settingsModuleBox.getValue(), activeLabel)) {
+            return;
+        }
+        settingsModuleSelectorSync = true;
+        settingsModuleBox.getSelectionModel().select(activeLabel);
+        settingsModuleSelectorSync = false;
     }
 
     private void updateTranslationUi() {
@@ -1766,6 +1785,7 @@ public class MainController {
         preferences.put(prefix + "conference_title", trimToEmpty(conferenceTitleField.getText()));
         preferences.put(prefix + "conference_date", trimToEmpty(conferenceDateField.getText()));
         preferences.put(prefix + "conference_rows", serializeConferenceRows());
+        preferences.flush();
     }
 
     private boolean loadModuleState(String moduleId) {
@@ -1867,14 +1887,7 @@ public class MainController {
     }
 
     private static String moduleLabel(String moduleId) {
-        return switch (normalizeModuleId(moduleId)) {
-            case MODULE_YOUTUBE -> "YouTube Transcript";
-            case MODULE_SPEAKER -> "Speaker Transcript";
-            case MODULE_CONFERENCE -> "Conference Mode";
-            case MODULE_YOUTUBE_SUBS -> "YouTube Subtitles";
-            case MODULE_YOUTUBE_DUB -> "YouTube Dub";
-            default -> "Offline A/V Transcript";
-        };
+        return ModuleRegistry.labelFor(normalizeModuleId(moduleId));
     }
 
     private static String modulePrefPrefix(String moduleId) {
@@ -1947,6 +1960,7 @@ public class MainController {
         rootPane.getStyleClass().add(themeCssClass);
         currentTheme = normalizedTheme;
         preferences.put(PREF_THEME, normalizedTheme.toLowerCase(Locale.ROOT));
+        preferences.flush();
         if (monitorWindow != null) {
             monitorWindow.applyThemeClass(themeCssClass);
         }
@@ -2076,41 +2090,9 @@ public class MainController {
             ObjectNode translation,
             ObjectNode diarization
     ) {
-        switch (activeModule) {
-            case MODULE_YOUTUBE -> {
-                source.put("mode", "youtube");
-                output.put("mode", "txt_only");
-                translation.put("enabled", false);
-                diarization.put("enabled", false);
-            }
-            case MODULE_SPEAKER -> {
-                source.put("mode", "local");
-                output.put("mode", "conference");
-                translation.put("enabled", false);
-                diarization.put("enabled", true);
-            }
-            case MODULE_CONFERENCE -> {
-                source.put("mode", "local");
-                output.put("mode", "conference");
-                translation.put("enabled", false);
-            }
-            case MODULE_YOUTUBE_SUBS -> {
-                source.put("mode", "youtube");
-                output.put("mode", "video_subs");
-                diarization.put("enabled", false);
-            }
-            case MODULE_YOUTUBE_DUB -> {
-                source.put("mode", "youtube");
-                output.put("mode", "video_dub");
-                translation.put("enabled", true);
-                diarization.put("enabled", false);
-            }
-            default -> {
-                source.put("mode", "local");
-                output.put("mode", "txt_only");
-                translation.put("enabled", false);
-                diarization.put("enabled", false);
-            }
+        ModuleComponent component = getActiveModuleComponent();
+        if (component != null) {
+            component.applyPayloadOverrides(source, output, translation, diarization);
         }
     }
 
@@ -2557,6 +2539,15 @@ public class MainController {
         if (settingsRepairRuntimeButton != null) {
             settingsRepairRuntimeButton.setDisable(running || runtimeBootstrapRunning);
         }
+        if (settingsLoadModuleButton != null) {
+            settingsLoadModuleButton.setDisable(running);
+        }
+        if (settingsResetModuleDefaultsButton != null) {
+            settingsResetModuleDefaultsButton.setDisable(running);
+        }
+        if (settingsModuleBox != null) {
+            settingsModuleBox.setDisable(running);
+        }
     }
 
     private void resetEtaDisplay() {
@@ -2623,6 +2614,83 @@ public class MainController {
             return String.format(Locale.ROOT, "%dm %02ds", minutes, seconds);
         }
         return String.format(Locale.ROOT, "%ds", seconds);
+    }
+
+    private final class ControllerModuleUiContext implements ModuleComponent.ModuleUiContext {
+        @Override
+        public void selectSourceMode(String value) {
+            selectComboValue(sourceModeBox, value);
+        }
+
+        @Override
+        public void selectOutputMode(String value) {
+            selectComboValue(outputModeBox, value);
+        }
+
+        @Override
+        public void setDiarizationEnabled(boolean value) {
+            diarizationEnabledBox.setSelected(value);
+        }
+
+        @Override
+        public void selectDiarizationBackend(String value) {
+            selectComboValue(diarizationBackendBox, value);
+        }
+
+        @Override
+        public void setDiarizationProfilePrefill(boolean value) {
+            diarizationProfilePrefillBox.setSelected(value);
+        }
+
+        @Override
+        public void setDiarizationPrefixSrt(boolean value) {
+            diarizationPrefixSrtBox.setSelected(value);
+        }
+
+        @Override
+        public void setKeepOriginals(boolean value) {
+            keepOriginalsBox.setSelected(value);
+        }
+
+        @Override
+        public void setCleanText(boolean value) {
+            cleanTextBox.setSelected(value);
+        }
+
+        @Override
+        public void setSummaryPack(boolean value) {
+            summaryPackBox.setSelected(value);
+        }
+
+        @Override
+        public void setTranslateSubtitles(boolean value) {
+            translateSubtitlesBox.setSelected(value);
+        }
+
+        @Override
+        public void selectSubtitleMode(String value) {
+            selectComboValue(subtitleModeBox, value);
+        }
+
+        @Override
+        public void selectTargetLang(String value) {
+            selectComboValue(targetLangBox, value);
+        }
+
+        @Override
+        public void selectRunTab() {
+            selectModule(runTab);
+        }
+
+        @Override
+        public void selectAdvancedTab() {
+            selectModule(advancedTab);
+        }
+
+        @Override
+        public void selectDiarizationTab() {
+            selectModule(diarizationTab);
+        }
     }
 
     private void addUserLog(String level, String message) {
@@ -2829,6 +2897,15 @@ public class MainController {
         if (settingsRepairRuntimeButton != null) {
             settingsRepairRuntimeButton.setDisable(true);
         }
+        if (settingsLoadModuleButton != null) {
+            settingsLoadModuleButton.setDisable(true);
+        }
+        if (settingsResetModuleDefaultsButton != null) {
+            settingsResetModuleDefaultsButton.setDisable(true);
+        }
+        if (settingsModuleBox != null) {
+            settingsModuleBox.setDisable(true);
+        }
 
         addUserLog("INFO", repairMode ? "Starting runtime repair..." : "Starting online runtime setup...");
 
@@ -2966,6 +3043,15 @@ public class MainController {
                 }
                 if (settingsRepairRuntimeButton != null) {
                     settingsRepairRuntimeButton.setDisable(false);
+                }
+                if (settingsLoadModuleButton != null) {
+                    settingsLoadModuleButton.setDisable(false);
+                }
+                if (settingsResetModuleDefaultsButton != null) {
+                    settingsResetModuleDefaultsButton.setDisable(false);
+                }
+                if (settingsModuleBox != null) {
+                    settingsModuleBox.setDisable(false);
                 }
                 closeButton.setDisable(false);
                 dialog.setOnCloseRequest(null);
@@ -3274,5 +3360,128 @@ public class MainController {
             cursor = cursor.getCause();
         }
         return trimToEmpty(cursor.getMessage()).isBlank() ? cursor.toString() : cursor.getMessage();
+    }
+
+    private static final class JsonPreferences {
+        private static final String ROOT_UI_KEY = "ui_preferences";
+
+        private final ObjectMapper mapper;
+        private Path path;
+        private ObjectNode rootNode;
+        private ObjectNode uiNode;
+        private boolean loaded;
+
+        private JsonPreferences(ObjectMapper mapper, Path initialPath) {
+            this.mapper = mapper;
+            this.path = initialPath;
+            this.rootNode = mapper.createObjectNode();
+            this.uiNode = mapper.createObjectNode();
+            this.loaded = false;
+        }
+
+        private synchronized boolean setPath(Path newPath) {
+            if (newPath == null) {
+                return false;
+            }
+            Path normalized = newPath.toAbsolutePath().normalize();
+            if (normalized.equals(path)) {
+                return false;
+            }
+            path = normalized;
+            loaded = false;
+            ensureLoaded();
+            return true;
+        }
+
+        private synchronized String get(String key, String defaultValue) {
+            ensureLoaded();
+            JsonNode node = uiNode.get(key);
+            if (node == null || node.isNull()) {
+                return defaultValue;
+            }
+            return node.asText(defaultValue);
+        }
+
+        private synchronized boolean getBoolean(String key, boolean defaultValue) {
+            ensureLoaded();
+            JsonNode node = uiNode.get(key);
+            if (node == null || node.isNull()) {
+                return defaultValue;
+            }
+            return node.asBoolean(defaultValue);
+        }
+
+        private synchronized int getInt(String key, int defaultValue) {
+            ensureLoaded();
+            JsonNode node = uiNode.get(key);
+            if (node == null || node.isNull()) {
+                return defaultValue;
+            }
+            return node.asInt(defaultValue);
+        }
+
+        private synchronized void put(String key, String value) {
+            ensureLoaded();
+            uiNode.put(key, value == null ? "" : value);
+        }
+
+        private synchronized void putBoolean(String key, boolean value) {
+            ensureLoaded();
+            uiNode.put(key, value);
+        }
+
+        private synchronized void putInt(String key, int value) {
+            ensureLoaded();
+            uiNode.put(key, value);
+        }
+
+        private synchronized void flush() {
+            ensureLoaded();
+            if (path == null) {
+                return;
+            }
+            try {
+                Path parent = path.getParent();
+                if (parent != null) {
+                    Files.createDirectories(parent);
+                }
+                String json = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(rootNode);
+                Files.writeString(path, json, StandardCharsets.UTF_8);
+            } catch (Exception ignored) {
+                // Best effort only. Runtime should not fail on preference persistence issues.
+            }
+        }
+
+        private void ensureLoaded() {
+            if (loaded) {
+                return;
+            }
+
+            ObjectNode loadedRoot = mapper.createObjectNode();
+            try {
+                if (path != null && Files.isRegularFile(path)) {
+                    String text = Files.readString(path, StandardCharsets.UTF_8);
+                    JsonNode parsed = mapper.readTree(text);
+                    if (parsed instanceof ObjectNode parsedObject) {
+                        loadedRoot = parsedObject;
+                    }
+                }
+            } catch (Exception ignored) {
+                loadedRoot = mapper.createObjectNode();
+            }
+
+            JsonNode existingUiNode = loadedRoot.get(ROOT_UI_KEY);
+            ObjectNode loadedUiNode;
+            if (existingUiNode instanceof ObjectNode objectNode) {
+                loadedUiNode = objectNode;
+            } else {
+                loadedUiNode = mapper.createObjectNode();
+                loadedRoot.set(ROOT_UI_KEY, loadedUiNode);
+            }
+
+            rootNode = loadedRoot;
+            uiNode = loadedUiNode;
+            loaded = true;
+        }
     }
 }
