@@ -19,6 +19,7 @@
 <?import javafx.scene.control.TextField?>
 <?import javafx.scene.layout.BorderPane?>
 <?import javafx.scene.layout.ColumnConstraints?>
+<?import javafx.scene.layout.FlowPane?>
 <?import javafx.scene.layout.GridPane?>
 <?import javafx.scene.layout.HBox?>
 <?import javafx.scene.layout.Priority?>
@@ -44,7 +45,10 @@
           <Separator orientation="VERTICAL" prefHeight="20.0"/>
           <Label text="Step" styleClass="small-label"/>
           <Label fx:id="stepLabel" text="-" styleClass="status-value"/>
-          <ProgressBar fx:id="progressBar" prefWidth="360.0" HBox.hgrow="ALWAYS"/>
+          <ProgressBar fx:id="progressBar" HBox.hgrow="ALWAYS"/>
+          <Separator orientation="VERTICAL" prefHeight="20.0"/>
+          <Label text="Remaining" styleClass="small-label"/>
+          <Label fx:id="etaLabel" text="--:--" styleClass="eta-value"/>
         </children>
       </HBox>
 
@@ -55,6 +59,20 @@
           <Button fx:id="monitorButton" text="System monitor" onAction="#onOpenMonitor" styleClass="accent-btn"/>
         </children>
       </HBox>
+
+      <FlowPane hgap="8.0" vgap="6.0" alignment="CENTER_LEFT" styleClass="action-row">
+        <children>
+          <Button fx:id="startButton" text="Start" onAction="#onStart" styleClass="primary-btn"/>
+          <Button fx:id="cancelButton" text="Cancel" onAction="#onCancel"/>
+          <Button fx:id="preflightButton" text="Preflight" onAction="#onRunPreflight"/>
+          <Separator orientation="VERTICAL" prefHeight="20.0"/>
+          <Button fx:id="refreshModelsButton" text="Refresh model cache" onAction="#onRefreshModels"/>
+          <Button fx:id="installRuntimeButton" text="Repair runtime" onAction="#onRepairRuntime"/>
+          <Button fx:id="openOutputButton" text="Open output" onAction="#onOpenOutput"/>
+          <Button fx:id="openDataButton" text="Open app data" onAction="#onOpenData"/>
+          <Button fx:id="healthButton" text="Health" onAction="#onHealth"/>
+        </children>
+      </FlowPane>
     </VBox>
   </top>
 
@@ -399,6 +417,17 @@
 
                       <VBox spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                        <Label text="Runtime maintenance" styleClass="section-title"/>
+                        <Label text="Use repair when runtime dependencies or models are broken. This re-runs online setup and may download several GB. Restart app after success." wrapText="true" styleClass="small-label"/>
+                        <HBox spacing="8.0">
+                          <children>
+                            <Button fx:id="settingsRepairRuntimeButton" text="Repair runtime" onAction="#onRepairRuntime"/>
+                          </children>
+                        </HBox>
+                      </VBox>
+
+                      <VBox spacing="8.0" styleClass="card-pane">
+                        <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                         <Label text="Core processing" styleClass="section-title"/>
                         <GridPane hgap="10.0" vgap="8.0">
                           <columnConstraints>
@@ -455,19 +484,6 @@
             </tabs>
           </TabPane>
 
-          <HBox spacing="8.0" alignment="CENTER_LEFT" styleClass="action-row">
-            <children>
-              <Button fx:id="startButton" text="Start" onAction="#onStart" styleClass="primary-btn"/>
-              <Button fx:id="cancelButton" text="Cancel" onAction="#onCancel"/>
-              <Button fx:id="preflightButton" text="Preflight" onAction="#onRunPreflight"/>
-              <Separator orientation="VERTICAL" prefHeight="20.0"/>
-              <Button fx:id="refreshModelsButton" text="Refresh model cache" onAction="#onRefreshModels"/>
-              <Button fx:id="installRuntimeButton" text="Online runtime setup" onAction="#onInstallOnlineRuntime"/>
-              <Button fx:id="openOutputButton" text="Open output" onAction="#onOpenOutput"/>
-              <Button fx:id="openDataButton" text="Open app data" onAction="#onOpenData"/>
-              <Button fx:id="healthButton" text="Health" onAction="#onHealth"/>
-            </children>
-          </HBox>
         </VBox>
       </children>
     </HBox>

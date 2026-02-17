@@ -19,6 +19,7 @@ javafx-client/target/
 # Legacy/native build outputs (kept ignored if created locally)
 build/
 dist/
+dist_release/
 dist_installer/
 transcribemate/runtime/
 transcribemate/ui/

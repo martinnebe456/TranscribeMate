@@ -1,0 +1,43 @@
+name: Release Windows ZIP
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build_release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build app-image + ZIP + checksum
+        shell: pwsh
+        run: |
+          ./build_v2_release.ps1
+
+      - name: Verify checksums.txt
+        shell: pwsh
+        run: |
+          if (!(Test-Path "dist_release/checksums.txt")) {
+            throw "dist_release/checksums.txt was not generated."
+          }
+          Get-Content "dist_release/checksums.txt"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcribemate-windows-release
+          path: |
+            dist_release/*.zip
+            dist_release/checksums.txt
+          if-no-files-found: error

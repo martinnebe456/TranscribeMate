@@ -71,6 +71,7 @@ public class MainController {
     private static final int MAX_LOG_ENTRIES = 5000;
     private static final int BOOTSTRAP_LOG_MAX_CHARS = 200000;
     private static final String APP_NAME = "TranscribeMate";
+    private static final String RUNTIME_READY_MARKER_NAME = "runtime-ready.json";
     private static final String WINDOW_TITLE_SUFFIX = "JavaFX + Python Backend";
     private static final String PREF_THEME = "ui.theme";
     private static final String PREF_SIMPLE_MODE = "ui.simple_mode";
@@ -163,6 +164,9 @@ public class MainController {
 
     @FXML
     private ProgressBar progressBar;
+
+    @FXML
+    private Label etaLabel;
 
     @FXML
     private TabPane mainTabs;
@@ -399,6 +403,9 @@ public class MainController {
     private Button installRuntimeButton;
 
     @FXML
+    private Button settingsRepairRuntimeButton;
+
+    @FXML
     private Button openOutputButton;
 
     @FXML
@@ -465,6 +472,8 @@ public class MainController {
     private boolean runtimeBootstrapRunning;
     private String moduleFlowActionKey = "";
     private String activeModule = MODULE_OFFLINE;
+    private long etaAnchorMillis = -1L;
+    private double etaAnchorPercent = -1.0;
 
     private Timeline jobsRefreshTimeline;
     private SystemMonitorWindow monitorWindow;
@@ -486,6 +495,7 @@ public class MainController {
         statusLabel.setText("Ready");
         stepLabel.setText("-");
         progressBar.setProgress(0.0);
+        resetEtaDisplay();
         setAppVersion(resolveLocalVersion());
 
         restoreUiPreferences();
@@ -548,12 +558,13 @@ public class MainController {
         statusLabel.setText("Backend offline");
         stepLabel.setText("runtime setup required");
         progressBar.setProgress(0.0);
+        resetEtaDisplay();
         if (details.isBlank()) {
             addTechnicalLog("ERROR", "Backend process failed to start.");
         } else {
             addTechnicalLog("ERROR", "Backend process failed to start: " + details);
         }
-        addUserLog("WARN", "Use 'Online runtime setup' and restart the app.");
+        addUserLog("WARN", "Use 'Repair runtime' and restart the app.");
     }
 
     public void startMandatoryRuntimeSetupOnLaunch() {
@@ -573,6 +584,7 @@ public class MainController {
         statusLabel.setText("Runtime setup required");
         stepLabel.setText("first launch");
         progressBar.setProgress(0.0);
+        resetEtaDisplay();
         addUserLog("WARN", "First launch requires online runtime setup before the app can be used.");
 
         ButtonType startSetupButton = new ButtonType("Start setup", ButtonBar.ButtonData.OK_DONE);
@@ -599,12 +611,12 @@ public class MainController {
 
         Optional<ButtonType> choice = firstLaunchDialog.showAndWait();
         if (choice.isPresent() && choice.get() == startSetupButton) {
-            showRuntimeBootstrapWindow(target, true);
+            showRuntimeBootstrapWindow(target, true, false);
             return;
         }
 
         addUserLog("WARN", "Online runtime setup was not started. The app will not function correctly until setup is completed.");
-        addUserLog("INFO", "Use the 'Online runtime setup' button to continue setup when ready.");
+        addUserLog("INFO", "Use the 'Repair runtime' button to continue setup when ready.");
     }
 
     public void installShortcuts(Scene scene) {
@@ -814,6 +826,7 @@ public class MainController {
         progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
         stepLabel.setText("prepare");
         statusLabel.setText(autoPreflightBox.isSelected() ? "Preflight" : "Starting");
+        resetEtaDisplay();
 
         CompletableFuture<Boolean> preflightFuture = autoPreflightBox.isSelected()
                 ? runPreflightAsync(params, true)
@@ -845,6 +858,7 @@ public class MainController {
                         statusLabel.setText("Error");
                         stepLabel.setText("-");
                         progressBar.setProgress(0.0);
+                        resetEtaDisplay();
                         addTechnicalLog("ERROR", "Failed to start job: " + rootMessage(ex));
                     });
                     return null;
@@ -869,18 +883,21 @@ public class MainController {
         statusLabel.setText("Preflight");
         stepLabel.setText("preflight_check");
         progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+        resetEtaDisplay();
 
         runPreflightAsync(params, true)
                 .thenAccept(ok -> Platform.runLater(() -> {
                     statusLabel.setText(ok ? "Preflight OK" : "Preflight issues");
                     stepLabel.setText("-");
                     progressBar.setProgress(0.0);
+                    resetEtaDisplay();
                 }))
                 .exceptionally(ex -> {
                     Platform.runLater(() -> {
                         statusLabel.setText("Preflight error");
                         stepLabel.setText("-");
                         progressBar.setProgress(0.0);
+                        resetEtaDisplay();
                         addTechnicalLog("ERROR", "Preflight failed: " + rootMessage(ex));
                     });
                     return null;
@@ -932,9 +949,9 @@ public class MainController {
     }
 
     @FXML
-    private void onInstallOnlineRuntime() {
+    private void onRepairRuntime() {
         if (runtimeBootstrapRunning) {
-            addUserLog("WARN", "Online runtime setup is already running.");
+            addUserLog("WARN", "Runtime repair is already running.");
             return;
         }
 
@@ -942,12 +959,40 @@ public class MainController {
         if (target == null) {
             addTechnicalLog(
                     "ERROR",
-                    "Online runtime setup is unavailable. Missing bootstrap_runtime.ps1 or backend bundle."
+                    "Runtime repair is unavailable. Missing bootstrap_runtime.ps1 or backend bundle."
             );
             return;
         }
 
-        showRuntimeBootstrapWindow(target, false);
+        ButtonType startRepairButton = new ButtonType("Start repair", ButtonBar.ButtonData.OK_DONE);
+        ButtonType cancelButtonType = new ButtonType("Cancel", ButtonBar.ButtonData.CANCEL_CLOSE);
+        Alert repairDialog = new Alert(Alert.AlertType.CONFIRMATION);
+        repairDialog.setTitle("Repair Runtime");
+        repairDialog.setHeaderText("Reinstall managed runtime components?");
+        repairDialog.setContentText(
+                "This will re-run runtime bootstrap and may re-download dependencies, models and FFmpeg.\n\n"
+                        + "Use this when backend runtime is broken or CUDA/AI dependencies are inconsistent.\n\n"
+                        + "A restart is recommended after successful repair.\n\n"
+                        + "Continue with runtime repair?"
+        );
+        repairDialog.getButtonTypes().setAll(startRepairButton, cancelButtonType);
+        Stage owner = getStage();
+        if (owner != null) {
+            repairDialog.initOwner(owner);
+        }
+
+        Optional<ButtonType> choice = repairDialog.showAndWait();
+        if (choice.isEmpty() || choice.get() != startRepairButton) {
+            addUserLog("INFO", "Runtime repair cancelled.");
+            return;
+        }
+
+        showRuntimeBootstrapWindow(target, false, true);
+    }
+
+    @FXML
+    private void onInstallOnlineRuntime() {
+        onRepairRuntime();
     }
 
     @FXML
@@ -2129,12 +2174,20 @@ public class MainController {
 
                         stepLabel.setText(step + " (" + String.format(Locale.ROOT, "%.0f", overall) + "%)");
                         statusLabel.setText("Running");
+                        updateEta(overall, indeterminate);
                     }
                 }
                 case "job.started" -> {
                     updateJobStatus(jobId, "running");
+                    boolean affectsCurrent = false;
                     if (jobId != null && !jobId.isBlank() && (currentJobId == null || currentJobId.isBlank())) {
                         currentJobId = jobId;
+                        affectsCurrent = true;
+                    } else if (jobId != null && !jobId.isBlank() && jobId.equals(currentJobId)) {
+                        affectsCurrent = true;
+                    }
+                    if (affectsCurrent) {
+                        resetEtaDisplay();
                     }
                     addUserLog("INFO", withJobPrefix(jobId, "Job running..."));
                     refreshJobsSilently();
@@ -2148,6 +2201,7 @@ public class MainController {
                         statusLabel.setText("Completed");
                         stepLabel.setText("done");
                         progressBar.setProgress(1.0);
+                        setEtaDone();
                         lastOutputDir = finalOut;
                     }
                     addUserLog("SUCCESS", withJobPrefix(jobId, "Job completed. Output: " + finalOut));
@@ -2166,6 +2220,7 @@ public class MainController {
                         statusLabel.setText("Failed");
                         stepLabel.setText("error");
                         progressBar.setProgress(0.0);
+                        resetEtaDisplay();
                     }
                     refreshJobsSilently();
                 }
@@ -2177,6 +2232,7 @@ public class MainController {
                         statusLabel.setText("Cancelled");
                         stepLabel.setText("cancelled");
                         progressBar.setProgress(0.0);
+                        resetEtaDisplay();
                     }
                     refreshJobsSilently();
                 }
@@ -2498,6 +2554,75 @@ public class MainController {
         if (installRuntimeButton != null) {
             installRuntimeButton.setDisable(running || runtimeBootstrapRunning);
         }
+        if (settingsRepairRuntimeButton != null) {
+            settingsRepairRuntimeButton.setDisable(running || runtimeBootstrapRunning);
+        }
+    }
+
+    private void resetEtaDisplay() {
+        etaAnchorMillis = -1L;
+        etaAnchorPercent = -1.0;
+        if (etaLabel != null) {
+            etaLabel.setText("--:--");
+        }
+    }
+
+    private void setEtaDone() {
+        etaAnchorMillis = -1L;
+        etaAnchorPercent = -1.0;
+        if (etaLabel != null) {
+            etaLabel.setText("0s");
+        }
+    }
+
+    private void updateEta(double overallPercent, boolean indeterminate) {
+        if (etaLabel == null) {
+            return;
+        }
+
+        if (indeterminate || overallPercent <= 0.0 || overallPercent >= 100.0) {
+            etaAnchorMillis = -1L;
+            etaAnchorPercent = -1.0;
+            etaLabel.setText("--:--");
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        if (etaAnchorMillis < 0L || etaAnchorPercent < 0.0 || overallPercent <= etaAnchorPercent) {
+            etaAnchorMillis = now;
+            etaAnchorPercent = overallPercent;
+            etaLabel.setText("Estimating...");
+            return;
+        }
+
+        double percentDelta = overallPercent - etaAnchorPercent;
+        long elapsedMillis = now - etaAnchorMillis;
+        if (percentDelta < 0.5 || elapsedMillis < 4000L) {
+            return;
+        }
+
+        double millisPerPercent = elapsedMillis / percentDelta;
+        double remainingPercent = 100.0 - overallPercent;
+        long remainingMillis = Math.round(Math.max(0.0, millisPerPercent * remainingPercent));
+
+        etaLabel.setText(formatDurationShort(remainingMillis));
+
+        etaAnchorMillis = now;
+        etaAnchorPercent = overallPercent;
+    }
+
+    private String formatDurationShort(long millis) {
+        long totalSeconds = Math.max(1L, Math.round(millis / 1000.0));
+        long hours = totalSeconds / 3600L;
+        long minutes = (totalSeconds % 3600L) / 60L;
+        long seconds = totalSeconds % 60L;
+        if (hours > 0L) {
+            return String.format(Locale.ROOT, "%dh %02dm", hours, minutes);
+        }
+        if (minutes > 0L) {
+            return String.format(Locale.ROOT, "%dm %02ds", minutes, seconds);
+        }
+        return String.format(Locale.ROOT, "%ds", seconds);
     }
 
     private void addUserLog(String level, String message) {
@@ -2696,18 +2821,23 @@ public class MainController {
         return Path.of(userHome, ".local", "share", APP_NAME);
     }
 
-    private void showRuntimeBootstrapWindow(RuntimeBootstrapTarget target, boolean mandatoryLaunch) {
+    private void showRuntimeBootstrapWindow(RuntimeBootstrapTarget target, boolean mandatoryLaunch, boolean repairMode) {
         runtimeBootstrapRunning = true;
         if (installRuntimeButton != null) {
             installRuntimeButton.setDisable(true);
         }
+        if (settingsRepairRuntimeButton != null) {
+            settingsRepairRuntimeButton.setDisable(true);
+        }
 
-        addUserLog("INFO", "Starting online runtime setup...");
+        addUserLog("INFO", repairMode ? "Starting runtime repair..." : "Starting online runtime setup...");
 
-        Label headline = new Label("Online Runtime Setup");
+        Label headline = new Label(repairMode ? "Runtime Repair" : "Online Runtime Setup");
         headline.getStyleClass().add("section-title");
 
-        Label intro = new Label("Installing embedded Python, dependencies, AI models and FFmpeg.");
+        Label intro = new Label(repairMode
+                ? "Reinstalling embedded Python runtime, dependencies, AI models and FFmpeg."
+                : "Installing embedded Python, dependencies, AI models and FFmpeg.");
         intro.setWrapText(true);
         intro.getStyleClass().add("small-label");
 
@@ -2743,7 +2873,7 @@ public class MainController {
             dialog.initOwner(owner);
         }
         dialog.initModality(Modality.WINDOW_MODAL);
-        dialog.setTitle("Online Runtime Setup");
+        dialog.setTitle(repairMode ? "Runtime Repair" : "Online Runtime Setup");
         dialog.setMinWidth(860);
         dialog.setMinHeight(520);
         dialog.setScene(new Scene(content, 960, 620));
@@ -2768,6 +2898,16 @@ public class MainController {
             try {
                 Files.createDirectories(target.appDataDir());
                 Files.deleteIfExists(target.progressFilePath());
+                if (repairMode) {
+                    Path markerPath = target.appDataDir()
+                            .resolve("runtime")
+                            .resolve(RUNTIME_READY_MARKER_NAME);
+                    try {
+                        Files.deleteIfExists(markerPath);
+                    } catch (Exception ignored) {
+                        // Best effort only.
+                    }
+                }
 
                 List<String> command = new ArrayList<>();
                 command.add(resolvePowerShellExecutable());
@@ -2824,35 +2964,45 @@ public class MainController {
                 if (installRuntimeButton != null) {
                     installRuntimeButton.setDisable(false);
                 }
+                if (settingsRepairRuntimeButton != null) {
+                    settingsRepairRuntimeButton.setDisable(false);
+                }
                 closeButton.setDisable(false);
                 dialog.setOnCloseRequest(null);
 
                 if (finalProcessError != null) {
-                    status.setText("Runtime setup failed to start.");
+                    status.setText(repairMode ? "Runtime repair failed to start." : "Runtime setup failed to start.");
                     appendBootstrapLogLine(liveLogArea, "ERROR: " + rootMessage(finalProcessError));
-                    addTechnicalLog("ERROR", "Online runtime setup failed to start: " + rootMessage(finalProcessError));
+                    addTechnicalLog(
+                            "ERROR",
+                            (repairMode ? "Runtime repair failed to start: " : "Online runtime setup failed to start: ")
+                                    + rootMessage(finalProcessError)
+                    );
                     return;
                 }
 
                 if (finalExitCode == 0) {
                     progressBarLocal.setProgress(1.0);
-                    status.setText(mandatoryLaunch
+                    status.setText(mandatoryLaunch || repairMode
                             ? "Runtime setup completed successfully. Restart the app."
                             : "Runtime setup completed successfully.");
                     closeAppButton.setDisable(false);
                     closeAppButton.setVisible(true);
                     closeAppButton.setManaged(true);
-                    addUserLog("SUCCESS", "Online runtime setup completed successfully.");
-                    if (mandatoryLaunch || backendClient == null) {
+                    addUserLog("SUCCESS", repairMode
+                            ? "Runtime repair completed successfully."
+                            : "Online runtime setup completed successfully.");
+                    if (mandatoryLaunch || repairMode || backendClient == null) {
                         addUserLog("INFO", "Use 'Close application' and start TranscribeMate again.");
                     }
                     return;
                 }
 
-                status.setText("Runtime setup failed. See bootstrap log.");
+                status.setText(repairMode ? "Runtime repair failed. See bootstrap log." : "Runtime setup failed. See bootstrap log.");
                 addTechnicalLog(
                         "ERROR",
-                        "Online runtime setup failed (exit " + finalExitCode + "). Log: " + target.logFilePath()
+                        (repairMode ? "Runtime repair failed" : "Online runtime setup failed")
+                                + " (exit " + finalExitCode + "). Log: " + target.logFilePath()
                 );
             });
         });

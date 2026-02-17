@@ -119,6 +119,11 @@
     -fx-text-fill: -tm-text;
 }
 
+.eta-value {
+    -fx-font-weight: 700;
+    -fx-text-fill: -tm-text-strong;
+}
+
 .section-title {
     -fx-font-size: 14px;
     -fx-font-weight: 700;
