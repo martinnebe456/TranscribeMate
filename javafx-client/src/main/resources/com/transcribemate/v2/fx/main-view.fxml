@@ -429,6 +429,14 @@
                       <VBox spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                         <Label text="Core processing" styleClass="section-title"/>
+                        <HBox spacing="8.0" alignment="CENTER_LEFT">
+                          <children>
+                            <Label text="Settings module"/>
+                            <ComboBox fx:id="settingsModuleBox" prefWidth="240.0" onAction="#onSettingsModuleChanged"/>
+                            <Button fx:id="settingsLoadModuleButton" text="Load module state" onAction="#onLoadSettingsModule"/>
+                            <Button fx:id="settingsResetModuleDefaultsButton" text="Reset defaults" onAction="#onResetSettingsModuleDefaults"/>
+                          </children>
+                        </HBox>
                         <GridPane hgap="10.0" vgap="8.0">
                           <columnConstraints>
                             <ColumnConstraints minWidth="170.0" prefWidth="180.0"/>

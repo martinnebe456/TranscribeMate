@@ -1,54 +1,99 @@
 # Testing Guide
 
-This document describes the current test suite, what it covers, and how to run it.
+This document describes the current Python test suite for TranscribeMate V2.
 
-## Test runner
+## Runner
 We use `pytest`.
 
-Install dev requirements and run the suite:
+Install dependencies and run all tests:
+
 ```powershell
 python -m pip install -r requirements-dev.txt
-python -m pytest
+python -m pytest -q
 ```
 
-## What is covered
-The tests focus on fast, deterministic helpers that do not require external tools
-or large model downloads. This keeps the suite lightweight and reliable.
+Run only backend V2 contract tests:
 
-### Core helpers
+```powershell
+python -m pytest -q tests/test_v2_protocol.py tests/test_v2_models.py tests/test_v2_service.py tests/test_v2_components.py
+```
+
+Run only shared core/pipeline helper tests:
+
+```powershell
+python -m pytest -q tests/test_core_files.py tests/test_core_process.py tests/test_i18n_summary_lang.py tests/test_pipeline_helpers.py tests/test_diarization_helpers.py tests/test_speaker_srt_helpers.py tests/test_transcripts_metadata.py
+```
+
+## Test inventory
+
+### Shared core helpers
 File: `tests/test_core_files.py`
-- `sanitize_filename` replaces invalid characters.
-- `split_segments` respects the requested segment duration.
-- `unique_path` appends a suffix when the target exists.
-- `timestamped_base_name` includes sanitized prefix/stem.
+- filename sanitization
+- segment splitting by duration
+- unique output path generation
+- timestamped output name generation
 
 File: `tests/test_core_process.py`
-- `safe_run` captures stdout and raises on non-zero exit codes.
+- subprocess wrapper behavior (`safe_run`)
+- stdout capture and non-zero exit handling
 
-### I18n summary language helpers
 File: `tests/test_i18n_summary_lang.py`
-- Normalization of supported/unsupported values.
-- Label generation for the "auto" language option.
-- Round-trip label-to-key conversion for "auto".
+- summary language normalization
+- label mapping for `auto` and round-trip key conversion
 
-### Pipeline helper utilities
+### Shared pipeline and diarization helpers
 File: `tests/test_pipeline_helpers.py`
-- `quality_to_format` output for "best" and specific resolutions.
-- `hex_to_ass_color` RGB → ASS color conversion.
-- `format_timestamp` formatting at zero duration.
+- YouTube quality mapping
+- subtitle ASS color conversion
+- transcript timestamp formatter
+- speaker prefix parsing helper
 
-### Transcript metadata and prompts
+File: `tests/test_diarization_helpers.py`
+- speaker assignment by overlap
+- default speaker fallback
+- diarization sidecar JSON roundtrip
+
+File: `tests/test_speaker_srt_helpers.py`
+- speakerized SRT generation
+- SRT prefix rewriting behavior with/without unmapped speakers
+
+### Transcript metadata rendering
 File: `tests/test_transcripts_metadata.py`
-- Metadata rendering for multi-line "Topic".
-- Summary prompt language instruction (explicit and auto/detected).
+- metadata block formatting
+- summary prompt language line behavior
+- transcript rendering with speaker prefixes
+- conference metadata fields in output metadata
 
-## What is not covered (yet)
-- End-to-end JavaFX UI flows and process integration behavior.
-- Integration with FFmpeg, yt-dlp, Whisper, or translation models.
-- GPU detection and CUDA environment-specific setup behaviors.
+### Backend V2 contracts
+File: `tests/test_v2_protocol.py`
+- JSON-RPC request parsing and validation
+- response error payload shape
 
-## Tips for adding tests
-- Keep tests fast and deterministic (no network, no external binaries).
-- Prefer unit tests for helper functions and pure formatting logic.
-- If you need to mock external tools, isolate behavior behind a small helper
-  and test that helper in isolation.
+File: `tests/test_v2_models.py`
+- request payload parsing/validation
+- module/output constraints
+- translation target normalization
+- conference metadata extension parsing
+
+File: `tests/test_v2_service.py`
+- service capabilities and health/preflight surface
+- preflight behavior when `torch` is missing (warn vs fail by mode)
+
+File: `tests/test_v2_components.py`
+- backend component registry integrity
+- per-module request normalization/contract enforcement
+- component metadata exposure in capabilities response
+
+## Current scope boundaries
+The suite is intentionally fast and deterministic.
+
+Not covered by unit tests:
+- end-to-end JavaFX UI flows
+- full runtime bootstrap/download integration (models, FFmpeg, Python runtime)
+- real GPU/CUDA environment execution paths
+
+## Guidelines for new tests
+- Keep tests offline and deterministic.
+- Prefer pure-function and contract tests over long integration tests.
+- Mock external tools and heavyweight runtime dependencies.
+- Add/adjust tests with each protocol/model/service contract change.

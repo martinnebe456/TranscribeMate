@@ -20,9 +20,10 @@ from ...core.models import force_refresh_models
 from ...core.paths import config_path, ffmpeg_path, log_path, user_data_dir
 from ...core.i18n import LANG_CODES, TRANSLATION_MODELS
 from ...core.version import APP_VERSION
+from .components import get_module_component, list_module_components, supported_module_ids
 from .diarization import supported_backends
 from .models import PipelineRequest, PipelineRunResult, RequestValidationError
-from .pipeline import PipelineCancelledError, PipelineOrchestrator
+from .pipeline import PipelineCancelledError
 from .protocol import EventMessage
 
 EventEmitter = Callable[[EventMessage], None]
@@ -107,6 +108,7 @@ class BackendService:
         }
 
     def _get_capabilities(self) -> dict:
+        module_components = list_module_components()
         return {
             "service": "transcribemate-v2-backend",
             "version": APP_VERSION,
@@ -125,14 +127,8 @@ class BackendService:
                 "get_system_metrics",
             ],
             "output_modes": ["conference", "video_subs", "video_dub", "srt_only", "txt_only"],
-            "modules": [
-                "offline_transcribe",
-                "youtube_transcribe",
-                "speaker_transcribe",
-                "conference_mode",
-                "youtube_subtitles",
-                "youtube_dub",
-            ],
+            "modules": supported_module_ids(),
+            "module_components": [component.to_capability_dict() for component in module_components],
             "translation_targets": sorted(TRANSLATION_MODELS.keys()),
             "translation_lang_codes": dict(LANG_CODES),
             "diarization_backends": supported_backends(),
@@ -209,14 +205,12 @@ class BackendService:
             }
 
         assert request is not None
-
-        if request.module == "conference_mode" and not request.conference_meta:
-            add_check(
-                "conference_meta",
-                "warn",
-                "Conference mode is selected but no per-file conference metadata rows were provided.",
-                level="warn",
-            )
+        module_component = get_module_component(request.module)
+        request = module_component.configure_request(request)
+        module_component.augment_preflight_checks(
+            request,
+            lambda name, status, message, level: add_check(name, status, message, level=level),
+        )
 
         if request.source.mode == "local":
             if request.source.path:
@@ -535,6 +529,8 @@ class BackendService:
 
     def _run_pipeline(self, params: dict) -> dict:
         request = PipelineRequest.from_payload(params)
+        module_component = get_module_component(request.module)
+        request = module_component.configure_request(request)
         job_id = uuid.uuid4().hex
         record = JobRecord(
             job_id=job_id,
@@ -607,6 +603,7 @@ class BackendService:
         return {"job_id": job_id, "removed": True}
 
     def _run_job_thread(self, record: JobRecord):
+        module_component = get_module_component(record.request.module)
         record.status = "running"
         record.started_at = _utc_now()
         self._emit_job_event(
@@ -615,10 +612,11 @@ class BackendService:
             {
                 "status": record.status,
                 "request": record.request.to_dict(),
+                "runtime_profile": module_component.to_capability_dict(),
             },
         )
 
-        orchestrator = PipelineOrchestrator(
+        pipeline = module_component.create_pipeline(
             request=record.request,
             stop_flag=record.stop_flag,
             log_cb=lambda line: self._on_job_log(record, line),
@@ -626,7 +624,7 @@ class BackendService:
         )
 
         try:
-            result: PipelineRunResult = orchestrator.run()
+            result: PipelineRunResult = pipeline.run()
             if record.stop_flag.is_set():
                 record.status = "cancelled"
                 record.finished_at = _utc_now()
