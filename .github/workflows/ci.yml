@@ -1,21 +1,20 @@
-name: CI
+name: CI (Manual)
 
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  tests:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Install test dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements-dev.txt
-      - name: Run tests
-        run: |
-          python -m pytest
+  backend:
+    uses: ./.github/workflows/ci-backend.yml
+
+  frontend:
+    uses: ./.github/workflows/ci-frontend.yml
+
+  lint_and_sanity:
+    uses: ./.github/workflows/lint-and-sanity.yml
+
+  docs_and_contract:
+    uses: ./.github/workflows/docs-and-contract.yml

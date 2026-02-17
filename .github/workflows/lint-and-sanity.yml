@@ -1,0 +1,80 @@
+name: Lint And Sanity
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python_sanity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Python syntax check
+        run: |
+          python -m compileall -q transcribemate tests
+
+      - name: Validate version.txt format
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          value = pathlib.Path("version.txt").read_text(encoding="utf-8").strip()
+          pattern = r"^\d{2}\.\d{2}\.\d{2}\.\d{3,}$"
+          if not re.fullmatch(pattern, value):
+              print(f"Invalid version format: {value!r}")
+              print("Expected: YY.MM.DD.BUILD (e.g. 26.02.17.015)")
+              sys.exit(1)
+          print(f"version.txt format OK: {value}")
+          PY
+
+  powershell_sanity:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: PowerShell parser check
+        shell: pwsh
+        run: |
+          $files = @(
+            "build_v2_release.ps1",
+            "run_v2_backend.ps1",
+            "run_v2_frontend.ps1"
+          )
+          if (Test-Path "scripts") {
+            $files += (Get-ChildItem -Path "scripts" -Filter "*.ps1" -File | Select-Object -ExpandProperty FullName)
+          }
+
+          $errorsFound = @()
+          foreach ($file in $files) {
+            $resolved = (Resolve-Path $file).Path
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($resolved, [ref]$tokens, [ref]$errors)
+            if ($errors -and $errors.Count -gt 0) {
+              foreach ($err in $errors) {
+                $errorsFound += ("{0}:{1}:{2} {3}" -f $resolved, $err.Extent.StartLineNumber, $err.Extent.StartColumnNumber, $err.Message)
+              }
+            }
+          }
+
+          if ($errorsFound.Count -gt 0) {
+            $errorsFound | ForEach-Object { Write-Error $_ }
+            throw "PowerShell parser errors detected."
+          }
+
+          Write-Host "PowerShell parser check passed."
