@@ -109,6 +109,10 @@ public class MainController {
     private static final String MODULE_CONFERENCE = "conference_mode";
     private static final String MODULE_YOUTUBE_SUBS = "youtube_subtitles";
     private static final String MODULE_YOUTUBE_DUB = "youtube_dub";
+    private static final String SECTION_DASHBOARD = "dashboard";
+    private static final String SECTION_PROJECTS = "projects";
+    private static final String SECTION_FILES = "files";
+    private static final String SECTION_MODULES = "modules";
     private static final Set<String> UI_SCHEMA_TABS = Set.of("run", "advanced", "diarization", "logs", "jobs", "settings");
     private static final Set<String> SUPPORTED_MODULES = ModuleRegistry.supportedModuleIds();
     private static final List<String> WHISPER_MODELS = List.of(
@@ -172,6 +176,39 @@ public class MainController {
 
     @FXML
     private BorderPane rootPane;
+
+    @FXML
+    private Button navDashboardButton;
+
+    @FXML
+    private Button navProjectsButton;
+
+    @FXML
+    private Button navFilesButton;
+
+    @FXML
+    private Button navModulesButton;
+
+    @FXML
+    private Button navJobsButton;
+
+    @FXML
+    private Button navLogsButton;
+
+    @FXML
+    private Button navSettingsButton;
+
+    @FXML
+    private VBox dashboardPane;
+
+    @FXML
+    private VBox projectsPane;
+
+    @FXML
+    private VBox filesPane;
+
+    @FXML
+    private HBox modulesPane;
 
     @FXML
     private CheckBox simpleModeBox;
@@ -618,6 +655,7 @@ public class MainController {
     private boolean settingsModuleSelectorSync;
     private String moduleFlowActionKey = "";
     private String activeModule = MODULE_OFFLINE;
+    private String activeSection = SECTION_MODULES;
     private long etaAnchorMillis = -1L;
     private double etaAnchorPercent = -1.0;
 
@@ -633,6 +671,7 @@ public class MainController {
         setupTables();
         setupFilters();
         setupModuleNavigation();
+        setupShellNavigation();
         setupThemeSelector();
         setupSettingsModuleSelector();
 
@@ -863,37 +902,82 @@ public class MainController {
     }
 
     @FXML
+    private void onNavDashboard() {
+        showShellSection(SECTION_DASHBOARD);
+    }
+
+    @FXML
+    private void onNavProjects() {
+        showShellSection(SECTION_PROJECTS);
+    }
+
+    @FXML
+    private void onNavFiles() {
+        showShellSection(SECTION_FILES);
+    }
+
+    @FXML
+    private void onNavModules() {
+        showShellSection(SECTION_MODULES);
+    }
+
+    @FXML
+    private void onNavJobs() {
+        showShellSection(SECTION_MODULES);
+        selectModule(jobsTab);
+    }
+
+    @FXML
+    private void onNavLogs() {
+        showShellSection(SECTION_MODULES);
+        selectModule(logsTab);
+    }
+
+    @FXML
+    private void onNavSettings() {
+        showShellSection(SECTION_MODULES);
+        selectModule(settingsTab);
+    }
+
+    @FXML
     private void onModuleOffline() {
+        showShellSection(SECTION_MODULES);
         activateModule(MODULE_OFFLINE, true);
     }
 
     @FXML
     private void onModuleYoutube() {
+        showShellSection(SECTION_MODULES);
         activateModule(MODULE_YOUTUBE, true);
     }
 
     @FXML
     private void onModuleSpeaker() {
+        showShellSection(SECTION_MODULES);
         activateModule(MODULE_SPEAKER, true);
     }
 
     @FXML
     private void onModuleConference() {
+        showShellSection(SECTION_MODULES);
         activateModule(MODULE_CONFERENCE, true);
     }
 
     @FXML
     private void onModuleYoutubeSubtitles() {
+        showShellSection(SECTION_MODULES);
         activateModule(MODULE_YOUTUBE_SUBS, true);
     }
 
     @FXML
     private void onModuleYoutubeDub() {
+        showShellSection(SECTION_MODULES);
         activateModule(MODULE_YOUTUBE_DUB, true);
     }
 
     @FXML
     private void onModuleSettings() {
+        showShellSection(SECTION_MODULES);
         selectModule(settingsTab);
     }
 
@@ -1759,6 +1843,10 @@ public class MainController {
         mainTabs.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> syncModuleButtons());
     }
 
+    private void setupShellNavigation() {
+        showShellSection(SECTION_MODULES);
+    }
+
     private void setupThemeSelector() {
         themeInitializing = true;
         themeBox.setItems(FXCollections.observableArrayList(THEME_LIGHT, THEME_DARK, THEME_DRACULA));
@@ -2007,7 +2095,57 @@ public class MainController {
             addUserLog("WARN", "Module is unavailable in Simple mode.");
             return;
         }
+        showShellSection(SECTION_MODULES);
         mainTabs.getSelectionModel().select(tab);
+    }
+
+    private void showShellSection(String sectionId) {
+        String normalized = switch (trimToEmpty(sectionId).toLowerCase(Locale.ROOT)) {
+            case SECTION_DASHBOARD -> SECTION_DASHBOARD;
+            case SECTION_PROJECTS -> SECTION_PROJECTS;
+            case SECTION_FILES -> SECTION_FILES;
+            default -> SECTION_MODULES;
+        };
+
+        activeSection = normalized;
+        setNodeVisibleManaged(dashboardPane, SECTION_DASHBOARD.equals(normalized));
+        setNodeVisibleManaged(projectsPane, SECTION_PROJECTS.equals(normalized));
+        setNodeVisibleManaged(filesPane, SECTION_FILES.equals(normalized));
+        setNodeVisibleManaged(modulesPane, SECTION_MODULES.equals(normalized));
+        syncMainNavigation();
+    }
+
+    private void syncMainNavigation() {
+        Tab selectedTab = mainTabs == null ? null : mainTabs.getSelectionModel().getSelectedItem();
+
+        boolean dashboardActive = SECTION_DASHBOARD.equals(activeSection);
+        boolean projectsActive = SECTION_PROJECTS.equals(activeSection);
+        boolean filesActive = SECTION_FILES.equals(activeSection);
+        boolean modulesActive = SECTION_MODULES.equals(activeSection)
+                && selectedTab != jobsTab
+                && selectedTab != logsTab
+                && selectedTab != settingsTab;
+        boolean jobsActive = SECTION_MODULES.equals(activeSection) && selectedTab == jobsTab;
+        boolean logsActive = SECTION_MODULES.equals(activeSection) && selectedTab == logsTab;
+        boolean settingsActive = SECTION_MODULES.equals(activeSection) && selectedTab == settingsTab;
+
+        setMainNavButtonActive(navDashboardButton, dashboardActive);
+        setMainNavButtonActive(navProjectsButton, projectsActive);
+        setMainNavButtonActive(navFilesButton, filesActive);
+        setMainNavButtonActive(navModulesButton, modulesActive);
+        setMainNavButtonActive(navJobsButton, jobsActive);
+        setMainNavButtonActive(navLogsButton, logsActive);
+        setMainNavButtonActive(navSettingsButton, settingsActive);
+    }
+
+    private void setMainNavButtonActive(Button button, boolean active) {
+        if (button == null) {
+            return;
+        }
+        button.getStyleClass().remove("main-nav-btn-active");
+        if (active) {
+            button.getStyleClass().add("main-nav-btn-active");
+        }
     }
 
     private void syncModuleButtons() {
@@ -2018,6 +2156,7 @@ public class MainController {
         setModuleButtonActive(jobsModuleButton, MODULE_YOUTUBE_SUBS.equals(activeModule));
         setModuleButtonActive(youtubeDubModuleButton, MODULE_YOUTUBE_DUB.equals(activeModule));
         setModuleButtonActive(settingsModuleButton, mainTabs.getSelectionModel().getSelectedItem() == settingsTab);
+        syncMainNavigation();
         updateModuleFlow();
     }
 

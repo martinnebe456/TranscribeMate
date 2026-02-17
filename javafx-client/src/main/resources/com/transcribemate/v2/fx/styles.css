@@ -92,11 +92,10 @@
     -tm-divider: #5f4f80;
 }
 
-.top-pane {
+.top-pane,
+.app-header-shell {
     -fx-background-color: -tm-bg-pane;
     -fx-background-radius: 14;
-    -fx-border-color: -tm-border;
-    -fx-border-radius: 14;
 }
 
 .title {
@@ -138,9 +137,24 @@
     -fx-padding: 8 10 8 10;
 }
 
+.app-titlebar {
+    -fx-padding: 10 12 10 12;
+}
+
+.status-strip {
+    -fx-padding: 8 12 8 12;
+}
+
 .workspace-shell {
-    -fx-background-color: -tm-bg-canvas;
-    -fx-background-radius: 12;
+    -fx-background-color: transparent;
+}
+
+.workspace-pane {
+    -fx-background-color: transparent;
+}
+
+.main-nav {
+    -fx-min-width: 220;
 }
 
 .card-pane {
@@ -185,6 +199,25 @@
 
 .module-btn:disabled {
     -fx-opacity: 0.55;
+}
+
+.main-nav-btn {
+    -fx-max-width: Infinity;
+    -fx-alignment: CENTER_LEFT;
+    -fx-background-color: transparent;
+    -fx-text-fill: -tm-text;
+    -fx-border-color: transparent;
+    -fx-font-weight: 700;
+    -fx-padding: 11 12 11 12;
+}
+
+.main-nav-btn:hover {
+    -fx-background-color: -tm-bg-soft;
+}
+
+.main-nav-btn-active {
+    -fx-background-color: linear-gradient(to right, -tm-accent-a, -tm-accent-c);
+    -fx-text-fill: -tm-accent-on;
 }
 
 .module-tabs {
