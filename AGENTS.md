@@ -27,6 +27,10 @@ This guide describes the current repository state (V2-only stack).
   - `MainController.java` - UI orchestration, preflight, jobs, logs
   - `BackendClient.java` - backend subprocess + JSON IPC
   - `SystemMonitorWindow.java` - CPU/RAM/GPU/VRAM charts
+- `javafx-client/src/main/java/com/transcribemate/v2/fx/modules/`
+  - `core/` - shared frontend module contracts
+  - `registry/` - frontend module registry
+  - `<module_id>/` - one independent frontend component per module
 - `javafx-client/src/main/resources/com/transcribemate/v2/fx/`
   - `main-view.fxml` - primary layout
   - `styles.css` - visual theme
@@ -37,6 +41,10 @@ This guide describes the current repository state (V2-only stack).
   - `pipeline.py` - orchestration using shared pipeline/core modules
   - `protocol.py` - request/response/event structures
   - `diarization.py` - backend abstraction (`stable_local`, `advanced_pyannote`)
+- `transcribemate/v2/backend/components/`
+  - `core/` - backend component contracts/adapters
+  - `registry.py` - backend module registry
+  - `<module_id>/` - one independent backend component package per module
 - Shared backend dependencies:
   - `transcribemate/core/`
   - `transcribemate/pipeline/`
