@@ -114,7 +114,7 @@
                         <Insets top="6.0" right="6.0" bottom="6.0" left="6.0"/>
                       </padding>
 
-                      <VBox spacing="8.0" styleClass="card-pane">
+                      <VBox fx:id="runSourceCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                         <Label text="Source" styleClass="section-title"/>
                         <GridPane hgap="10.0" vgap="8.0">
@@ -124,23 +124,23 @@
                             <ColumnConstraints minWidth="120.0" prefWidth="160.0"/>
                           </columnConstraints>
 
-                          <Label text="Source mode" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                          <Label fx:id="sourceModeLabel" text="Source mode" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
                           <ComboBox fx:id="sourceModeBox" GridPane.rowIndex="0" GridPane.columnIndex="1" prefWidth="240.0"/>
 
-                          <Label text="Local file/folder" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                          <Label fx:id="localPathLabel" text="Local file/folder" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
                           <TextField fx:id="localPathField" promptText="C:\\path\\to\\file_or_folder" GridPane.rowIndex="1" GridPane.columnIndex="1"/>
-                          <Button text="Browse" onAction="#onBrowseLocalPath" GridPane.rowIndex="1" GridPane.columnIndex="2"/>
+                          <Button fx:id="localPathBrowseButton" text="Browse" onAction="#onBrowseLocalPath" GridPane.rowIndex="1" GridPane.columnIndex="2"/>
 
-                          <Label text="YouTube URL" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                          <Label fx:id="youtubeUrlLabel" text="YouTube URL" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
                           <TextField fx:id="youtubeUrlField" promptText="https://www.youtube.com/watch?v=..." GridPane.rowIndex="2" GridPane.columnIndex="1"/>
                           <CheckBox fx:id="playlistBox" text="Playlist" GridPane.rowIndex="2" GridPane.columnIndex="2"/>
 
-                          <Label text="YouTube quality" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
+                          <Label fx:id="qualityLabel" text="YouTube quality" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
                           <ComboBox fx:id="qualityBox" GridPane.rowIndex="3" GridPane.columnIndex="1" prefWidth="220.0"/>
                         </GridPane>
                       </VBox>
 
-                      <VBox spacing="8.0" styleClass="card-pane">
+                      <VBox fx:id="runOutputCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                         <Label text="Output" styleClass="section-title"/>
                         <GridPane hgap="10.0" vgap="8.0">
@@ -150,14 +150,14 @@
                             <ColumnConstraints minWidth="120.0" prefWidth="170.0"/>
                           </columnConstraints>
 
-                          <Label text="Output directory" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                          <Label fx:id="outputDirLabel" text="Output directory" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
                           <TextField fx:id="outputDirField" GridPane.rowIndex="0" GridPane.columnIndex="1"/>
-                          <Button text="Browse" onAction="#onBrowseOutputDir" GridPane.rowIndex="0" GridPane.columnIndex="2"/>
+                          <Button fx:id="outputDirBrowseButton" text="Browse" onAction="#onBrowseOutputDir" GridPane.rowIndex="0" GridPane.columnIndex="2"/>
 
-                          <Label text="Output mode" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                          <Label fx:id="outputModeLabel" text="Output mode" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
                           <ComboBox fx:id="outputModeBox" GridPane.rowIndex="1" GridPane.columnIndex="1" prefWidth="220.0"/>
 
-                          <Label text="Output prefix" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                          <Label fx:id="outputPrefixLabel" text="Output prefix" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
                           <TextField fx:id="outputPrefixField" promptText="optional" GridPane.rowIndex="2" GridPane.columnIndex="1"/>
                           <CheckBox fx:id="keepOriginalsBox" text="Keep originals" GridPane.rowIndex="2" GridPane.columnIndex="2"/>
                         </GridPane>
@@ -179,7 +179,7 @@
                     <VBox spacing="10.0" styleClass="scroll-content">
                       <padding><Insets top="6.0" right="6.0" bottom="6.0" left="6.0"/></padding>
 
-                      <VBox spacing="8.0" styleClass="card-pane">
+                      <VBox fx:id="advancedSubtitlesCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                         <Label text="Subtitles" styleClass="section-title"/>
                         <GridPane hgap="10.0" vgap="8.0">
@@ -214,7 +214,7 @@
                         </GridPane>
                       </VBox>
 
-                      <VBox spacing="8.0" styleClass="card-pane">
+                      <VBox fx:id="advancedConferenceCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                         <Label text="Conference metadata" styleClass="section-title"/>
                         <GridPane hgap="10.0" vgap="8.0">
@@ -276,27 +276,29 @@
                     <Label text="Backend" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
                     <ComboBox fx:id="diarizationBackendBox" GridPane.rowIndex="1" GridPane.columnIndex="1" prefWidth="220.0"/>
 
-                    <Label text="Min / max speakers" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
-                    <HBox spacing="8.0" GridPane.rowIndex="2" GridPane.columnIndex="1">
+                    <Label text="Accuracy profile" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                    <ComboBox fx:id="diarizationAccuracyBox" GridPane.rowIndex="2" GridPane.columnIndex="1" prefWidth="220.0"/>
+
+                    <Label text="Min / max speakers" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
+                    <HBox spacing="8.0" GridPane.rowIndex="3" GridPane.columnIndex="1">
                       <children>
                         <Spinner fx:id="diarizationMinSpinner" prefWidth="100.0" editable="true"/>
                         <Spinner fx:id="diarizationMaxSpinner" prefWidth="100.0" editable="true"/>
                       </children>
                     </HBox>
 
-                    <Label text="Options" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
-                    <VBox spacing="6.0" GridPane.rowIndex="3" GridPane.columnIndex="1">
+                    <Label text="Options" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
+                    <VBox spacing="6.0" GridPane.rowIndex="4" GridPane.columnIndex="1">
                       <children>
                         <CheckBox fx:id="diarizationReviewBox" text="Review after each file"/>
                         <CheckBox fx:id="diarizationIncludeUnmappedBox" text="Include unmapped SPEAKER labels"/>
                         <CheckBox fx:id="diarizationPrefixSrtBox" text="Prefix speakers in SRT"/>
                         <CheckBox fx:id="diarizationProfilePrefillBox" text="Prefill from profiles"/>
-                        <CheckBox fx:id="diarizationFailOnErrorBox" text="Fail when diarization backend errors"/>
                       </children>
                     </VBox>
 
-                    <Label text="HF token" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
-                    <TextField fx:id="hfTokenField" promptText="optional for advanced backend" GridPane.rowIndex="4" GridPane.columnIndex="1"/>
+                    <Label text="Runtime" GridPane.rowIndex="5" GridPane.columnIndex="0"/>
+                    <Label text="Local-only diarization (no external token required)." styleClass="small-label" GridPane.rowIndex="5" GridPane.columnIndex="1"/>
                   </GridPane>
 
                   <Separator/>
@@ -308,6 +310,7 @@
                       <Button text="Import" onAction="#onImportSpeakerProfiles"/>
                       <Button text="Export" onAction="#onExportSpeakerProfiles"/>
                       <Button text="Preview" onAction="#onPreviewSpeakerProfiles"/>
+                      <Button fx:id="applySpeakerMappingButton" text="Apply to Last Output" onAction="#onApplySpeakerMappingToLastOutput" disable="true"/>
                     </children>
                   </HBox>
 
@@ -373,6 +376,7 @@
                       <children>
                         <Label text="Run history" styleClass="section-title"/>
                         <Button fx:id="refreshJobsButton" text="Refresh" onAction="#onRefreshJobs"/>
+                        <Button fx:id="replayJobButton" text="Replay selected" onAction="#onReplaySelectedJob"/>
                         <Button fx:id="removeJobButton" text="Remove" onAction="#onRemoveSelectedJob"/>
                       </children>
                     </HBox>
@@ -401,7 +405,7 @@
                         <Insets top="8.0" right="8.0" bottom="8.0" left="8.0"/>
                       </padding>
 
-                      <VBox spacing="8.0" styleClass="card-pane">
+                      <VBox fx:id="settingsAppearanceCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                         <Label text="Appearance" styleClass="section-title"/>
                         <GridPane hgap="10.0" vgap="8.0">
@@ -415,7 +419,7 @@
                         <Label text="Theme applies instantly and is remembered for next app start." wrapText="true" styleClass="small-label"/>
                       </VBox>
 
-                      <VBox spacing="8.0" styleClass="card-pane">
+                      <VBox fx:id="settingsRuntimeCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                         <Label text="Runtime maintenance" styleClass="section-title"/>
                         <Label text="Use repair when runtime dependencies or models are broken. This re-runs online setup and may download several GB. Restart app after success." wrapText="true" styleClass="small-label"/>
@@ -426,15 +430,24 @@
                         </HBox>
                       </VBox>
 
-                      <VBox spacing="8.0" styleClass="card-pane">
+                      <VBox fx:id="settingsCoreCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                         <Label text="Core processing" styleClass="section-title"/>
-                        <HBox spacing="8.0" alignment="CENTER_LEFT">
+                        <HBox fx:id="settingsModuleScopeRow" spacing="8.0" alignment="CENTER_LEFT">
                           <children>
                             <Label text="Settings module"/>
                             <ComboBox fx:id="settingsModuleBox" prefWidth="240.0" onAction="#onSettingsModuleChanged"/>
                             <Button fx:id="settingsLoadModuleButton" text="Load module state" onAction="#onLoadSettingsModule"/>
                             <Button fx:id="settingsResetModuleDefaultsButton" text="Reset defaults" onAction="#onResetSettingsModuleDefaults"/>
+                          </children>
+                        </HBox>
+                        <HBox fx:id="settingsPresetRow" spacing="8.0" alignment="CENTER_LEFT">
+                          <children>
+                            <Label text="Preset"/>
+                            <ComboBox fx:id="settingsPresetBox" prefWidth="220.0"/>
+                            <Button fx:id="settingsSavePresetButton" text="Save" onAction="#onSaveModulePreset"/>
+                            <Button fx:id="settingsLoadPresetButton" text="Load" onAction="#onLoadModulePreset"/>
+                            <Button fx:id="settingsDeletePresetButton" text="Delete" onAction="#onDeleteModulePreset"/>
                           </children>
                         </HBox>
                         <GridPane hgap="10.0" vgap="8.0">
@@ -444,29 +457,29 @@
                             <ColumnConstraints minWidth="180.0" prefWidth="260.0"/>
                           </columnConstraints>
 
-                          <Label text="Whisper model" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                          <Label fx:id="settingsWhisperModelLabel" text="Whisper model" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
                           <ComboBox fx:id="modelField" GridPane.rowIndex="0" GridPane.columnIndex="1" prefWidth="220.0"/>
-                          <HBox spacing="10.0" GridPane.rowIndex="0" GridPane.columnIndex="2">
+                          <HBox fx:id="settingsModelOptionsBox" spacing="10.0" GridPane.rowIndex="0" GridPane.columnIndex="2">
                             <children>
                               <CheckBox fx:id="autoModelBox" text="Auto model"/>
                               <CheckBox fx:id="useGpuBox" text="Prefer GPU"/>
                             </children>
                           </HBox>
 
-                          <Label text="Speech language" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                          <Label fx:id="settingsSourceLangLabel" text="Speech language" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
                           <ComboBox fx:id="sourceLangBox" GridPane.rowIndex="1" GridPane.columnIndex="1" prefWidth="220.0"/>
 
-                          <Label text="Summary language" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                          <Label fx:id="settingsSummaryLangLabel" text="Summary language" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
                           <ComboBox fx:id="summaryLangBox" GridPane.rowIndex="2" GridPane.columnIndex="1" prefWidth="220.0"/>
 
-                          <Label text="Translation target" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
+                          <Label fx:id="settingsTargetLangLabel" text="Translation target" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
                           <ComboBox fx:id="targetLangBox" GridPane.rowIndex="3" GridPane.columnIndex="1" prefWidth="220.0"/>
 
-                          <Label text="Batch size" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
+                          <Label fx:id="settingsBatchSizeLabel" text="Batch size" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
                           <Spinner fx:id="batchSizeSpinner" GridPane.rowIndex="4" GridPane.columnIndex="1" prefWidth="120.0" editable="true"/>
 
-                          <Label text="Text options" GridPane.rowIndex="5" GridPane.columnIndex="0"/>
-                          <HBox spacing="10.0" GridPane.rowIndex="5" GridPane.columnIndex="1" GridPane.columnSpan="2">
+                          <Label fx:id="settingsTextOptionsLabel" text="Text options" GridPane.rowIndex="5" GridPane.columnIndex="0"/>
+                          <HBox fx:id="settingsTextOptionsBox" spacing="10.0" GridPane.rowIndex="5" GridPane.columnIndex="1" GridPane.columnSpan="2">
                             <children>
                               <CheckBox fx:id="cleanTextBox" text="Clean text"/>
                               <CheckBox fx:id="exportMdBox" text="Markdown"/>
@@ -475,12 +488,13 @@
                             </children>
                           </HBox>
 
-                          <Label text="Split minutes" GridPane.rowIndex="6" GridPane.columnIndex="0"/>
+                          <Label fx:id="settingsSplitMinutesLabel" text="Split minutes" GridPane.rowIndex="6" GridPane.columnIndex="0"/>
                           <Spinner fx:id="splitMinutesSpinner" GridPane.rowIndex="6" GridPane.columnIndex="1" prefWidth="120.0" editable="true"/>
                         </GridPane>
+                        <Label fx:id="settingsSpeakerModuleHintLabel" text="Speaker Transcript uses diarization settings in the Diarization tab. Unrelated options are hidden here." wrapText="true" styleClass="small-label" managed="false" visible="false"/>
                       </VBox>
 
-                      <VBox spacing="8.0" styleClass="card-pane">
+                      <VBox fx:id="settingsModuleFlowCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                         <Label text="Module flow" styleClass="section-title"/>
                         <Label text="Offline A/V, YouTube transcript, Speaker transcript, Conference mode, YouTube subtitles and YouTube dub are separate modules with independent saved settings." wrapText="true" styleClass="small-label"/>

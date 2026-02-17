@@ -23,6 +23,7 @@ import javafx.scene.control.ColorPicker;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
@@ -32,11 +33,13 @@ import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.control.cell.TextFieldTableCell;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
+import javafx.scene.Node;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -45,6 +48,7 @@ import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.util.Duration;
+import javafx.util.StringConverter;
 
 import java.awt.Desktop;
 import java.io.BufferedReader;
@@ -56,6 +60,7 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -80,12 +85,21 @@ public class MainController {
     private static final String PREF_AUTO_PREFLIGHT = "ui.auto_preflight";
     private static final String PREF_ACTIVE_MODULE = "ui.active_module";
     private static final String PREF_MODULE_PREFIX = "ui.module.";
+    private static final String PREF_MODULE_PRESETS_JSON = "presets_json";
+    private static final String PREF_MODULE_SELECTED_PRESET = "selected_preset";
     private static final String PREF_SOURCE_MODE = "ui.source_mode";
     private static final String PREF_OUTPUT_MODE = "ui.output_mode";
     private static final String PREF_MODEL = "ui.model";
     private static final String PREF_USE_GPU = "ui.use_gpu";
     private static final String PREF_DIARIZATION_ENABLED = "ui.diarization.enabled";
     private static final String PREF_DIARIZATION_BACKEND = "ui.diarization.backend";
+    private static final String PREF_DIARIZATION_ACCURACY_PROFILE = "ui.diarization.accuracy_profile";
+    private static final String DIARIZATION_BACKEND_FAST = "local_cluster_fast";
+    private static final String DIARIZATION_BACKEND_ACCURATE = "local_cluster_accurate";
+    private static final String DIARIZATION_ACCURACY_LOW = "low";
+    private static final String DIARIZATION_ACCURACY_BALANCED = "balanced";
+    private static final String DIARIZATION_ACCURACY_HIGH = "high";
+    private static final String DIARIZATION_ACCURACY_MAXIMUM = "maximum";
     private static final String THEME_LIGHT = "Light";
     private static final String THEME_DARK = "Dark";
     private static final String THEME_DRACULA = "Dracula";
@@ -95,6 +109,7 @@ public class MainController {
     private static final String MODULE_CONFERENCE = "conference_mode";
     private static final String MODULE_YOUTUBE_SUBS = "youtube_subtitles";
     private static final String MODULE_YOUTUBE_DUB = "youtube_dub";
+    private static final Set<String> UI_SCHEMA_TABS = Set.of("run", "advanced", "diarization", "logs", "jobs", "settings");
     private static final Set<String> SUPPORTED_MODULES = ModuleRegistry.supportedModuleIds();
     private static final List<String> WHISPER_MODELS = List.of(
             "tiny",
@@ -134,6 +149,25 @@ public class MainController {
     }
 
     private record RuntimeBootstrapProgress(int percent, String message) {
+    }
+
+    private record ModuleUiSchema(
+            Set<String> showTabs,
+            Set<String> showSections,
+            Set<String> showFields,
+            boolean jobsFilterModule
+    ) {
+        boolean allowsTab(String key) {
+            return showTabs.isEmpty() || showTabs.contains(key);
+        }
+
+        boolean allowsSection(String key) {
+            return showSections.isEmpty() || showSections.contains(key);
+        }
+
+        boolean allowsField(String key) {
+            return showFields.isEmpty() || showFields.contains(key);
+        }
     }
 
     @FXML
@@ -185,13 +219,64 @@ public class MainController {
     private Tab settingsTab;
 
     @FXML
+    private VBox runSourceCard;
+
+    @FXML
+    private VBox runOutputCard;
+
+    @FXML
     private VBox simpleHintCard;
+
+    @FXML
+    private Label sourceModeLabel;
+
+    @FXML
+    private Label localPathLabel;
+
+    @FXML
+    private Label youtubeUrlLabel;
+
+    @FXML
+    private Label qualityLabel;
+
+    @FXML
+    private Label outputModeLabel;
+
+    @FXML
+    private Label outputDirLabel;
+
+    @FXML
+    private Label outputPrefixLabel;
+
+    @FXML
+    private VBox advancedSubtitlesCard;
+
+    @FXML
+    private VBox advancedConferenceCard;
+
+    @FXML
+    private VBox settingsAppearanceCard;
+
+    @FXML
+    private VBox settingsRuntimeCard;
+
+    @FXML
+    private VBox settingsCoreCard;
+
+    @FXML
+    private VBox settingsModuleFlowCard;
+
+    @FXML
+    private HBox settingsModuleScopeRow;
 
     @FXML
     private ComboBox<String> sourceModeBox;
 
     @FXML
     private TextField localPathField;
+
+    @FXML
+    private Button localPathBrowseButton;
 
     @FXML
     private TextField youtubeUrlField;
@@ -204,6 +289,9 @@ public class MainController {
 
     @FXML
     private TextField outputDirField;
+
+    @FXML
+    private Button outputDirBrowseButton;
 
     @FXML
     private ComboBox<String> outputModeBox;
@@ -227,13 +315,25 @@ public class MainController {
     private ComboBox<String> sourceLangBox;
 
     @FXML
+    private Label settingsSourceLangLabel;
+
+    @FXML
     private ComboBox<String> summaryLangBox;
+
+    @FXML
+    private Label settingsSummaryLangLabel;
 
     @FXML
     private ComboBox<String> targetLangBox;
 
     @FXML
+    private Label settingsTargetLangLabel;
+
+    @FXML
     private Spinner<Integer> batchSizeSpinner;
+
+    @FXML
+    private Label settingsBatchSizeLabel;
 
     @FXML
     private CheckBox cleanTextBox;
@@ -249,6 +349,24 @@ public class MainController {
 
     @FXML
     private Spinner<Integer> splitMinutesSpinner;
+
+    @FXML
+    private Label settingsWhisperModelLabel;
+
+    @FXML
+    private HBox settingsModelOptionsBox;
+
+    @FXML
+    private Label settingsTextOptionsLabel;
+
+    @FXML
+    private HBox settingsTextOptionsBox;
+
+    @FXML
+    private Label settingsSplitMinutesLabel;
+
+    @FXML
+    private Label settingsSpeakerModuleHintLabel;
 
     @FXML
     private ComboBox<String> subtitleModeBox;
@@ -290,6 +408,9 @@ public class MainController {
     private ComboBox<String> diarizationBackendBox;
 
     @FXML
+    private ComboBox<String> diarizationAccuracyBox;
+
+    @FXML
     private Spinner<Integer> diarizationMinSpinner;
 
     @FXML
@@ -308,12 +429,6 @@ public class MainController {
     private CheckBox diarizationProfilePrefillBox;
 
     @FXML
-    private CheckBox diarizationFailOnErrorBox;
-
-    @FXML
-    private TextField hfTokenField;
-
-    @FXML
     private TableView<SpeakerProfileRow> speakerProfilesTable;
 
     @FXML
@@ -321,6 +436,9 @@ public class MainController {
 
     @FXML
     private TableColumn<SpeakerProfileRow, String> speakerNameColumn;
+
+    @FXML
+    private Button applySpeakerMappingButton;
 
     @FXML
     private TextArea profilePreviewArea;
@@ -413,6 +531,9 @@ public class MainController {
     private Button refreshJobsButton;
 
     @FXML
+    private Button replayJobButton;
+
+    @FXML
     private Button removeJobButton;
 
     @FXML
@@ -449,6 +570,21 @@ public class MainController {
     private Button settingsResetModuleDefaultsButton;
 
     @FXML
+    private HBox settingsPresetRow;
+
+    @FXML
+    private ComboBox<String> settingsPresetBox;
+
+    @FXML
+    private Button settingsSavePresetButton;
+
+    @FXML
+    private Button settingsLoadPresetButton;
+
+    @FXML
+    private Button settingsDeletePresetButton;
+
+    @FXML
     private Label moduleFlowTitleLabel;
 
     @FXML
@@ -466,6 +602,7 @@ public class MainController {
     private final List<LogEntry> allLogs = new ArrayList<>();
     private final Map<String, ModuleComponent> moduleComponents = ModuleRegistry.byId();
     private final Map<String, String> moduleLabelsToId = ModuleRegistry.labelToId();
+    private final Map<String, ModuleUiSchema> moduleUiSchemas = new LinkedHashMap<>();
     private final ModuleComponent.ModuleUiContext moduleUiContext = new ControllerModuleUiContext();
 
     private BackendClient backendClient;
@@ -474,6 +611,7 @@ public class MainController {
     private String appDataDir;
     private String appVersion;
     private String currentTheme = "";
+    private Path lastDiarizationSidecarPath;
     private boolean themeInitializing;
     private boolean restoringPreferences;
     private boolean runtimeBootstrapRunning;
@@ -490,6 +628,7 @@ public class MainController {
 
     @FXML
     private void initialize() {
+        AppFileLogger.initialize();
         setupCombosAndDefaults();
         setupTables();
         setupFilters();
@@ -514,6 +653,10 @@ public class MainController {
         registerPreferenceListeners();
         setRunning(false);
         refreshProfilePreview();
+        updateSpeakerMappingButtonState(false);
+        if (replayJobButton != null) {
+            replayJobButton.setDisable(true);
+        }
     }
 
     public void initBackend(BackendClient client) {
@@ -537,6 +680,8 @@ public class MainController {
                         setAppVersion(backendVersion);
                     }
                     updateTargetsFromCapabilities(result.path("translation_targets"));
+                    updateModuleSchemasFromCapabilities(result.path("module_components"));
+                    activateModule(activeModule, false, true);
                     addUserLog(
                             "INFO",
                             backendVersion.isBlank()
@@ -844,13 +989,22 @@ public class MainController {
         }
 
         ObjectNode params = buildPipelineParams();
+        startPipelineRequest(params, autoPreflightBox.isSelected(), "manual");
+    }
+
+    private void startPipelineRequest(ObjectNode params, boolean runPreflight, String trigger) {
+        if (backendClient == null) {
+            addTechnicalLog("ERROR", "Backend is not initialized.");
+            return;
+        }
+
         setRunning(true);
         progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
         stepLabel.setText("prepare");
-        statusLabel.setText(autoPreflightBox.isSelected() ? "Preflight" : "Starting");
+        statusLabel.setText(runPreflight ? "Preflight" : "Starting");
         resetEtaDisplay();
 
-        CompletableFuture<Boolean> preflightFuture = autoPreflightBox.isSelected()
+        CompletableFuture<Boolean> preflightFuture = runPreflight
                 ? runPreflightAsync(params, true)
                 : CompletableFuture.completedFuture(true);
 
@@ -858,7 +1012,9 @@ public class MainController {
                 .thenCompose(ok -> {
                     if (!ok) {
                         CompletableFuture<JsonNode> failed = new CompletableFuture<>();
-                        failed.completeExceptionally(new IllegalStateException("Preflight failed. Resolve errors and retry."));
+                        failed.completeExceptionally(
+                                new IllegalStateException("Preflight failed. Resolve errors and retry.")
+                        );
                         return failed;
                     }
                     Platform.runLater(() -> {
@@ -869,9 +1025,15 @@ public class MainController {
                 })
                 .thenAccept(result -> Platform.runLater(() -> {
                     currentJobId = result.path("job_id").asText("");
+                    String moduleId = normalizeModuleId(params.path("module").asText(activeModule));
+                    String sourceMode = params.path("source").path("mode").asText(sourceModeBox.getValue());
                     statusLabel.setText("Running");
-                    addUserLog("INFO", "Job started: " + shortJobId(currentJobId));
-                    upsertJobRow(currentJobId, "running", moduleLabel(activeModule), sourceModeBox.getValue(), nowStamp());
+                    if ("replay".equals(trigger)) {
+                        addUserLog("INFO", "Replay started: " + shortJobId(currentJobId));
+                    } else {
+                        addUserLog("INFO", "Job started: " + shortJobId(currentJobId));
+                    }
+                    upsertJobRow(currentJobId, "running", moduleLabel(moduleId), sourceMode, nowStamp());
                     refreshJobsSilently();
                 }))
                 .exceptionally(ex -> {
@@ -1105,6 +1267,52 @@ public class MainController {
     }
 
     @FXML
+    private void onReplaySelectedJob() {
+        if (backendClient == null) {
+            return;
+        }
+
+        JobRow selected = jobHistoryTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            addUserLog("WARN", "Select a job first.");
+            return;
+        }
+
+        replayJobButton.setDisable(true);
+        ObjectNode params = mapper.createObjectNode();
+        params.put("job_id", selected.getJobId());
+        backendClient.sendRequest("get_job", params)
+                .thenAccept(result -> Platform.runLater(() -> {
+                    replayJobButton.setDisable(false);
+                    JsonNode requestNode = result.path("request");
+                    if (!requestNode.isObject()) {
+                        addTechnicalLog("ERROR", "Replay failed: selected job has no request payload.");
+                        return;
+                    }
+
+                    ObjectNode replayParams = ((ObjectNode) requestNode).deepCopy();
+                    String replayModule = normalizeModuleId(replayParams.path("module").asText(activeModule));
+                    activateModule(replayModule, false, true);
+                    addUserLog(
+                            "INFO",
+                            "Replaying job "
+                                    + shortJobId(selected.getJobId())
+                                    + " in "
+                                    + moduleLabel(replayModule)
+                                    + "."
+                    );
+                    startPipelineRequest(replayParams, autoPreflightBox.isSelected(), "replay");
+                }))
+                .exceptionally(ex -> {
+                    Platform.runLater(() -> {
+                        replayJobButton.setDisable(false);
+                        addTechnicalLog("ERROR", "Replay failed: " + rootMessage(ex));
+                    });
+                    return null;
+                });
+    }
+
+    @FXML
     private void onRemoveSelectedJob() {
         if (backendClient == null) {
             return;
@@ -1208,6 +1416,60 @@ public class MainController {
     private void onPreviewSpeakerProfiles() {
         refreshProfilePreview();
         selectModule(diarizationTab);
+    }
+
+    @FXML
+    private void onApplySpeakerMappingToLastOutput() {
+        if (backendClient == null) {
+            addTechnicalLog("ERROR", "Backend is not initialized.");
+            return;
+        }
+        if (lastDiarizationSidecarPath == null) {
+            addUserLog("WARN", "No diarization output available yet. Complete a speaker-aware job first.");
+            return;
+        }
+        if (!Files.isRegularFile(lastDiarizationSidecarPath)) {
+            addUserLog("WARN", "Last diarization sidecar was not found: " + lastDiarizationSidecarPath);
+            updateSpeakerMappingButtonState(false);
+            return;
+        }
+
+        ObjectNode params = mapper.createObjectNode();
+        params.put("sidecar_path", lastDiarizationSidecarPath.toString());
+        ObjectNode speakerMap = params.putObject("speaker_map");
+        collectSpeakerProfiles().forEach(speakerMap::put);
+
+        updateSpeakerMappingButtonState(true);
+        backendClient.sendRequest("apply_speaker_mapping", params)
+                .thenAccept(result -> Platform.runLater(() -> {
+                    int rewrittenCount = result.path("rewritten_count").asInt(0);
+                    JsonNode mapNode = result.path("speaker_map");
+                    if (mapNode.isObject()) {
+                        mergeSpeakerProfilesFromMapNode(mapNode);
+                    }
+                    addUserLog(
+                            "SUCCESS",
+                            "Speaker mapping applied to output files"
+                                    + (rewrittenCount > 0 ? " (" + rewrittenCount + " files updated)." : ".")
+                    );
+                    JsonNode rewritten = result.path("rewritten_paths");
+                    if (rewritten.isArray()) {
+                        for (JsonNode pathNode : rewritten) {
+                            String path = trimToEmpty(pathNode.asText(""));
+                            if (!path.isBlank()) {
+                                addUserLog("INFO", "Updated: " + path);
+                            }
+                        }
+                    }
+                    updateSpeakerMappingButtonState(false);
+                }))
+                .exceptionally(ex -> {
+                    Platform.runLater(() -> {
+                        addTechnicalLog("ERROR", "Speaker mapping update failed: " + rootMessage(ex));
+                        updateSpeakerMappingButtonState(false);
+                    });
+                    return null;
+                });
     }
 
     @FXML
@@ -1326,8 +1588,69 @@ public class MainController {
         subtitleModeBox.setItems(FXCollections.observableArrayList("soft", "hard"));
         subtitleModeBox.getSelectionModel().select("soft");
 
-        diarizationBackendBox.setItems(FXCollections.observableArrayList("stable_local", "advanced_pyannote"));
-        diarizationBackendBox.getSelectionModel().select("stable_local");
+        diarizationBackendBox.setItems(FXCollections.observableArrayList(
+                DIARIZATION_BACKEND_FAST,
+                DIARIZATION_BACKEND_ACCURATE
+        ));
+        diarizationBackendBox.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(String value) {
+                return diarizationBackendLabel(value);
+            }
+
+            @Override
+            public String fromString(String value) {
+                return normalizeDiarizationBackend(value);
+            }
+        });
+        diarizationBackendBox.setCellFactory(list -> new ListCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty ? "" : diarizationBackendLabel(item));
+            }
+        });
+        diarizationBackendBox.setButtonCell(new ListCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty ? "" : diarizationBackendLabel(item));
+            }
+        });
+        diarizationBackendBox.getSelectionModel().select(DIARIZATION_BACKEND_ACCURATE);
+
+        diarizationAccuracyBox.setItems(FXCollections.observableArrayList(
+                DIARIZATION_ACCURACY_LOW,
+                DIARIZATION_ACCURACY_BALANCED,
+                DIARIZATION_ACCURACY_HIGH,
+                DIARIZATION_ACCURACY_MAXIMUM
+        ));
+        diarizationAccuracyBox.setConverter(new StringConverter<>() {
+            @Override
+            public String toString(String value) {
+                return diarizationAccuracyProfileLabel(value);
+            }
+
+            @Override
+            public String fromString(String value) {
+                return normalizeDiarizationAccuracyProfile(value);
+            }
+        });
+        diarizationAccuracyBox.setCellFactory(list -> new ListCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty ? "" : diarizationAccuracyProfileLabel(item));
+            }
+        });
+        diarizationAccuracyBox.setButtonCell(new ListCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty ? "" : diarizationAccuracyProfileLabel(item));
+            }
+        });
+        diarizationAccuracyBox.getSelectionModel().select(DIARIZATION_ACCURACY_BALANCED);
 
         modelField.setItems(FXCollections.observableArrayList(WHISPER_MODELS));
         selectModel("large-v3");
@@ -1353,7 +1676,6 @@ public class MainController {
         diarizationIncludeUnmappedBox.setSelected(true);
         diarizationPrefixSrtBox.setSelected(true);
         diarizationProfilePrefillBox.setSelected(true);
-        diarizationFailOnErrorBox.setSelected(false);
 
         subtitleFontField.setText("Arial");
         outputDirField.setText(Path.of(System.getProperty("user.home"), "Downloads").toString());
@@ -1460,6 +1782,7 @@ public class MainController {
             settingsModuleBox.getSelectionModel().selectFirst();
         }
         settingsModuleSelectorSync = false;
+        refreshModulePresetList(null);
     }
 
     @FXML
@@ -1493,6 +1816,81 @@ public class MainController {
         enforceModuleConstraints(activeModule, true);
         saveActiveModuleState();
         addUserLog("INFO", "Module defaults restored: " + moduleLabel(activeModule));
+        refreshModulePresetList(null);
+    }
+
+    @FXML
+    private void onSaveModulePreset() {
+        TextInputDialog dialog = new TextInputDialog(trimToEmpty(safeValue(settingsPresetBox)));
+        dialog.setTitle("Save Module Preset");
+        dialog.setHeaderText("Save preset for " + moduleLabel(activeModule));
+        dialog.setContentText("Preset name:");
+
+        Optional<String> result = dialog.showAndWait();
+        if (result.isEmpty()) {
+            return;
+        }
+
+        String presetName = sanitizePresetName(result.get());
+        if (presetName.isBlank()) {
+            addUserLog("WARN", "Preset name cannot be empty.");
+            return;
+        }
+
+        saveActiveModuleState();
+        ObjectNode presets = loadModulePresetsNode(activeModule);
+        presets.set(presetName, captureCurrentModuleStateNode());
+        saveModulePresetsNode(activeModule, presets);
+        preferences.put(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, presetName);
+        preferences.flush();
+        refreshModulePresetList(presetName);
+        addUserLog("SUCCESS", "Preset saved: " + presetName + " (" + moduleLabel(activeModule) + ")");
+    }
+
+    @FXML
+    private void onLoadModulePreset() {
+        String presetName = sanitizePresetName(safeValue(settingsPresetBox));
+        if (presetName.isBlank()) {
+            addUserLog("WARN", "Select a preset to load.");
+            return;
+        }
+
+        ObjectNode presets = loadModulePresetsNode(activeModule);
+        JsonNode state = presets.get(presetName);
+        if (state == null || !state.isObject()) {
+            addUserLog("ERROR", "Preset not found: " + presetName);
+            refreshModulePresetList(null);
+            return;
+        }
+
+        applyModuleStateFromNode(state);
+        enforceModuleConstraints(activeModule, true);
+        saveActiveModuleState();
+        preferences.put(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, presetName);
+        preferences.flush();
+        refreshModulePresetList(presetName);
+        addUserLog("INFO", "Preset loaded: " + presetName + " (" + moduleLabel(activeModule) + ")");
+    }
+
+    @FXML
+    private void onDeleteModulePreset() {
+        String presetName = sanitizePresetName(safeValue(settingsPresetBox));
+        if (presetName.isBlank()) {
+            addUserLog("WARN", "Select a preset to delete.");
+            return;
+        }
+
+        ObjectNode presets = loadModulePresetsNode(activeModule);
+        if (presets.remove(presetName) == null) {
+            addUserLog("WARN", "Preset not found: " + presetName);
+            refreshModulePresetList(null);
+            return;
+        }
+        saveModulePresetsNode(activeModule, presets);
+        preferences.put(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, "");
+        preferences.flush();
+        refreshModulePresetList(null);
+        addUserLog("INFO", "Preset deleted: " + presetName + " (" + moduleLabel(activeModule) + ")");
     }
 
     private void restoreUiPreferences() {
@@ -1526,9 +1924,18 @@ public class MainController {
             useGpuBox.setSelected(preferences.getBoolean(PREF_USE_GPU, useGpuBox.isSelected()));
             diarizationEnabledBox.setSelected(preferences.getBoolean(PREF_DIARIZATION_ENABLED, diarizationEnabledBox.isSelected()));
 
-            String savedDiarizationBackend = trimToEmpty(preferences.get(PREF_DIARIZATION_BACKEND, safeValue(diarizationBackendBox)));
+            String savedDiarizationBackend = normalizeDiarizationBackend(
+                    preferences.get(PREF_DIARIZATION_BACKEND, safeValue(diarizationBackendBox))
+            );
             if (!savedDiarizationBackend.isBlank() && diarizationBackendBox.getItems().contains(savedDiarizationBackend)) {
                 diarizationBackendBox.getSelectionModel().select(savedDiarizationBackend);
+            }
+
+            String savedDiarizationAccuracy = normalizeDiarizationAccuracyProfile(
+                    preferences.get(PREF_DIARIZATION_ACCURACY_PROFILE, safeValue(diarizationAccuracyBox))
+            );
+            if (!savedDiarizationAccuracy.isBlank() && diarizationAccuracyBox.getItems().contains(savedDiarizationAccuracy)) {
+                diarizationAccuracyBox.getSelectionModel().select(savedDiarizationAccuracy);
             }
         } finally {
             restoringPreferences = false;
@@ -1580,7 +1987,13 @@ public class MainController {
         });
         diarizationBackendBox.valueProperty().addListener((obs, oldVal, newVal) -> {
             if (!restoringPreferences && newVal != null) {
-                preferences.put(PREF_DIARIZATION_BACKEND, newVal);
+                preferences.put(PREF_DIARIZATION_BACKEND, normalizeDiarizationBackend(newVal));
+                preferences.flush();
+            }
+        });
+        diarizationAccuracyBox.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (!restoringPreferences && newVal != null) {
+                preferences.put(PREF_DIARIZATION_ACCURACY_PROFILE, normalizeDiarizationAccuracyProfile(newVal));
                 preferences.flush();
             }
         });
@@ -1671,6 +2084,9 @@ public class MainController {
         }
         syncModuleButtons();
         syncSettingsModuleSelector();
+        refreshModulePresetList(trimToEmpty(preferences.get(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, "")));
+        updateModuleSpecificUiVisibility();
+        refreshJobsSilently();
 
         if (logChange) {
             addUserLog("INFO", "Module selected: " + moduleLabel(activeModule));
@@ -1734,6 +2150,146 @@ public class MainController {
         targetLangBox.setDisable(!enabled);
     }
 
+    private void updateModuleSpecificUiVisibility() {
+        ModuleUiSchema schema = resolveModuleUiSchema(activeModule);
+
+        setTabVisible(runTab, schema.allowsTab("run"));
+        setTabVisible(advancedTab, schema.allowsTab("advanced"));
+        setTabVisible(diarizationTab, schema.allowsTab("diarization"));
+        setTabVisible(logsTab, schema.allowsTab("logs"));
+        setTabVisible(jobsTab, schema.allowsTab("jobs"));
+        setTabVisible(settingsTab, schema.allowsTab("settings"));
+
+        setNodeVisibleManaged(runSourceCard, schema.allowsSection("run_source_card"));
+        setNodeVisibleManaged(runOutputCard, schema.allowsSection("run_output_card"));
+        setNodeVisibleManaged(advancedSubtitlesCard, schema.allowsSection("advanced_subtitles_card"));
+        setNodeVisibleManaged(advancedConferenceCard, schema.allowsSection("advanced_conference_card"));
+        setNodeVisibleManaged(settingsAppearanceCard, schema.allowsSection("settings_appearance_card"));
+        setNodeVisibleManaged(settingsRuntimeCard, schema.allowsSection("settings_runtime_card"));
+        setNodeVisibleManaged(settingsCoreCard, schema.allowsSection("settings_core_card"));
+        setNodeVisibleManaged(settingsModuleFlowCard, schema.allowsSection("settings_module_flow_card"));
+        setNodeVisibleManaged(settingsModuleScopeRow, schema.allowsSection("settings_module_scope_row"));
+        setNodeVisibleManaged(settingsPresetRow, schema.allowsSection("settings_preset_row"));
+
+        boolean showSimpleHint = simpleModeBox.isSelected() && schema.allowsSection("simple_hint_card");
+        setNodeVisibleManaged(simpleHintCard, showSimpleHint);
+
+        applyFieldVisibility(schema);
+    }
+
+    private void applyFieldVisibility(ModuleUiSchema schema) {
+        boolean showSourceMode = schema.allowsField("run.source_mode");
+        setNodeVisibleManaged(sourceModeLabel, showSourceMode);
+        setNodeVisibleManaged(sourceModeBox, showSourceMode);
+
+        boolean showLocalPath = schema.allowsField("run.local_path");
+        setNodeVisibleManaged(localPathLabel, showLocalPath);
+        setNodeVisibleManaged(localPathField, showLocalPath);
+        setNodeVisibleManaged(localPathBrowseButton, showLocalPath);
+
+        boolean showYoutube = schema.allowsField("run.youtube_url");
+        setNodeVisibleManaged(youtubeUrlLabel, showYoutube);
+        setNodeVisibleManaged(youtubeUrlField, showYoutube);
+
+        boolean showPlaylist = schema.allowsField("run.playlist");
+        setNodeVisibleManaged(playlistBox, showPlaylist);
+
+        boolean showQuality = schema.allowsField("run.quality");
+        setNodeVisibleManaged(qualityLabel, showQuality);
+        setNodeVisibleManaged(qualityBox, showQuality);
+
+        boolean showOutputDir = schema.allowsField("run.output_dir");
+        setNodeVisibleManaged(outputDirLabel, showOutputDir);
+        setNodeVisibleManaged(outputDirField, showOutputDir);
+        setNodeVisibleManaged(outputDirBrowseButton, showOutputDir);
+
+        boolean showOutputMode = schema.allowsField("run.output_mode");
+        setNodeVisibleManaged(outputModeLabel, showOutputMode);
+        setNodeVisibleManaged(outputModeBox, showOutputMode);
+
+        boolean showOutputPrefix = schema.allowsField("run.output_prefix");
+        setNodeVisibleManaged(outputPrefixLabel, showOutputPrefix);
+        setNodeVisibleManaged(outputPrefixField, showOutputPrefix);
+
+        boolean showKeepOriginals = schema.allowsField("run.keep_originals");
+        setNodeVisibleManaged(keepOriginalsBox, showKeepOriginals);
+
+        setNodeVisibleManaged(settingsWhisperModelLabel, schema.allowsField("settings.model"));
+        setNodeVisibleManaged(modelField, schema.allowsField("settings.model"));
+        setNodeVisibleManaged(settingsModelOptionsBox, schema.allowsField("settings.model_options"));
+
+        setNodeVisibleManaged(settingsSourceLangLabel, schema.allowsField("settings.source_lang"));
+        setNodeVisibleManaged(sourceLangBox, schema.allowsField("settings.source_lang"));
+
+        setNodeVisibleManaged(settingsSummaryLangLabel, schema.allowsField("settings.summary_lang"));
+        setNodeVisibleManaged(summaryLangBox, schema.allowsField("settings.summary_lang"));
+
+        setNodeVisibleManaged(settingsTargetLangLabel, schema.allowsField("settings.target_lang"));
+        setNodeVisibleManaged(targetLangBox, schema.allowsField("settings.target_lang"));
+
+        setNodeVisibleManaged(settingsBatchSizeLabel, schema.allowsField("settings.batch_size"));
+        setNodeVisibleManaged(batchSizeSpinner, schema.allowsField("settings.batch_size"));
+
+        setNodeVisibleManaged(settingsTextOptionsLabel, schema.allowsField("settings.text_options"));
+        setNodeVisibleManaged(settingsTextOptionsBox, schema.allowsField("settings.text_options"));
+
+        setNodeVisibleManaged(settingsSplitMinutesLabel, schema.allowsField("settings.split_minutes"));
+        setNodeVisibleManaged(splitMinutesSpinner, schema.allowsField("settings.split_minutes"));
+
+        setNodeVisibleManaged(settingsSpeakerModuleHintLabel, schema.allowsField("settings.speaker_hint"));
+    }
+
+    private void setTabVisible(Tab tab, boolean visible) {
+        if (tab == null || mainTabs == null) {
+            return;
+        }
+        boolean contains = mainTabs.getTabs().contains(tab);
+        if (visible) {
+            if (!contains) {
+                int insertIndex = Math.min(preferredTabIndex(tab), mainTabs.getTabs().size());
+                mainTabs.getTabs().add(insertIndex, tab);
+            }
+            return;
+        }
+        if (!contains) {
+            return;
+        }
+        if (Objects.equals(mainTabs.getSelectionModel().getSelectedItem(), tab)) {
+            mainTabs.getSelectionModel().select(runTab);
+        }
+        mainTabs.getTabs().remove(tab);
+    }
+
+    private int preferredTabIndex(Tab tab) {
+        if (tab == runTab) {
+            return 0;
+        }
+        if (tab == advancedTab) {
+            return 1;
+        }
+        if (tab == diarizationTab) {
+            return 2;
+        }
+        if (tab == logsTab) {
+            return 3;
+        }
+        if (tab == jobsTab) {
+            return 4;
+        }
+        if (tab == settingsTab) {
+            return 5;
+        }
+        return mainTabs.getTabs().size();
+    }
+
+    private static void setNodeVisibleManaged(Node node, boolean visible) {
+        if (node == null) {
+            return;
+        }
+        node.setVisible(visible);
+        node.setManaged(visible);
+    }
+
     private void saveActiveModuleState() {
         String module = normalizeModuleId(activeModule);
         String prefix = modulePrefPrefix(module);
@@ -1770,15 +2326,14 @@ public class MainController {
         preferences.putBoolean(prefix + "translate_subtitles", translateSubtitlesBox.isSelected());
 
         preferences.putBoolean(prefix + "diarization_enabled", diarizationEnabledBox.isSelected());
-        preferences.put(prefix + "diarization_backend", safeValue(diarizationBackendBox));
+        preferences.put(prefix + "diarization_backend", normalizeDiarizationBackend(safeValue(diarizationBackendBox)));
+        preferences.put(prefix + "diarization_accuracy", normalizeDiarizationAccuracyProfile(safeValue(diarizationAccuracyBox)));
         preferences.putInt(prefix + "diarization_min", valueOf(diarizationMinSpinner));
         preferences.putInt(prefix + "diarization_max", valueOf(diarizationMaxSpinner));
         preferences.putBoolean(prefix + "diarization_review", diarizationReviewBox.isSelected());
         preferences.putBoolean(prefix + "diarization_unmapped", diarizationIncludeUnmappedBox.isSelected());
         preferences.putBoolean(prefix + "diarization_prefix", diarizationPrefixSrtBox.isSelected());
         preferences.putBoolean(prefix + "diarization_prefill", diarizationProfilePrefillBox.isSelected());
-        preferences.putBoolean(prefix + "diarization_fail", diarizationFailOnErrorBox.isSelected());
-        preferences.put(prefix + "hf_token", trimToEmpty(hfTokenField.getText()));
 
         preferences.put(prefix + "speaker", trimToEmpty(speakerField.getText()));
         preferences.put(prefix + "topic", trimToEmpty(topicField.getText()));
@@ -1855,7 +2410,19 @@ public class MainController {
         translateSubtitlesBox.setSelected(preferences.getBoolean(prefix + "translate_subtitles", translateSubtitlesBox.isSelected()));
 
         diarizationEnabledBox.setSelected(preferences.getBoolean(prefix + "diarization_enabled", diarizationEnabledBox.isSelected()));
-        selectComboValue(diarizationBackendBox, preferences.get(prefix + "diarization_backend", safeValue(diarizationBackendBox)));
+        selectComboValue(
+                diarizationBackendBox,
+                normalizeDiarizationBackend(preferences.get(prefix + "diarization_backend", safeValue(diarizationBackendBox)))
+        );
+        String moduleDiarizationAccuracyDefault = MODULE_SPEAKER.equals(module)
+                ? DIARIZATION_ACCURACY_MAXIMUM
+                : safeValue(diarizationAccuracyBox);
+        selectComboValue(
+                diarizationAccuracyBox,
+                normalizeDiarizationAccuracyProfile(
+                        preferences.get(prefix + "diarization_accuracy", moduleDiarizationAccuracyDefault)
+                )
+        );
         diarizationMinSpinner.getValueFactory().setValue(
                 preferences.getInt(prefix + "diarization_min", valueOf(diarizationMinSpinner))
         );
@@ -1866,8 +2433,6 @@ public class MainController {
         diarizationIncludeUnmappedBox.setSelected(preferences.getBoolean(prefix + "diarization_unmapped", diarizationIncludeUnmappedBox.isSelected()));
         diarizationPrefixSrtBox.setSelected(preferences.getBoolean(prefix + "diarization_prefix", diarizationPrefixSrtBox.isSelected()));
         diarizationProfilePrefillBox.setSelected(preferences.getBoolean(prefix + "diarization_prefill", diarizationProfilePrefillBox.isSelected()));
-        diarizationFailOnErrorBox.setSelected(preferences.getBoolean(prefix + "diarization_fail", diarizationFailOnErrorBox.isSelected()));
-        hfTokenField.setText(preferences.get(prefix + "hf_token", trimToEmpty(hfTokenField.getText())));
 
         speakerField.setText(preferences.get(prefix + "speaker", trimToEmpty(speakerField.getText())));
         topicField.setText(preferences.get(prefix + "topic", trimToEmpty(topicField.getText())));
@@ -1878,12 +2443,279 @@ public class MainController {
         return true;
     }
 
+    private void refreshModulePresetList(String preferredName) {
+        if (settingsPresetBox == null) {
+            return;
+        }
+
+        ObjectNode presets = loadModulePresetsNode(activeModule);
+        List<String> names = new ArrayList<>();
+        presets.fieldNames().forEachRemaining(names::add);
+        names.sort(String::compareToIgnoreCase);
+
+        settingsPresetBox.setItems(FXCollections.observableArrayList(names));
+        String selected = sanitizePresetName(preferredName);
+        if (selected.isBlank()) {
+            selected = sanitizePresetName(
+                    preferences.get(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, "")
+            );
+        }
+        if (!selected.isBlank() && names.contains(selected)) {
+            settingsPresetBox.getSelectionModel().select(selected);
+        } else if (!names.isEmpty()) {
+            settingsPresetBox.getSelectionModel().selectFirst();
+        } else {
+            settingsPresetBox.getSelectionModel().clearSelection();
+        }
+
+        boolean hasPresets = !names.isEmpty();
+        if (settingsLoadPresetButton != null) {
+            settingsLoadPresetButton.setDisable(!hasPresets);
+        }
+        if (settingsDeletePresetButton != null) {
+            settingsDeletePresetButton.setDisable(!hasPresets);
+        }
+    }
+
+    private ObjectNode loadModulePresetsNode(String moduleId) {
+        String prefix = modulePrefPrefix(moduleId);
+        String raw = trimToEmpty(preferences.get(prefix + PREF_MODULE_PRESETS_JSON, "{}"));
+        if (raw.isBlank()) {
+            return mapper.createObjectNode();
+        }
+        try {
+            JsonNode parsed = mapper.readTree(raw);
+            if (parsed instanceof ObjectNode objectNode) {
+                return objectNode.deepCopy();
+            }
+        } catch (Exception ignored) {
+            // Keep default empty object.
+        }
+        return mapper.createObjectNode();
+    }
+
+    private void saveModulePresetsNode(String moduleId, ObjectNode presetsNode) {
+        String prefix = modulePrefPrefix(moduleId);
+        try {
+            preferences.put(prefix + PREF_MODULE_PRESETS_JSON, mapper.writeValueAsString(presetsNode));
+        } catch (Exception ignored) {
+            preferences.put(prefix + PREF_MODULE_PRESETS_JSON, "{}");
+        }
+        preferences.flush();
+    }
+
+    private ObjectNode captureCurrentModuleStateNode() {
+        ObjectNode node = mapper.createObjectNode();
+        node.put("source_mode", safeValue(sourceModeBox));
+        node.put("output_mode", safeValue(outputModeBox));
+        node.put("local_path", trimToEmpty(localPathField.getText()));
+        node.put("youtube_url", trimToEmpty(youtubeUrlField.getText()));
+        node.put("output_dir", trimToEmpty(outputDirField.getText()));
+        node.put("output_prefix", trimToEmpty(outputPrefixField.getText()));
+        node.put("quality", safeValue(qualityBox));
+        node.put("playlist", playlistBox.isSelected());
+        node.put("keep_originals", keepOriginalsBox.isSelected());
+
+        node.put("model", safeValue(modelField));
+        node.put("auto_model", autoModelBox.isSelected());
+        node.put("prefer_gpu", useGpuBox.isSelected());
+        node.put("source_lang", safeValue(sourceLangBox));
+        node.put("summary_lang", safeValue(summaryLangBox));
+        node.put("target_lang", safeValue(targetLangBox));
+        node.put("batch_size", valueOf(batchSizeSpinner));
+        node.put("clean_text", cleanTextBox.isSelected());
+        node.put("export_md", exportMdBox.isSelected());
+        node.put("summary_pack", summaryPackBox.isSelected());
+        node.put("notify_done", notifyDoneBox.isSelected());
+        node.put("split_minutes", valueOf(splitMinutesSpinner));
+
+        node.put("subtitle_mode", safeValue(subtitleModeBox));
+        node.put("subtitle_font", trimToEmpty(subtitleFontField.getText()));
+        node.put("subtitle_size", valueOf(subtitleSizeSpinner));
+        node.put("subtitle_color", toHex(subtitleColorPicker.getValue()));
+        node.put("subtitle_outline_color", toHex(subtitleOutlineColorPicker.getValue()));
+        node.put("subtitle_outline_width", valueOf(subtitleOutlineWidthSpinner));
+        node.put("translate_subtitles", translateSubtitlesBox.isSelected());
+
+        node.put("diarization_enabled", diarizationEnabledBox.isSelected());
+        node.put("diarization_backend", normalizeDiarizationBackend(safeValue(diarizationBackendBox)));
+        node.put("diarization_accuracy", normalizeDiarizationAccuracyProfile(safeValue(diarizationAccuracyBox)));
+        node.put("diarization_min", valueOf(diarizationMinSpinner));
+        node.put("diarization_max", valueOf(diarizationMaxSpinner));
+        node.put("diarization_review", diarizationReviewBox.isSelected());
+        node.put("diarization_unmapped", diarizationIncludeUnmappedBox.isSelected());
+        node.put("diarization_prefix", diarizationPrefixSrtBox.isSelected());
+        node.put("diarization_prefill", diarizationProfilePrefillBox.isSelected());
+
+        node.put("speaker", trimToEmpty(speakerField.getText()));
+        node.put("topic", trimToEmpty(topicField.getText()));
+        node.put("conference_title", trimToEmpty(conferenceTitleField.getText()));
+        node.put("conference_date", trimToEmpty(conferenceDateField.getText()));
+        node.put("conference_rows", serializeConferenceRows());
+
+        ObjectNode profileNode = node.putObject("speaker_profiles");
+        collectSpeakerProfiles().forEach(profileNode::put);
+
+        return node;
+    }
+
+    private void applyModuleStateFromNode(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return;
+        }
+
+        selectComboValue(sourceModeBox, nodeText(node, "source_mode", safeValue(sourceModeBox)));
+        selectComboValue(outputModeBox, nodeText(node, "output_mode", safeValue(outputModeBox)));
+        localPathField.setText(nodeText(node, "local_path", localPathField.getText()));
+        youtubeUrlField.setText(nodeText(node, "youtube_url", youtubeUrlField.getText()));
+        outputDirField.setText(nodeText(node, "output_dir", outputDirField.getText()));
+        outputPrefixField.setText(nodeText(node, "output_prefix", outputPrefixField.getText()));
+        selectComboValue(qualityBox, nodeText(node, "quality", safeValue(qualityBox)));
+        playlistBox.setSelected(nodeBool(node, "playlist", playlistBox.isSelected()));
+        keepOriginalsBox.setSelected(nodeBool(node, "keep_originals", keepOriginalsBox.isSelected()));
+
+        selectModel(nodeText(node, "model", safeValue(modelField)));
+        autoModelBox.setSelected(nodeBool(node, "auto_model", autoModelBox.isSelected()));
+        useGpuBox.setSelected(nodeBool(node, "prefer_gpu", useGpuBox.isSelected()));
+        selectComboValue(sourceLangBox, nodeText(node, "source_lang", safeValue(sourceLangBox)));
+        selectComboValue(summaryLangBox, nodeText(node, "summary_lang", safeValue(summaryLangBox)));
+        selectComboValue(targetLangBox, nodeText(node, "target_lang", safeValue(targetLangBox)));
+        batchSizeSpinner.getValueFactory().setValue(nodeInt(node, "batch_size", valueOf(batchSizeSpinner)));
+        cleanTextBox.setSelected(nodeBool(node, "clean_text", cleanTextBox.isSelected()));
+        exportMdBox.setSelected(nodeBool(node, "export_md", exportMdBox.isSelected()));
+        summaryPackBox.setSelected(nodeBool(node, "summary_pack", summaryPackBox.isSelected()));
+        notifyDoneBox.setSelected(nodeBool(node, "notify_done", notifyDoneBox.isSelected()));
+        splitMinutesSpinner.getValueFactory().setValue(nodeInt(node, "split_minutes", valueOf(splitMinutesSpinner)));
+
+        selectComboValue(subtitleModeBox, nodeText(node, "subtitle_mode", safeValue(subtitleModeBox)));
+        subtitleFontField.setText(nodeText(node, "subtitle_font", subtitleFontField.getText()));
+        subtitleSizeSpinner.getValueFactory().setValue(nodeInt(node, "subtitle_size", valueOf(subtitleSizeSpinner)));
+        subtitleColorPicker.setValue(parseColor(nodeText(node, "subtitle_color", toHex(subtitleColorPicker.getValue())), subtitleColorPicker.getValue()));
+        subtitleOutlineColorPicker.setValue(
+                parseColor(
+                        nodeText(node, "subtitle_outline_color", toHex(subtitleOutlineColorPicker.getValue())),
+                        subtitleOutlineColorPicker.getValue()
+                )
+        );
+        subtitleOutlineWidthSpinner.getValueFactory().setValue(
+                nodeInt(node, "subtitle_outline_width", valueOf(subtitleOutlineWidthSpinner))
+        );
+        translateSubtitlesBox.setSelected(nodeBool(node, "translate_subtitles", translateSubtitlesBox.isSelected()));
+
+        diarizationEnabledBox.setSelected(nodeBool(node, "diarization_enabled", diarizationEnabledBox.isSelected()));
+        selectComboValue(diarizationBackendBox, normalizeDiarizationBackend(nodeText(node, "diarization_backend", safeValue(diarizationBackendBox))));
+        selectComboValue(
+                diarizationAccuracyBox,
+                normalizeDiarizationAccuracyProfile(nodeText(node, "diarization_accuracy", safeValue(diarizationAccuracyBox)))
+        );
+        diarizationMinSpinner.getValueFactory().setValue(nodeInt(node, "diarization_min", valueOf(diarizationMinSpinner)));
+        diarizationMaxSpinner.getValueFactory().setValue(nodeInt(node, "diarization_max", valueOf(diarizationMaxSpinner)));
+        diarizationReviewBox.setSelected(nodeBool(node, "diarization_review", diarizationReviewBox.isSelected()));
+        diarizationIncludeUnmappedBox.setSelected(
+                nodeBool(node, "diarization_unmapped", diarizationIncludeUnmappedBox.isSelected())
+        );
+        diarizationPrefixSrtBox.setSelected(nodeBool(node, "diarization_prefix", diarizationPrefixSrtBox.isSelected()));
+        diarizationProfilePrefillBox.setSelected(
+                nodeBool(node, "diarization_prefill", diarizationProfilePrefillBox.isSelected())
+        );
+
+        speakerField.setText(nodeText(node, "speaker", speakerField.getText()));
+        topicField.setText(nodeText(node, "topic", topicField.getText()));
+        conferenceTitleField.setText(nodeText(node, "conference_title", conferenceTitleField.getText()));
+        conferenceDateField.setText(nodeText(node, "conference_date", conferenceDateField.getText()));
+        deserializeConferenceRows(nodeText(node, "conference_rows", ""));
+
+        JsonNode speakerProfilesNode = node.path("speaker_profiles");
+        if (speakerProfilesNode.isObject()) {
+            speakerProfiles.clear();
+            speakerProfilesNode.fields().forEachRemaining(entry -> speakerProfiles.add(
+                    new SpeakerProfileRow(normalizeSpeakerLabel(entry.getKey()), trimToEmpty(entry.getValue().asText("")))
+            ));
+        }
+        refreshProfilePreview();
+        updateSourceModeUi();
+        updateTranslationUi();
+    }
+
+    private static String sanitizePresetName(String value) {
+        String normalized = trimToEmpty(value).replaceAll("\\s+", " ");
+        if (normalized.length() > 64) {
+            return normalized.substring(0, 64).trim();
+        }
+        return normalized;
+    }
+
+    private static String nodeText(JsonNode node, String field, String fallback) {
+        JsonNode value = node.path(field);
+        if (value.isMissingNode() || value.isNull()) {
+            return fallback;
+        }
+        return value.asText(fallback);
+    }
+
+    private static boolean nodeBool(JsonNode node, String field, boolean fallback) {
+        JsonNode value = node.path(field);
+        if (value.isMissingNode() || value.isNull()) {
+            return fallback;
+        }
+        return value.asBoolean(fallback);
+    }
+
+    private static int nodeInt(JsonNode node, String field, int fallback) {
+        JsonNode value = node.path(field);
+        if (value.isMissingNode() || value.isNull()) {
+            return fallback;
+        }
+        return value.asInt(fallback);
+    }
+
     private static String normalizeModuleId(String value) {
         String module = trimToEmpty(value).toLowerCase(Locale.ROOT);
         if (!SUPPORTED_MODULES.contains(module)) {
             return MODULE_OFFLINE;
         }
         return module;
+    }
+
+    private static String normalizeDiarizationBackend(String value) {
+        String backend = trimToEmpty(value).toLowerCase(Locale.ROOT);
+        return switch (backend) {
+            case "advanced_pyannote" -> DIARIZATION_BACKEND_ACCURATE;
+            case "stable_local" -> DIARIZATION_BACKEND_FAST;
+            case "fast" -> DIARIZATION_BACKEND_FAST;
+            case "accurate" -> DIARIZATION_BACKEND_ACCURATE;
+            case DIARIZATION_BACKEND_FAST, DIARIZATION_BACKEND_ACCURATE -> backend;
+            default -> DIARIZATION_BACKEND_ACCURATE;
+        };
+    }
+
+    private static String diarizationBackendLabel(String value) {
+        return switch (normalizeDiarizationBackend(value)) {
+            case DIARIZATION_BACKEND_FAST -> "Fast";
+            case DIARIZATION_BACKEND_ACCURATE -> "Accurate";
+            default -> "Accurate";
+        };
+    }
+
+    private static String normalizeDiarizationAccuracyProfile(String value) {
+        String profile = trimToEmpty(value).toLowerCase(Locale.ROOT);
+        return switch (profile) {
+            case "small", "minimal", "low" -> DIARIZATION_ACCURACY_LOW;
+            case "default", "medium", "normal", "balanced" -> DIARIZATION_ACCURACY_BALANCED;
+            case "high" -> DIARIZATION_ACCURACY_HIGH;
+            case "max", "best", "maximum" -> DIARIZATION_ACCURACY_MAXIMUM;
+            default -> DIARIZATION_ACCURACY_BALANCED;
+        };
+    }
+
+    private static String diarizationAccuracyProfileLabel(String value) {
+        return switch (normalizeDiarizationAccuracyProfile(value)) {
+            case DIARIZATION_ACCURACY_LOW -> "Low";
+            case DIARIZATION_ACCURACY_BALANCED -> "Balanced";
+            case DIARIZATION_ACCURACY_HIGH -> "High";
+            case DIARIZATION_ACCURACY_MAXIMUM -> "Maximum";
+            default -> "Balanced";
+        };
     }
 
     private static String moduleLabel(String moduleId) {
@@ -2043,15 +2875,14 @@ public class MainController {
 
         ObjectNode diarization = params.putObject("diarization");
         diarization.put("enabled", diarizationEnabledBox.isSelected());
-        diarization.put("backend", safeValue(diarizationBackendBox));
+        diarization.put("backend", normalizeDiarizationBackend(safeValue(diarizationBackendBox)));
+        diarization.put("accuracy_profile", normalizeDiarizationAccuracyProfile(safeValue(diarizationAccuracyBox)));
         diarization.put("min_speakers", valueOf(diarizationMinSpinner));
         diarization.put("max_speakers", valueOf(diarizationMaxSpinner));
         diarization.put("review_after_file", diarizationReviewBox.isSelected());
         diarization.put("include_unmapped_speakers", diarizationIncludeUnmappedBox.isSelected());
         diarization.put("speaker_prefix_in_srt", diarizationPrefixSrtBox.isSelected());
         diarization.put("profile_prefill", diarizationProfilePrefillBox.isSelected());
-        diarization.put("fail_on_error", diarizationFailOnErrorBox.isSelected());
-        diarization.put("hf_token", trimToEmpty(hfTokenField.getText()));
 
         ObjectNode profilesNode = diarization.putObject("speaker_profiles");
         collectSpeakerProfiles().forEach(profilesNode::put);
@@ -2178,6 +3009,12 @@ public class MainController {
                     updateJobStatus(jobId, "completed");
                     JsonNode result = payload.path("result");
                     String finalOut = result.path("final_output_dir").asText("");
+                    Path sidecarPath = extractDiarizationSidecarPath(result);
+                    if (sidecarPath != null) {
+                        lastDiarizationSidecarPath = sidecarPath;
+                        mergeSpeakerProfilesFromSidecar(sidecarPath);
+                        updateSpeakerMappingButtonState(false);
+                    }
                     if (jobId != null && !jobId.isBlank() && jobId.equals(currentJobId)) {
                         setRunning(false);
                         statusLabel.setText("Completed");
@@ -2190,6 +3027,10 @@ public class MainController {
                     if (notifyDoneBox.isSelected() && finalOut != null && !finalOut.isBlank()) {
                         openPath(finalOut);
                     }
+                    if (sidecarPath != null) {
+                        addUserLog("INFO", withJobPrefix(jobId, "Speaker sidecar ready: " + sidecarPath));
+                        promptSpeakerMapping(sidecarPath);
+                    }
                     refreshJobsSilently();
                 }
                 case "job.failed" -> {
@@ -2197,6 +3038,10 @@ public class MainController {
                     JsonNode err = payload.path("error");
                     String message = err.path("message").asText("Pipeline failed");
                     addTechnicalLog("ERROR", withJobPrefix(jobId, message));
+                    String traceback = trimToEmpty(err.path("traceback").asText(""));
+                    if (!traceback.isBlank()) {
+                        addTechnicalLog("ERROR", withJobPrefix(jobId, "Traceback:\n" + traceback));
+                    }
                     if (jobId != null && !jobId.isBlank() && jobId.equals(currentJobId)) {
                         setRunning(false);
                         statusLabel.setText("Failed");
@@ -2230,6 +3075,9 @@ public class MainController {
     }
 
     private void onJobSelectionChanged(JobRow selected) {
+        if (replayJobButton != null) {
+            replayJobButton.setDisable(selected == null);
+        }
         if (selected == null || backendClient == null) {
             return;
         }
@@ -2261,7 +3109,13 @@ public class MainController {
         }
 
         refreshJobsButton.setDisable(true);
-        backendClient.sendRequest("list_jobs")
+        ModuleUiSchema schema = resolveModuleUiSchema(activeModule);
+        ObjectNode params = mapper.createObjectNode();
+        if (schema.jobsFilterModule()) {
+            params.put("module_id", activeModule);
+        }
+
+        backendClient.sendRequest("list_jobs", params)
                 .thenAccept(result -> Platform.runLater(() -> {
                     Map<String, JobRow> fresh = new LinkedHashMap<>();
                     JsonNode jobs = result.path("jobs");
@@ -2287,7 +3141,13 @@ public class MainController {
                     refreshJobsButton.setDisable(false);
 
                     if (verbose) {
-                        addUserLog("INFO", "Job history refreshed. Jobs: " + jobsById.size());
+                        addUserLog(
+                                "INFO",
+                                "Job history refreshed for "
+                                        + moduleLabel(activeModule)
+                                        + ". Jobs: "
+                                        + jobsById.size()
+                        );
                     }
                 }))
                 .exceptionally(ex -> {
@@ -2358,6 +3218,180 @@ public class MainController {
         return profiles;
     }
 
+    private void mergeSpeakerProfilesFromMapNode(JsonNode mapNode) {
+        if (mapNode == null || !mapNode.isObject()) {
+            return;
+        }
+        Map<String, String> merged = collectSpeakerProfiles();
+        mapNode.fields().forEachRemaining(entry -> {
+            String label = normalizeSpeakerLabel(entry.getKey());
+            if (label.isBlank()) {
+                return;
+            }
+            String mappedName = trimToEmpty(entry.getValue().asText(""));
+            String existing = trimToEmpty(merged.getOrDefault(label, ""));
+            if (existing.isBlank() || !mappedName.isBlank()) {
+                merged.put(label, mappedName);
+            } else {
+                merged.putIfAbsent(label, existing);
+            }
+        });
+        applySpeakerProfilesMap(merged);
+    }
+
+    private void mergeSpeakerProfilesFromSidecar(Path sidecarPath) {
+        if (sidecarPath == null || !Files.isRegularFile(sidecarPath)) {
+            return;
+        }
+        try {
+            JsonNode root = mapper.readTree(Files.readString(sidecarPath, StandardCharsets.UTF_8));
+            Map<String, String> merged = collectSpeakerProfiles();
+
+            JsonNode speakerMapNode = root.path("speaker_map");
+            if (speakerMapNode.isObject()) {
+                speakerMapNode.fields().forEachRemaining(entry -> {
+                    String label = normalizeSpeakerLabel(entry.getKey());
+                    if (label.isBlank()) {
+                        return;
+                    }
+                    String mappedName = trimToEmpty(entry.getValue().asText(""));
+                    String existing = trimToEmpty(merged.getOrDefault(label, ""));
+                    if (existing.isBlank() || !mappedName.isBlank()) {
+                        merged.put(label, mappedName);
+                    } else {
+                        merged.putIfAbsent(label, existing);
+                    }
+                });
+            }
+
+            JsonNode segmentsNode = root.path("segments");
+            if (segmentsNode.isArray()) {
+                for (JsonNode seg : segmentsNode) {
+                    String label = normalizeSpeakerLabel(seg.path("speaker_id").asText(""));
+                    if (!label.isBlank()) {
+                        merged.putIfAbsent(label, "");
+                    }
+                }
+            }
+
+            applySpeakerProfilesMap(merged);
+        } catch (Exception ex) {
+            addTechnicalLog("WARN", "Could not load speaker labels from sidecar: " + rootMessage(ex));
+        }
+    }
+
+    private int countSpeakersInSidecar(Path sidecarPath) {
+        if (sidecarPath == null || !Files.isRegularFile(sidecarPath)) {
+            return 0;
+        }
+        try {
+            JsonNode root = mapper.readTree(Files.readString(sidecarPath, StandardCharsets.UTF_8));
+            Set<String> labels = new LinkedHashSet<>();
+
+            JsonNode speakerMapNode = root.path("speaker_map");
+            if (speakerMapNode.isObject()) {
+                speakerMapNode.fieldNames().forEachRemaining(label -> {
+                    String normalized = normalizeSpeakerLabel(label);
+                    if (!normalized.isBlank()) {
+                        labels.add(normalized);
+                    }
+                });
+            }
+
+            JsonNode segmentsNode = root.path("segments");
+            if (segmentsNode.isArray()) {
+                for (JsonNode seg : segmentsNode) {
+                    String normalized = normalizeSpeakerLabel(seg.path("speaker_id").asText(""));
+                    if (!normalized.isBlank()) {
+                        labels.add(normalized);
+                    }
+                }
+            }
+            return labels.size();
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    private void applySpeakerProfilesMap(Map<String, String> profiles) {
+        List<Map.Entry<String, String>> sorted = new ArrayList<>(profiles.entrySet());
+        sorted.sort(Comparator
+                .comparingInt((Map.Entry<String, String> entry) -> speakerLabelSortKey(entry.getKey()))
+                .thenComparing(Map.Entry::getKey));
+
+        speakerProfiles.clear();
+        for (Map.Entry<String, String> entry : sorted) {
+            String label = normalizeSpeakerLabel(entry.getKey());
+            if (label.isBlank()) {
+                continue;
+            }
+            speakerProfiles.add(new SpeakerProfileRow(label, trimToEmpty(entry.getValue())));
+        }
+        refreshProfilePreview();
+    }
+
+    private Path extractDiarizationSidecarPath(JsonNode runResult) {
+        if (runResult == null || runResult.isMissingNode()) {
+            return null;
+        }
+        JsonNode artifacts = runResult.path("artifacts");
+        if (!artifacts.isArray()) {
+            return null;
+        }
+        for (JsonNode item : artifacts) {
+            String pathText = trimToEmpty(item.path("path").asText(""));
+            if (pathText.isBlank()) {
+                continue;
+            }
+            String kind = trimToEmpty(item.path("kind").asText(""));
+            String lowerPath = pathText.toLowerCase(Locale.ROOT);
+            if ("sidecar".equalsIgnoreCase(kind) || lowerPath.endsWith(".diarization.json")) {
+                try {
+                    return Path.of(pathText).toAbsolutePath().normalize();
+                } catch (Exception ignored) {
+                    // Continue scanning artifacts.
+                }
+            }
+        }
+        return null;
+    }
+
+    private void promptSpeakerMapping(Path sidecarPath) {
+        if (sidecarPath == null) {
+            return;
+        }
+        int speakerCount = countSpeakersInSidecar(sidecarPath);
+        if (speakerCount <= 0) {
+            return;
+        }
+
+        if (speakerCount == 1) {
+            addUserLog(
+                    "WARN",
+                    "Diarization produced a single label. Try backend 'local_cluster_accurate' or increase max speakers."
+            );
+        }
+
+        Alert mapDialog = new Alert(Alert.AlertType.CONFIRMATION);
+        mapDialog.setTitle("Speaker Mapping");
+        mapDialog.setHeaderText("Diarization output is ready");
+        mapDialog.setContentText(
+                "Detected speaker labels: " + speakerCount + ".\n"
+                        + "Open Diarization tab, set names (e.g. SPEAKER_00 -> Karel), then click 'Apply to Last Output'."
+        );
+        ButtonType mapNow = new ButtonType("Map now", ButtonBar.ButtonData.OK_DONE);
+        ButtonType later = new ButtonType("Later", ButtonBar.ButtonData.CANCEL_CLOSE);
+        mapDialog.getButtonTypes().setAll(mapNow, later);
+        Stage owner = getStage();
+        if (owner != null) {
+            mapDialog.initOwner(owner);
+        }
+        Optional<ButtonType> choice = mapDialog.showAndWait();
+        if (choice.isPresent() && choice.get() == mapNow) {
+            selectModule(diarizationTab);
+        }
+    }
+
     private Map<String, String> parseProfilesFromText(String content, boolean assumeJson) throws Exception {
         Map<String, String> parsed = new LinkedHashMap<>();
         String safeContent = content == null ? "" : content;
@@ -2411,8 +3445,9 @@ public class MainController {
 
     private void applyUiMode() {
         boolean simpleMode = simpleModeBox.isSelected();
-        simpleHintCard.setManaged(simpleMode);
-        simpleHintCard.setVisible(simpleMode);
+        ModuleUiSchema schema = resolveModuleUiSchema(activeModule);
+        boolean showSimpleHint = simpleMode && schema.allowsSection("simple_hint_card");
+        setNodeVisibleManaged(simpleHintCard, showSimpleHint);
 
         syncModuleButtons();
         addUserLog("INFO", simpleMode ? "Simple mode enabled." : "Advanced mode enabled.");
@@ -2453,6 +3488,240 @@ public class MainController {
         } else {
             targetLangBox.getSelectionModel().selectFirst();
         }
+    }
+
+    private void updateModuleSchemasFromCapabilities(JsonNode componentNodes) {
+        if (componentNodes == null || !componentNodes.isArray()) {
+            return;
+        }
+
+        moduleUiSchemas.clear();
+        for (JsonNode item : componentNodes) {
+            String moduleId = normalizeModuleId(item.path("module_id").asText(""));
+            JsonNode schemaNode = item.path("ui_schema");
+            if (!schemaNode.isObject()) {
+                continue;
+            }
+            Set<String> tabs = parseSchemaSet(schemaNode.path("show_tabs"));
+            tabs.retainAll(UI_SCHEMA_TABS);
+            Set<String> sections = parseSchemaSet(schemaNode.path("show_sections"));
+            Set<String> fields = parseSchemaSet(schemaNode.path("show_fields"));
+            boolean jobsFilterModule = schemaNode.path("jobs_filter_module").asBoolean(true);
+
+            moduleUiSchemas.put(
+                    moduleId,
+                    new ModuleUiSchema(
+                            Collections.unmodifiableSet(tabs),
+                            Collections.unmodifiableSet(sections),
+                            Collections.unmodifiableSet(fields),
+                            jobsFilterModule
+                    )
+            );
+        }
+    }
+
+    private ModuleUiSchema resolveModuleUiSchema(String moduleId) {
+        String normalized = normalizeModuleId(moduleId);
+        ModuleUiSchema backendSchema = moduleUiSchemas.get(normalized);
+        if (backendSchema != null) {
+            return backendSchema;
+        }
+        return defaultModuleUiSchema(normalized);
+    }
+
+    private ModuleUiSchema defaultModuleUiSchema(String moduleId) {
+        if (MODULE_OFFLINE.equals(moduleId)) {
+            return new ModuleUiSchema(
+                    Set.of("run", "logs", "jobs", "settings"),
+                    Set.of(
+                            "run_source_card",
+                            "run_output_card",
+                            "simple_hint_card",
+                            "settings_appearance_card",
+                            "settings_runtime_card",
+                            "settings_core_card",
+                            "settings_module_flow_card",
+                            "settings_module_scope_row",
+                            "settings_preset_row"
+                    ),
+                    Set.of(
+                            "run.local_path",
+                            "run.output_dir",
+                            "run.output_prefix",
+                            "settings.model",
+                            "settings.model_options",
+                            "settings.source_lang",
+                            "settings.summary_lang",
+                            "settings.batch_size",
+                            "settings.text_options",
+                            "settings.split_minutes"
+                    ),
+                    true
+            );
+        }
+        if (MODULE_YOUTUBE.equals(moduleId)) {
+            return new ModuleUiSchema(
+                    Set.of("run", "logs", "jobs", "settings"),
+                    Set.of(
+                            "run_source_card",
+                            "run_output_card",
+                            "simple_hint_card",
+                            "settings_appearance_card",
+                            "settings_runtime_card",
+                            "settings_core_card",
+                            "settings_module_flow_card",
+                            "settings_module_scope_row",
+                            "settings_preset_row"
+                    ),
+                    Set.of(
+                            "run.youtube_url",
+                            "run.playlist",
+                            "run.quality",
+                            "run.output_dir",
+                            "run.output_prefix",
+                            "run.keep_originals",
+                            "settings.model",
+                            "settings.model_options",
+                            "settings.source_lang",
+                            "settings.summary_lang",
+                            "settings.batch_size",
+                            "settings.text_options",
+                            "settings.split_minutes"
+                    ),
+                    true
+            );
+        }
+        if (MODULE_SPEAKER.equals(moduleId)) {
+            return new ModuleUiSchema(
+                    Set.of("run", "diarization", "logs", "jobs", "settings"),
+                    Set.of(
+                            "run_source_card",
+                            "run_output_card",
+                            "simple_hint_card",
+                            "settings_appearance_card",
+                            "settings_runtime_card",
+                            "settings_core_card",
+                            "settings_module_flow_card",
+                            "settings_module_scope_row",
+                            "settings_preset_row"
+                    ),
+                    Set.of(
+                            "run.local_path",
+                            "run.output_dir",
+                            "run.output_prefix",
+                            "settings.model",
+                            "settings.model_options",
+                            "settings.source_lang",
+                            "settings.batch_size",
+                            "settings.speaker_hint"
+                    ),
+                    true
+            );
+        }
+        if (MODULE_CONFERENCE.equals(moduleId)) {
+            return new ModuleUiSchema(
+                    Set.of("run", "advanced", "logs", "jobs", "settings"),
+                    Set.of(
+                            "run_source_card",
+                            "run_output_card",
+                            "simple_hint_card",
+                            "advanced_conference_card",
+                            "settings_appearance_card",
+                            "settings_runtime_card",
+                            "settings_core_card",
+                            "settings_module_flow_card",
+                            "settings_module_scope_row",
+                            "settings_preset_row"
+                    ),
+                    Set.of(
+                            "run.local_path",
+                            "run.output_dir",
+                            "run.output_prefix",
+                            "settings.model",
+                            "settings.model_options",
+                            "settings.source_lang",
+                            "settings.summary_lang",
+                            "settings.batch_size",
+                            "settings.text_options",
+                            "settings.split_minutes"
+                    ),
+                    true
+            );
+        }
+        if (MODULE_YOUTUBE_SUBS.equals(moduleId)) {
+            return new ModuleUiSchema(
+                    Set.of("run", "advanced", "logs", "jobs", "settings"),
+                    Set.of(
+                            "run_source_card",
+                            "run_output_card",
+                            "simple_hint_card",
+                            "advanced_subtitles_card",
+                            "settings_appearance_card",
+                            "settings_runtime_card",
+                            "settings_core_card",
+                            "settings_module_flow_card",
+                            "settings_module_scope_row",
+                            "settings_preset_row"
+                    ),
+                    Set.of(
+                            "run.youtube_url",
+                            "run.playlist",
+                            "run.quality",
+                            "run.output_dir",
+                            "run.output_prefix",
+                            "settings.model",
+                            "settings.model_options",
+                            "settings.source_lang",
+                            "settings.target_lang",
+                            "settings.batch_size"
+                    ),
+                    true
+            );
+        }
+        if (MODULE_YOUTUBE_DUB.equals(moduleId)) {
+            return new ModuleUiSchema(
+                    Set.of("run", "logs", "jobs", "settings"),
+                    Set.of(
+                            "run_source_card",
+                            "run_output_card",
+                            "simple_hint_card",
+                            "settings_appearance_card",
+                            "settings_runtime_card",
+                            "settings_core_card",
+                            "settings_module_flow_card",
+                            "settings_module_scope_row",
+                            "settings_preset_row"
+                    ),
+                    Set.of(
+                            "run.youtube_url",
+                            "run.playlist",
+                            "run.quality",
+                            "run.output_dir",
+                            "run.output_prefix",
+                            "settings.model",
+                            "settings.model_options",
+                            "settings.source_lang",
+                            "settings.target_lang",
+                            "settings.batch_size"
+                    ),
+                    true
+            );
+        }
+        return new ModuleUiSchema(Set.of(), Set.of(), Set.of(), true);
+    }
+
+    private static Set<String> parseSchemaSet(JsonNode node) {
+        Set<String> values = new LinkedHashSet<>();
+        if (node == null || !node.isArray()) {
+            return values;
+        }
+        for (JsonNode item : node) {
+            String value = trimToEmpty(item.asText(""));
+            if (!value.isBlank()) {
+                values.add(value);
+            }
+        }
+        return values;
     }
 
     private String resolveLocalVersion() {
@@ -2548,6 +3817,30 @@ public class MainController {
         if (settingsModuleBox != null) {
             settingsModuleBox.setDisable(running);
         }
+        if (settingsPresetBox != null) {
+            settingsPresetBox.setDisable(running);
+        }
+        if (settingsSavePresetButton != null) {
+            settingsSavePresetButton.setDisable(running);
+        }
+        if (settingsLoadPresetButton != null) {
+            settingsLoadPresetButton.setDisable(running || settingsPresetBox == null || settingsPresetBox.getItems().isEmpty());
+        }
+        if (settingsDeletePresetButton != null) {
+            settingsDeletePresetButton.setDisable(running || settingsPresetBox == null || settingsPresetBox.getItems().isEmpty());
+        }
+        if (replayJobButton != null) {
+            replayJobButton.setDisable(running || jobHistoryTable == null || jobHistoryTable.getSelectionModel().getSelectedItem() == null);
+        }
+        updateSpeakerMappingButtonState(running);
+    }
+
+    private void updateSpeakerMappingButtonState(boolean running) {
+        if (applySpeakerMappingButton == null) {
+            return;
+        }
+        boolean hasSidecar = lastDiarizationSidecarPath != null && Files.isRegularFile(lastDiarizationSidecarPath);
+        applySpeakerMappingButton.setDisable(running || !hasSidecar);
     }
 
     private void resetEtaDisplay() {
@@ -2634,7 +3927,26 @@ public class MainController {
 
         @Override
         public void selectDiarizationBackend(String value) {
-            selectComboValue(diarizationBackendBox, value);
+            selectComboValue(diarizationBackendBox, normalizeDiarizationBackend(value));
+        }
+
+        @Override
+        public void selectDiarizationAccuracyProfile(String value) {
+            selectComboValue(diarizationAccuracyBox, normalizeDiarizationAccuracyProfile(value));
+        }
+
+        @Override
+        public void setDiarizationMinSpeakers(int value) {
+            if (diarizationMinSpinner.getValueFactory() != null) {
+                diarizationMinSpinner.getValueFactory().setValue(Math.max(0, value));
+            }
+        }
+
+        @Override
+        public void setDiarizationMaxSpeakers(int value) {
+            if (diarizationMaxSpinner.getValueFactory() != null) {
+                diarizationMaxSpinner.getValueFactory().setValue(Math.max(0, value));
+            }
         }
 
         @Override
@@ -2706,8 +4018,11 @@ public class MainController {
         if (safeMessage.isBlank()) {
             return;
         }
+        String normalizedLevel = normalizeLevel(level);
+        String source = category == LogCategory.USER ? "ui.user" : "ui.technical";
+        AppFileLogger.log(normalizedLevel, source, safeMessage);
 
-        LogEntry entry = new LogEntry(LocalDateTime.now(), normalizeLevel(level), category, safeMessage);
+        LogEntry entry = new LogEntry(LocalDateTime.now(), normalizedLevel, category, safeMessage);
         allLogs.add(entry);
 
         if (allLogs.size() > MAX_LOG_ENTRIES) {
@@ -3281,6 +4596,20 @@ public class MainController {
         return trimToEmpty(value).toUpperCase(Locale.ROOT);
     }
 
+    private static int speakerLabelSortKey(String value) {
+        String label = normalizeSpeakerLabel(value);
+        int idx = label.lastIndexOf('_');
+        if (idx >= 0 && idx + 1 < label.length()) {
+            String suffix = label.substring(idx + 1);
+            try {
+                return Integer.parseInt(suffix);
+            } catch (Exception ignored) {
+                // fallback below
+            }
+        }
+        return Integer.MAX_VALUE;
+    }
+
     private static boolean isMediaFile(Path path) {
         String file = trimToEmpty(path.getFileName().toString()).toLowerCase(Locale.ROOT);
         return file.endsWith(".mp3")
@@ -3355,6 +4684,11 @@ public class MainController {
     }
 
     private static String rootMessage(Throwable throwable) {
+        if (throwable == null) {
+            AppFileLogger.log("ERROR", "ui.exception", "Unknown error (throwable was null).");
+            return "Unknown error";
+        }
+        AppFileLogger.logException("ui.exception", throwable);
         Throwable cursor = throwable;
         while (cursor.getCause() != null) {
             cursor = cursor.getCause();

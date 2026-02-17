@@ -75,6 +75,22 @@ Transport is newline-delimited JSON (`\n`-terminated objects).
 - `health`
 - `shutdown` (server-level command)
 
+## `get_capabilities` notes
+- `module_components[]` includes backend-driven metadata for each module.
+- `module_components[].ui_schema` is used by frontend to show only module-relevant UI.
+  - `show_tabs`: visible tabs for module context
+  - `show_sections`: visible cards/sections
+  - `show_fields`: visible field-level controls
+  - `jobs_filter_module`: whether job list should be filtered to active module
+
+## `list_jobs` params (optional)
+```json
+{
+  "module_id": "speaker_transcribe"
+}
+```
+- `module_id` (or alias `module`) filters returned jobs to one module.
+
 ## `run_pipeline` params shape (simplified)
 ```json
 {
@@ -121,13 +137,12 @@ Transport is newline-delimited JSON (`\n`-terminated objects).
   },
   "diarization": {
     "enabled": false,
-    "backend": "stable_local",
+    "backend": "local_cluster_accurate",
+    "accuracy_profile": "balanced",
     "min_speakers": 0,
     "max_speakers": 0,
     "include_unmapped_speakers": true,
-    "speaker_prefix_in_srt": true,
-    "hf_token": "",
-    "fail_on_error": false
+    "speaker_prefix_in_srt": true
   },
   "conference_meta": {}
 }
