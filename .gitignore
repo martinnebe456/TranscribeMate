@@ -1,23 +1,40 @@
-# Virtual environments
+# Python virtual envs
 .venv/
 venv/
 
-# Python cache
+# Python caches and test artifacts
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
-# Build artifacts
+# Java/Maven build artifacts
+javafx-client/target/
+*.class
+
+# Legacy/native build outputs (kept ignored if created locally)
 build/
 dist/
-*.spec
-!TranscribeMate.spec
+dist_installer/
+transcribemate/runtime/
+transcribemate/ui/
 
-# App outputs and local config
+# Local runtime outputs and config
 yt_out/
 transcribemate_outputs/
 _tm_work_*/
 config.json
+bootstrap.log
+runtime.log
+*.log
+
+# Downloaded helper binaries
+assets/*.exe
+assets/*.dll
 
 # OS/editor noise
 .DS_Store
@@ -27,12 +44,7 @@ Thumbs.db
 .codex/
 skills/
 
-# Logs
-*.log
-
-assets/*.exe
-
-# Binaries / large files
+# Binary archives
 *.exe
 *.dll
 *.zip

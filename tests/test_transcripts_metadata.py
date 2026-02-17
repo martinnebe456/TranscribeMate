@@ -1,12 +1,14 @@
 from pathlib import Path
 
 from transcribemate.core.transcripts import (
+    build_metadata,
     render_metadata_block,
     render_raw_transcript,
     render_summary_prompt,
     render_timestamped_transcript,
 )
 from transcribemate.core.types import TranscriptSegment
+from transcribemate.core.types import TranscriptionResult
 
 
 def test_render_metadata_block_multiline_topic():
@@ -73,3 +75,35 @@ def test_render_transcript_hides_unmapped_labels_when_disabled():
         include_unmapped_speakers=False,
     )
     assert body.strip() == "No name"
+
+
+def test_build_metadata_includes_conference_fields():
+    result = TranscriptionResult(
+        srt_path=Path("x.srt"),
+        raw_txt_path=Path("x.txt"),
+        segments=[],
+        detected_lang="en",
+        duration=12.0,
+        device="cpu",
+        compute_type="int8",
+    )
+    metadata = build_metadata(
+        media_path=Path("session01.wav"),
+        result=result,
+        model_name="large-v3",
+        output_mode="conference",
+        clean_text=True,
+        export_md=True,
+        split_minutes=0,
+        part_idx=1,
+        part_total=1,
+        speaker="Alice",
+        topic="Keynote",
+        lecture_description="Opening talk",
+        lecture_date="2026-02-17",
+        conference_title="PyCon Prague",
+        conference_date="2026-02-17",
+    )
+
+    assert metadata["Conference title"] == "PyCon Prague"
+    assert metadata["Lecture description"] == "Opening talk"

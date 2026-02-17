@@ -1,0 +1,52 @@
+# TranscribeMate V2 Architecture
+
+## Goals
+- Split UI from heavy ML/runtime dependencies.
+- Keep speech pipeline in Python where existing code already works.
+- Move desktop UX to JavaFX for stronger UI evolution and richer state handling.
+
+## High-Level Design
+- `javafx-client/` (Java 21 + JavaFX): Desktop frontend.
+- `transcribemate/v2/backend/` (Python 3.12): JSON-line backend worker process.
+- Transport: newline-delimited JSON over `stdin/stdout`.
+
+## Runtime Flow
+1. JavaFX app starts Python backend process:
+   - preferred interpreter: managed runtime (`%LOCALAPPDATA%/TranscribeMate/runtime/python/python.exe`) when present
+   - default fallback command: `python -m transcribemate.v2.backend.server --stdio`
+2. Frontend sends request:
+   - `run_pipeline`
+3. Backend creates async job and immediately returns `job_id`.
+4. Backend emits streaming events:
+   - `job.log`
+   - `job.progress`
+   - `job.completed` / `job.failed` / `job.cancelled`
+5. Frontend renders progress/logs and allows `cancel_job`.
+
+## Backend Layers
+- `protocol.py`: message envelope parsing/serialization.
+- `models.py`: typed request validation + normalized defaults.
+- `service.py`: job lifecycle, routing, event emission.
+- `pipeline.py`: pipeline orchestration using existing modules:
+  - `transcribe.py`, `translate.py`, `subtitles.py`, `diarize.py`, `transcripts.py`.
+- `diarization.py`: backend abstraction:
+  - `stable_local` (deterministic fallback)
+  - `advanced_pyannote` (full diarization, optional)
+
+## Why This Is More Stable
+- UI process is isolated from Python package churn.
+- Backend jobs are cancellable and observable via explicit events.
+- Diarization no longer has to crash entire UI flow:
+  - `advanced_pyannote` can fallback to `stable_local` unless `fail_on_error=true`.
+
+## Build/Run
+- Backend dev run:
+  - `python -m transcribemate.v2.backend.server --stdio`
+- JavaFX dev run:
+  - `cd javafx-client`
+  - `mvn -q javafx:run`
+
+Environment variables used by frontend:
+- `TM_BACKEND_CMD` (full custom command)
+- `TM_BACKEND_PYTHON` (python executable override)
+- `TM_PROJECT_ROOT` (working directory for backend process)

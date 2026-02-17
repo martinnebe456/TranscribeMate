@@ -37,7 +37,7 @@ VIDEO_QUALITIES = ["best", "1080p", "720p", "480p", "360p"]
 APP_NAME = "TranscribeMate"
 APP_NAME_VERSION = f"{APP_NAME} {APP_VERSION}".strip()
 LANGUAGES = ["en", "cs"]
-OUTPUT_MODE_KEYS = ["conference", "video_subs", "srt_only", "txt_only"]
+OUTPUT_MODE_KEYS = ["conference", "video_subs", "video_dub", "srt_only", "txt_only"]
 QUICK_MODEL_KEYS = ["small", "medium", "quality"]
 QUICK_MODEL_MAP = {
     "small": "small",
@@ -81,10 +81,14 @@ LEGACY_OUTPUT_MODE_MAP = {
     "konference": "conference",
     "Konference": "conference",
     "video+subtitles": "video_subs",
+    "video+dub": "video_dub",
+    "video+dabing": "video_dub",
+    "video+dabing (tts)": "video_dub",
     "SRT only": "srt_only",
     "transcript only (.txt)": "txt_only",
     "Conference": "conference",
     "conference": "conference",
+    "video+dubbing": "video_dub",
 }
 
 I18N: Dict[str, Dict[str, str]] = {
@@ -117,6 +121,7 @@ I18N: Dict[str, Dict[str, str]] = {
         "mode.hint.prefix": "Mode:",
         "mode.hint.conference": "Conference mode: pick a folder and export transcripts, summary prompts, and Confluence templates.",
         "mode.hint.video_subs": "Creates a transcript, translates subtitles, and embeds them into the video.",
+        "mode.hint.video_dub": "Downloads video, translates spoken content and replaces original audio with generated dubbing.",
         "mode.hint.srt_only": "Saves original and translated subtitles (.srt) without creating a video.",
         "mode.hint.txt_only": "Saves a clean speech transcript to .txt (no translation, no subtitles).",
         "transcribe.title": "Transcription",
@@ -216,6 +221,7 @@ I18N: Dict[str, Dict[str, str]] = {
         "error.sidecar_invalid": "Invalid speaker sidecar file.",
         "output_mode.conference": "conference (.txt/.md only)",
         "output_mode.video_subs": "video+subtitles",
+        "output_mode.video_dub": "video+dubbing",
         "output_mode.srt_only": "SRT only",
         "output_mode.txt_only": "transcript only (.txt)",
         "quick_model.small": "Small",
@@ -270,6 +276,7 @@ I18N: Dict[str, Dict[str, str]] = {
         "mode.hint.prefix": "Režim:",
         "mode.hint.conference": "Režim Konference: vyber složku a ulož přepisy, summary prompty a Confluence šablony.",
         "mode.hint.video_subs": "Vytvoří přepis, přeloží titulky a vloží je do videa.",
+        "mode.hint.video_dub": "Stáhne video, přeloží řeč a nahradí původní audio automatickým dabingem.",
         "mode.hint.srt_only": "Uloží originální i přeložené titulky (.srt) bez vytváření videa.",
         "mode.hint.txt_only": "Uloží čistý přepis řeči do .txt (bez překladu a titulků).",
         "transcribe.title": "Přepis",
@@ -369,6 +376,7 @@ I18N: Dict[str, Dict[str, str]] = {
         "error.sidecar_invalid": "Neplatný sidecar soubor řečníků.",
         "output_mode.conference": "konference (jen .txt/.md)",
         "output_mode.video_subs": "video+titulky",
+        "output_mode.video_dub": "video+dabing",
         "output_mode.srt_only": "pouze SRT",
         "output_mode.txt_only": "pouze přepis (.txt)",
         "quick_model.small": "Malý",
