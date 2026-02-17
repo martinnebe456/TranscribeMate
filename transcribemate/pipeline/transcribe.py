@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 from pathlib import Path
 
+from ..core.hf_progress import huggingface_download_progress
+from ..core.models import whisper_cache_dir
 from ..core.gpu import torch_device
 from ..core.types import TranscriptSegment, TranscriptionResult
 
@@ -22,6 +26,94 @@ def format_timestamp(seconds: float) -> str:
     return f"{h:02}:{m:02}:{s:02},{ms:03}"
 
 
+def _safe_model_dir_name(model_name: str) -> str:
+    text = re.sub(r"[^A-Za-z0-9._-]+", "-", str(model_name or "").strip())
+    text = text.strip(".-")
+    return text or "whisper-model"
+
+
+def _resolve_whisper_model_path(model_name: str, log, set_step_progress) -> str:
+    from faster_whisper.utils import download_model as download_faster_whisper_model
+
+    cache_dir = os.environ.get("WHISPER_CACHE_DIR")
+    if not cache_dir:
+        cache_dir = str(whisper_cache_dir())
+    model_output_dir = Path(cache_dir) / "models" / _safe_model_dir_name(model_name)
+    model_output_dir.mkdir(parents=True, exist_ok=True)
+
+    progress_state = {"last_bucket": -10, "saw_progress": False}
+
+    def _on_download_progress(desc: str, percent: float | None):
+        progress_state["saw_progress"] = True
+        if percent is None:
+            return
+
+        bounded = max(0.0, min(100.0, float(percent)))
+        # Reserve 35% of transcribe step for model availability/download.
+        set_step_progress((bounded / 100.0) * 35.0)
+
+        bucket = int(bounded // 10) * 10
+        if bucket > progress_state["last_bucket"]:
+            progress_state["last_bucket"] = bucket
+            log(f"[INFO] Model download: {bucket}% ({desc})\n")
+
+    log(f"[INFO] Resolving faster-whisper model '{model_name}' files...\n")
+    log(f"[INFO] Whisper model target directory: {model_output_dir}\n")
+    with huggingface_download_progress(_on_download_progress):
+        model_path = download_faster_whisper_model(
+            model_name,
+            output_dir=str(model_output_dir),
+            local_files_only=False,
+            cache_dir=cache_dir,
+        )
+
+    if progress_state["saw_progress"]:
+        log("[INFO] Model download/check complete.\n")
+    else:
+        log("[INFO] Model already available in local cache.\n")
+
+    set_step_progress(35.0)
+    return model_path
+
+
+def _load_whisper_model(model_path: str, prefer_gpu: bool, log):
+    from faster_whisper import WhisperModel
+
+    primary_device = "cuda" if prefer_gpu and torch_device(prefer_gpu) == "cuda" else "cpu"
+    if prefer_gpu and primary_device != "cuda":
+        log("[WARN] GPU requested but CUDA runtime is unavailable. Falling back to CPU.\n")
+
+    candidates: list[tuple[str, str]] = []
+    if primary_device == "cuda":
+        candidates.append(("cuda", "float16"))
+        candidates.append(("cpu", "int8"))
+    else:
+        candidates.append(("cpu", "int8"))
+
+    last_error: Exception | None = None
+    for device, compute_type in candidates:
+        try:
+            log(f"[INFO] Initializing faster-whisper runtime: device={device}, compute={compute_type}\n")
+            model = WhisperModel(
+                model_path,
+                device=device,
+                compute_type=compute_type,
+                local_files_only=True,
+            )
+            if device == "cpu" and primary_device == "cuda":
+                log("[WARN] CUDA initialization failed. Using CPU runtime for this job.\n")
+            return model, device, compute_type
+        except Exception as exc:
+            last_error = exc
+            if device == "cuda":
+                detail = str(exc).strip() or type(exc).__name__
+                log(f"[WARN] CUDA runtime initialization failed: {type(exc).__name__}: {detail}\n")
+                continue
+            raise
+
+    raise RuntimeError("Unable to initialize faster-whisper runtime.") from last_error
+
+
 def faster_whisper_transcribe(
     media_path: Path,
     out_dir: Path,
@@ -32,16 +124,16 @@ def faster_whisper_transcribe(
     set_step_progress,
     stop_flag,
 ) -> TranscriptionResult:
-    from faster_whisper import WhisperModel
-
     out_dir.mkdir(parents=True, exist_ok=True)
-    device = "cuda" if prefer_gpu and torch_device(prefer_gpu) == "cuda" else "cpu"
-    compute_type = "float16" if device == "cuda" else "int8"
+    preferred_device = "cuda" if prefer_gpu else "cpu"
 
-    log(f"[INFO] Transcription settings: model={model}, device={device}, compute={compute_type}\n")
+    log(f"[INFO] Transcription request: model={model}, preferred_device={preferred_device}\n")
     log(f"[INFO] Language hint: {language}\n")
     log(f"[INFO] Loading faster-whisper model '{model}'...\n")
-    wmodel = WhisperModel(model, device=device, compute_type=compute_type)
+    model_path = _resolve_whisper_model_path(model, log, set_step_progress)
+    log(f"[INFO] Whisper model path: {model_path}\n")
+    wmodel, device, compute_type = _load_whisper_model(model_path, prefer_gpu, log)
+    log(f"[INFO] Transcription settings: model={model}, device={device}, compute={compute_type}\n")
 
     log(f"[INFO] Transcribing: {media_path.name}\n")
 
@@ -79,7 +171,8 @@ def faster_whisper_transcribe(
             txt_lines.append(text)
 
         if duration_hint > 0:
-            progress = min(99.0, (last_end / duration_hint) * 100)
+            # First ~35% is reserved for model resolution/download.
+            progress = min(99.0, 35.0 + ((last_end / duration_hint) * 64.0))
             set_step_progress(progress)
 
     duration_value = duration_hint if duration_hint > 0 else last_end

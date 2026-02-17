@@ -1,93 +1,77 @@
 # TranscribeMate - Agent Guide
 
-This file orients contributors and other agents to the codebase, runtime behavior,
-and build pipeline. It is intentionally concise and points to the most important
-modules and flows.
+This guide describes the current repository state (V2-only stack).
 
 ## Project summary
-- Windows desktop GUI for audio/video transcription and subtitles.
-- Optional YouTube download (yt-dlp), speech-to-text (faster-whisper),
-  subtitle translation (transformers), and subtitle embedding (ffmpeg).
-- Outputs transcripts, SRTs, subtitled videos, and summary packs.
+- Desktop app architecture:
+  - JavaFX frontend (`javafx-client/`)
+  - Python backend (`transcribemate/v2/backend/`)
+- Communication:
+  - JSON lines over `stdin/stdout`
+- Domain:
+  - media transcription, translation, subtitle rendering, optional diarization
 
 ## Entry points
-- `main.py` / `app_gui.py` / `bootstrap.py` -> `transcribemate.runtime.launch_app()`.
-- `transcribemate/runtime/runtime.py`:
-  - Handles startup logging, FFmpeg download, and PyTorch install/repair for frozen builds.
-  - Launches the Tkinter UI and shows a startup splash when frozen.
-- `transcribemate/ui/ui.py`:
-  - Main GUI (Tkinter + ttkbootstrap + TkinterDnD).
-  - Orchestrates the end-to-end pipeline in a worker thread.
+- Frontend (JavaFX):
+  - `./run_v2_frontend.ps1`
+  - or `cd javafx-client && mvn javafx:run`
+- Backend (Python):
+  - `./run_v2_backend.ps1`
+  - or `python -m transcribemate.v2.backend.server --stdio`
+- Installer build (Windows):
+  - `./build_v2_installer.ps1`
 
-## Code map (where to look)
-- `transcribemate/ui/ui.py`:
-  - UI state, settings, progress UI, and pipeline orchestration.
-  - Look at the `worker()` function in `start()` for the full flow.
-- `transcribemate/pipeline/`:
-  - `download.py` - yt-dlp download helpers.
-  - `transcribe.py` - faster-whisper transcription and SRT/TXT output.
-  - `translate.py` - subtitle translation via transformers.
-  - `subtitles.py` - ffmpeg soft/hard subtitle embedding.
-- `transcribemate/core/`:
-  - `config.py` - config persistence and defaults.
-  - `paths.py` - user data paths, asset discovery, PATH/PYTHONPATH setup.
-  - `transcripts.py` - transcript rendering, summary pack, Confluence templates.
-  - `files.py` - filename handling, media discovery, temp cleanup.
-  - `i18n.py` - labels, languages, translation model map.
-  - `gpu.py` - GPU detection and auto model choice.
-  - `models.py` - cache location helpers and environment defaults.
+## Code map
+- `javafx-client/src/main/java/com/transcribemate/v2/fx/`
+  - `TranscribeMateApp.java` - app bootstrap
+  - `MainController.java` - UI orchestration, preflight, jobs, logs
+  - `BackendClient.java` - backend subprocess + JSON IPC
+  - `SystemMonitorWindow.java` - CPU/RAM/GPU/VRAM charts
+- `javafx-client/src/main/resources/com/transcribemate/v2/fx/`
+  - `main-view.fxml` - primary layout
+  - `styles.css` - visual theme
+- `transcribemate/v2/backend/`
+  - `server.py` - JSON-line server loop
+  - `service.py` - methods, job lifecycle, preflight/system metrics
+  - `models.py` - request validation/defaulting
+  - `pipeline.py` - orchestration using shared pipeline/core modules
+  - `protocol.py` - request/response/event structures
+  - `diarization.py` - backend abstraction (`stable_local`, `advanced_pyannote`)
+- Shared backend dependencies:
+  - `transcribemate/core/`
+  - `transcribemate/pipeline/`
 
 ## Runtime data and outputs
-- User data dir:
+- User data directory:
   - Windows: `%LOCALAPPDATA%/TranscribeMate`
   - Other: `$XDG_DATA_HOME` or `~/.local/share/TranscribeMate`
-- Config: `config.json` in the user data dir.
-- Logs: `runtime.log` in the user data dir (startup and runtime bootstrap).
-- Cached models:
-  - `cache/huggingface` and `cache/whisper` in user data dir.
-- Torch install (frozen EXE):
-  - Per-user `site-packages` under the user data dir.
-- Output root:
-  - `<out_dir>/transcribemate_outputs/`
-  - Subfolders: `transcripts/`, `summaries/`, `subtitles_source/`,
-    `subtitles_translated/`, `videos/`, `originals/` (if enabled).
-- Temporary work dirs:
-  - `_tm_work_*` inside `<out_dir>`, cleaned after each run.
+- Config: `config.json`
+- Runtime log: `runtime.log`
+- Cache: `cache/huggingface`, `cache/whisper`
+- Runtime Python packages: `runtime/python/Lib/site-packages/`
+- Online installer runtime interpreter: `runtime/python/python.exe`
+- Output root: `<out_dir>/transcribemate_outputs/`
 
-## Pipeline flow (UI)
-1. Validate source (YouTube or local).
-2. Ensure tools (ffmpeg, yt-dlp for YouTube).
-3. Optionally download media (yt-dlp).
-4. Transcribe with faster-whisper.
-5. Export transcripts + optional summary pack.
-6. If translation needed:
-   - Translate SRT via transformers.
-   - Export SRTs.
-   - Embed subtitles (soft or hard).
+## Tests
+- Run with:
+  - `python -m pip install -r requirements-dev.txt`
+  - `python -m pytest`
+- Tests include:
+  - V2 backend protocol/models/service
+  - selected shared core/pipeline helper tests
 
-## Build and packaging
-- Build EXE:
-  - `build_exe.ps1` uses PyInstaller with `TranscribeMate.spec`.
-  - Torch packages are removed before build so runtime installs them on first run.
-- Installer:
-  - `installer/TranscribeMate.iss` builds an Inno Setup installer from `dist/`.
-  - Default install path: `%LOCALAPPDATA%/Programs/TranscribeMate`.
-
-## Common dev tasks
-- Run from source: see `README.md`.
-- Update UI labels, language lists, output mode labels:
-  - `transcribemate/core/i18n.py`.
-- Update config defaults:
-  - `transcribemate/core/config.py`.
-- Adjust output naming or transcript formats:
-  - `transcribemate/core/files.py` and `transcribemate/core/transcripts.py`.
-
-## Testing
-No automated test suite in this repo. Changes are typically verified manually
-via the GUI flow.
+## Build/packaging note
+- Legacy Tkinter/PyInstaller flow was removed from this branch.
+- V2 installer template is available at `installer/TranscribeMate.iss`.
+- The ISS script expects a packaged app image in `dist/TranscribeMate/`.
+- `build_v2_installer.ps1` builds Java app-image via `jpackage` and then runs `ISCC`.
+- Installer includes optional task `online_runtime` to bootstrap embedded Python runtime + dependencies + default models + FFmpeg assets at install time.
+- `online_runtime` runs inside installer with a dedicated progress page (live status from bootstrap script output).
+- Successful `online_runtime` means end users do not need system Python installation.
 
 ## Legal
-See `DISCLAIMER.md` and `LICENSE`.
+- `DISCLAIMER.md`
+- `LICENSE`
 
-## Skills (future)
-Always check the `skills/` directory first to see if a relevant skill exists and follow its `SKILL.md`.
+## Skills
+Always check `skills/` first and follow relevant `SKILL.md` when applicable.

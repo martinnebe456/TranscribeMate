@@ -12,6 +12,7 @@ import traceback
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
+from ..core.hf_progress import huggingface_download_progress
 from ..core.paths import FROZEN, ensure_site_packages_on_path, user_site_packages_dir
 from ..core.types import SpeakerTurn, TranscriptSegment, TranscriptionResult
 from .transcribe import format_timestamp
@@ -251,9 +252,24 @@ def diarize_media(
             "Set HF_TOKEN and accept access for pyannote/speaker-diarization-3.1."
         )
 
+    model_prep_weight = 25.0
+    progress_state = {"last_bucket": -20}
+
+    def _on_download_progress(desc: str, percent: float | None):
+        if percent is None:
+            return
+        bounded = max(0.0, min(100.0, float(percent)))
+        set_step_progress((bounded / 100.0) * model_prep_weight)
+
+        bucket = int(bounded // 20) * 20
+        if bucket > progress_state["last_bucket"]:
+            progress_state["last_bucket"] = bucket
+            log(f"[INFO] Diarization model download: {bucket}% ({desc})\n")
+
     log(f"[INFO] Loading diarization model: {DIARIZATION_MODEL_NAME}\n")
     try:
-        pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL_NAME, use_auth_token=token)
+        with huggingface_download_progress(_on_download_progress):
+            pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL_NAME, use_auth_token=token)
     except Exception as exc:
         raise RuntimeError(
             "Failed to load diarization model. Verify HF_TOKEN access to "
@@ -277,7 +293,7 @@ def diarize_media(
         f"device={device}, min_speakers={kwargs.get('min_speakers', 'auto')}, "
         f"max_speakers={kwargs.get('max_speakers', 'auto')}\n"
     )
-    set_step_progress(3.0)
+    set_step_progress(30.0)
 
     if stop_flag and stop_flag.is_set():
         raise RuntimeError("Stopped by user.")
@@ -524,6 +540,10 @@ def build_speaker_sidecar(
     summary_lang: str,
     speaker: str,
     topic: str,
+    lecture_description: str = "",
+    lecture_date: str = "",
+    conference_title: str = "",
+    conference_date: str = "",
     include_unmapped_speakers: bool = True,
     speaker_prefix_in_srt: bool = False,
     transcripts_dir: Path | None = None,
@@ -549,6 +569,10 @@ def build_speaker_sidecar(
         "generate_summary_pack": bool(generate_summary_pack),
         "speaker": str(speaker or "").strip(),
         "topic": str(topic or "").strip(),
+        "lecture_description": str(lecture_description or "").strip(),
+        "lecture_date": str(lecture_date or "").strip(),
+        "conference_title": str(conference_title or "").strip(),
+        "conference_date": str(conference_date or "").strip(),
         "detected_lang": str(result.detected_lang),
         "duration": float(result.duration),
         "device": str(result.device),
@@ -593,6 +617,10 @@ def load_speaker_sidecar(path: Path) -> dict:
         "generate_summary_pack": bool(data.get("generate_summary_pack", False)),
         "speaker": str(data.get("speaker") or "").strip(),
         "topic": str(data.get("topic") or "").strip(),
+        "lecture_description": str(data.get("lecture_description") or "").strip(),
+        "lecture_date": str(data.get("lecture_date") or "").strip(),
+        "conference_title": str(data.get("conference_title") or "").strip(),
+        "conference_date": str(data.get("conference_date") or "").strip(),
         "detected_lang": str(data.get("detected_lang") or "en"),
         "duration": float(data.get("duration", 0.0) or 0.0),
         "device": str(data.get("device") or "cpu"),

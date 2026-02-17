@@ -6,6 +6,8 @@ import logging
 import re
 from pathlib import Path
 
+from ..core.hf_progress import huggingface_download_progress
+
 LOGGER = logging.getLogger(__name__)
 _SPEAKER_PREFIX_PATTERN = re.compile(r"^(?P<prefix>[^:\n]{1,80}):\s*(?P<body>.+)$", re.DOTALL)
 
@@ -42,22 +44,40 @@ def translate_srt(
     device = "cuda" if (prefer_gpu and torch.cuda.is_available()) else "cpu"
     log(f"[INFO] Translation settings: model={model_name}, device={device}, batch={batch_size}\n")
 
-    log("[INFO] Loading translation tokenizer...\n")
-    tok = AutoTokenizer.from_pretrained(model_name)
+    model_prep_weight = 35.0
+    progress_state = {"last_bucket": -10}
 
-    log("[INFO] Loading translation model...\n")
-    try:
-        mdl = AutoModelForSeq2SeqLM.from_pretrained(
-            model_name,
-            use_safetensors=True,
-            torch_dtype="auto",
-        ).to(device)
-    except (OSError, ValueError):
-        log("[WARN] Safetensors not available, falling back to PyTorch format.\n")
-        mdl = AutoModelForSeq2SeqLM.from_pretrained(
-            model_name,
-            torch_dtype="auto",
-        ).to(device)
+    def _on_download_progress(desc: str, percent: float | None):
+        if percent is None:
+            return
+        bounded = max(0.0, min(100.0, float(percent)))
+        mapped = (bounded / 100.0) * model_prep_weight
+        set_step_progress(mapped)
+
+        bucket = int(bounded // 10) * 10
+        if bucket > progress_state["last_bucket"]:
+            progress_state["last_bucket"] = bucket
+            log(f"[INFO] Model download: {bucket}% ({desc})\n")
+
+    with huggingface_download_progress(_on_download_progress):
+        log("[INFO] Loading translation tokenizer...\n")
+        tok = AutoTokenizer.from_pretrained(model_name)
+
+        log("[INFO] Loading translation model...\n")
+        try:
+            mdl = AutoModelForSeq2SeqLM.from_pretrained(
+                model_name,
+                use_safetensors=True,
+                torch_dtype="auto",
+            ).to(device)
+        except (OSError, ValueError):
+            log("[WARN] Safetensors not available, falling back to PyTorch format.\n")
+            mdl = AutoModelForSeq2SeqLM.from_pretrained(
+                model_name,
+                torch_dtype="auto",
+            ).to(device)
+
+    set_step_progress(model_prep_weight)
 
     srt = inp_srt.read_text(encoding="utf-8")
     blocks = re.split(r"\n{2,}", srt.strip())
@@ -92,7 +112,8 @@ def translate_srt(
         out.extend(tok.batch_decode(gen, skip_special_tokens=True))
         done = min(i + batch_size, len(texts))
         pct = done * 100.0 / total
-        set_step_progress(pct)
+        # Keep initial 35% for model preparation and download.
+        set_step_progress(model_prep_weight + (pct * (100.0 - model_prep_weight) / 100.0))
         log(f"[INFO] Translation progress: {done}/{len(texts)} ({pct:.0f}%)\n")
 
     j = 0
@@ -109,4 +130,5 @@ def translate_srt(
 
     out_srt.parent.mkdir(parents=True, exist_ok=True)
     out_srt.write_text("\n\n".join(out_blocks) + "\n", encoding="utf-8")
+    set_step_progress(100.0)
     log(f"[OK] Translated SRT saved: {out_srt}\n")
