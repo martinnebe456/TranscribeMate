@@ -35,8 +35,8 @@ Compare the resulting hash with the line in `checksums.txt`.
 ## Troubleshooting
 - Runtime setup log:
   - `%LOCALAPPDATA%\TranscribeMate\runtime-bootstrap.log`
-- Application runtime log:
-  - `%LOCALAPPDATA%\TranscribeMate\runtime.log`
+- Application logs (frontend, errors, backend stderr relay):
+  - `%LOCALAPPDATA%\TranscribeMate\Logs\frontend-*.log`
 
 If first-launch setup fails:
 1. Review `runtime-bootstrap.log`.
@@ -48,7 +48,7 @@ If first-launch setup fails:
   - `%LOCALAPPDATA%\TranscribeMate`
 - Typical content:
   - `config.json`
-  - `runtime.log`
+  - `Logs\frontend-*.log`
   - `runtime-bootstrap.log`
   - `runtime\python\`
   - `cache\huggingface`

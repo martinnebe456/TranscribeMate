@@ -143,6 +143,7 @@ public final class SystemMonitorWindow {
         backendClient.sendRequest("get_system_metrics")
                 .thenAccept(metrics -> Platform.runLater(() -> updateMetrics(metrics)))
                 .exceptionally(ex -> {
+                    AppFileLogger.logException("system_monitor.poll", ex);
                     Platform.runLater(() -> updatedLabel.setText("Updated: metrics error - " + ex.getMessage()));
                     return null;
                 });

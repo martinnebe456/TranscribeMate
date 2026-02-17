@@ -18,7 +18,7 @@ def _base_payload(module: str = "offline_transcribe") -> dict:
         "translation": {"enabled": False, "target_lang": "en→cs"},
         "subtitles": {"mode": "soft"},
         "text": {},
-        "diarization": {"enabled": False, "backend": "stable_local"},
+        "diarization": {"enabled": False, "backend": "local_cluster_accurate"},
     }
 
 
@@ -50,6 +50,20 @@ def test_component_request_configuration_forces_module_contracts():
     assert configured.diarization.enabled is False
 
 
+def test_speaker_component_keeps_requested_diarization_backend():
+    component = get_module_component("speaker_transcribe")
+    payload = _base_payload(module="speaker_transcribe")
+    payload["source"]["mode"] = "local"
+    payload["output"]["mode"] = "conference"
+    payload["diarization"] = {"enabled": True, "backend": "local_cluster_fast"}
+
+    req = PipelineRequest.from_payload(payload)
+    configured = component.configure_request(req)
+
+    assert configured.diarization.enabled is True
+    assert configured.diarization.backend == "local_cluster_fast"
+
+
 def test_service_capabilities_include_component_metadata():
     svc = BackendService(emit_event=lambda _: None)
     caps = svc.handle_request("get_capabilities", {})
@@ -60,3 +74,6 @@ def test_service_capabilities_include_component_metadata():
     first = caps["module_components"][0]
     assert "module_id" in first
     assert "runtime_features" in first
+    assert "ui_schema" in first
+    assert isinstance(first["ui_schema"], dict)
+    assert isinstance(first["ui_schema"].get("show_tabs", []), list)

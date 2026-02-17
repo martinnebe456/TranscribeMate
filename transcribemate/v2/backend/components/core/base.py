@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from threading import Event
-from typing import Callable
+from typing import Any, Callable
 
 from ...models import PipelineRequest
 from ...models import PipelineRunResult
@@ -26,6 +26,7 @@ class ModuleRuntimeProfile:
     output_mode: str
     runtime_features: tuple[str, ...] = ()
     python_packages: tuple[str, ...] = ()
+    ui_schema: dict[str, Any] = field(default_factory=dict)
 
 
 class ModulePipelineAdapter(ABC):
@@ -76,4 +77,5 @@ class ModuleComponent(ABC):
             "output_mode": profile.output_mode,
             "runtime_features": list(profile.runtime_features),
             "python_packages": list(profile.python_packages),
+            "ui_schema": dict(profile.ui_schema or {}),
         }

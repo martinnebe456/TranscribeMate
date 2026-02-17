@@ -89,7 +89,8 @@ class PipelineOrchestrator:
         out_root = Path(self.request.output.out_dir).expanduser().resolve()
         out_root.mkdir(parents=True, exist_ok=True)
 
-        final_base_dir = out_root / "transcribemate_outputs"
+        module_bucket = sanitize_filename(self.request.module or "offline_transcribe").lower() or "offline_transcribe"
+        final_base_dir = out_root / "transcribemate_outputs" / module_bucket
         transcripts_dir = final_base_dir / "transcripts"
         subtitles_src_final_dir = final_base_dir / "subtitles_source"
         subtitles_trans_final_dir = final_base_dir / "subtitles_translated"
@@ -204,16 +205,15 @@ class PipelineOrchestrator:
                     self._set_step("diarization")
                     diarization = run_diarization_backend(
                         backend=self.request.diarization.backend,
+                        accuracy_profile=self.request.diarization.accuracy_profile,
                         media_path=media_path,
                         segments=transcription.segments,
                         prefer_gpu=self.request.transcription.prefer_gpu,
                         min_speakers=self.request.diarization.min_speakers,
                         max_speakers=self.request.diarization.max_speakers,
-                        hf_token=self.request.diarization.hf_token,
                         stop_flag=self.stop_flag,
                         log=self._log_legacy,
                         set_step_progress=self._set_step_progress,
-                        fail_on_error=self.request.diarization.fail_on_error,
                     )
                     transcription.speaker_turns = diarization.speaker_turns
                     transcription.speaker_map = apply_speaker_mapping(transcription.segments, {})

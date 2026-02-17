@@ -1,2 +1,4 @@
-pyannote.audio>=3.1,<4
-huggingface_hub>=0.34,<1.0
+speechbrain>=1.0,<2.0
+torchaudio>=2.2
+scikit-learn>=1.4
+soundfile>=0.12

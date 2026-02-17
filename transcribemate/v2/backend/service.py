@@ -12,6 +12,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 import sys
 from threading import Event, Lock, Thread
 from typing import Callable, Deque
@@ -19,6 +20,7 @@ from typing import Callable, Deque
 from ...core.models import force_refresh_models
 from ...core.paths import config_path, ffmpeg_path, log_path, user_data_dir
 from ...core.i18n import LANG_CODES, TRANSLATION_MODELS
+from ...pipeline.diarize import apply_speaker_mapping_to_sidecar_file, ensure_local_diarization_runtime
 from ...core.version import APP_VERSION
 from .components import get_module_component, list_module_components, supported_module_ids
 from .diarization import supported_backends
@@ -52,6 +54,7 @@ class JobRecord:
             "created_at": self.created_at,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "request": self.request.to_dict(),
             "progress": dict(self.progress),
             "result": self.result,
             "error": self.error,
@@ -81,7 +84,7 @@ class BackendService:
         if route == "get_job":
             return self._get_job(params)
         if route == "list_jobs":
-            return self._list_jobs()
+            return self._list_jobs(params)
         if route == "remove_job":
             return self._remove_job(params)
         if route == "health":
@@ -92,6 +95,8 @@ class BackendService:
             return self._get_paths()
         if route == "preflight_check":
             return self._preflight_check(params)
+        if route == "apply_speaker_mapping":
+            return self._apply_speaker_mapping(params)
         if route == "get_system_metrics":
             return self._get_system_metrics()
         raise RequestValidationError(
@@ -124,6 +129,7 @@ class BackendService:
                 "refresh_model_cache",
                 "get_paths",
                 "preflight_check",
+                "apply_speaker_mapping",
                 "get_system_metrics",
             ],
             "output_modes": ["conference", "video_subs", "video_dub", "srt_only", "txt_only"],
@@ -270,13 +276,7 @@ class BackendService:
                     level="error",
                 )
 
-        torch_required = bool(
-            request.translation_needed
-            or (
-                request.diarization.enabled
-                and request.diarization.backend == "advanced_pyannote"
-            )
-        )
+        torch_required = bool(request.translation_needed or request.diarization.enabled)
         gpu_diag = _gather_gpu_runtime_diagnostics()
         torch_ok = bool(gpu_diag.get("torch_ok", False))
         torch_error = str(gpu_diag.get("torch_error", "") or "")
@@ -295,7 +295,7 @@ class BackendService:
                 "fail",
                 (
                     "Torch import failed but is required for this run "
-                    "(translation and/or advanced diarization): "
+                    "(translation and/or local diarization): "
                     f"{torch_error or 'unknown error'}"
                 ),
                 level="error",
@@ -306,7 +306,7 @@ class BackendService:
                 "warn",
                 (
                     "Torch is not installed. This is OK for current mode "
-                    "(transcription-only / stable diarization)."
+                    "(transcription-only without translation/diarization)."
                 ),
                 level="warn",
             )
@@ -364,23 +364,76 @@ class BackendService:
                     ),
                 )
 
-        if request.diarization.enabled and request.diarization.backend == "advanced_pyannote":
+        if request.diarization.enabled:
             try:
-                import pyannote.audio  # noqa: F401
+                diag = ensure_local_diarization_runtime()
+                details = [f"Local diarization runtime ready ({request.diarization.backend})."]
+                if diag.get("torchaudio_version"):
+                    details.append(f"torchaudio={diag.get('torchaudio_version')}")
+                if diag.get("soundfile_version"):
+                    details.append(f"soundfile={diag.get('soundfile_version')}")
+                if diag.get("torchaudio_compat_patched"):
+                    details.append("torchaudio_compat=applied")
 
-                add_check("pyannote", "pass", "advanced_pyannote backend available.")
+                add_check(
+                    "diarization_runtime",
+                    "pass",
+                    ", ".join(details),
+                )
             except Exception as exc:
                 add_check(
-                    "pyannote",
-                    "warn" if not request.diarization.fail_on_error else "fail",
-                    f"advanced_pyannote unavailable: {type(exc).__name__}: {exc}",
-                    level="warn" if not request.diarization.fail_on_error else "error",
+                    "diarization_runtime",
+                    "fail",
+                    f"Local diarization runtime unavailable: {type(exc).__name__}: {exc}",
+                    level="error",
                 )
 
         has_fail = any(item["status"] == "fail" for item in checks)
         return {
             "ok": not has_fail,
             "checks": checks,
+        }
+
+    def _apply_speaker_mapping(self, params: dict) -> dict:
+        params = params or {}
+        sidecar_raw = str(params.get("sidecar_path") or "").strip()
+        if not sidecar_raw:
+            raise RequestValidationError(
+                "apply_speaker_mapping requires 'sidecar_path'.",
+                details={"sidecar_path": sidecar_raw},
+            )
+
+        sidecar_path = Path(os.path.expanduser(sidecar_raw)).expanduser().resolve()
+        if not sidecar_path.is_file():
+            raise RequestValidationError(
+                "Speaker sidecar file was not found.",
+                code="not_found",
+                details={"sidecar_path": str(sidecar_path)},
+            )
+
+        mapping_raw = params.get("speaker_map") or {}
+        if not isinstance(mapping_raw, dict):
+            raise RequestValidationError(
+                "apply_speaker_mapping requires 'speaker_map' object.",
+                details={"speaker_map_type": type(mapping_raw).__name__},
+            )
+
+        speaker_map_updates: dict[str, str] = {}
+        for key, value in mapping_raw.items():
+            label = str(key or "").strip()
+            if not label:
+                continue
+            speaker_map_updates[label] = str(value or "").strip()
+
+        result = apply_speaker_mapping_to_sidecar_file(sidecar_path, speaker_map_updates)
+        speaker_map = dict(result.get("speaker_map") or {})
+        rewritten_paths = list(result.get("rewritten_paths") or [])
+
+        return {
+            "sidecar_path": str(sidecar_path),
+            "speaker_map": speaker_map,
+            "rewritten_paths": rewritten_paths,
+            "rewritten_count": len(rewritten_paths),
         }
 
     def _get_system_metrics(self) -> dict:
@@ -577,9 +630,22 @@ class BackendService:
             raise RequestValidationError("Job not found.", code="not_found", details={"job_id": job_id})
         return record.snapshot()
 
-    def _list_jobs(self) -> dict:
+    def _list_jobs(self, params: dict | None = None) -> dict:
+        params = params or {}
+        module_filter = str(params.get("module_id") or params.get("module") or "").strip().lower()
+        if module_filter and module_filter not in supported_module_ids():
+            module_filter = ""
+
         with self._lock:
             snapshots = [record.snapshot() for record in self._jobs.values()]
+
+        if module_filter:
+            snapshots = [
+                snapshot
+                for snapshot in snapshots
+                if str(snapshot.get("request", {}).get("module", "")).strip().lower() == module_filter
+            ]
+
         snapshots.sort(key=lambda item: item.get("created_at", ""), reverse=True)
         return {"jobs": snapshots}
 

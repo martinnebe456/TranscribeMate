@@ -30,14 +30,13 @@
 - `pipeline.py`: pipeline orchestration using existing modules:
   - `transcribe.py`, `translate.py`, `subtitles.py`, `diarize.py`, `transcripts.py`.
 - `diarization.py`: backend abstraction:
-  - `stable_local` (deterministic fallback)
-  - `advanced_pyannote` (full diarization, optional)
+  - `local_cluster_fast` (lower-latency local clustering)
+  - `local_cluster_accurate` (higher-quality local clustering)
 
 ## Why This Is More Stable
 - UI process is isolated from Python package churn.
 - Backend jobs are cancellable and observable via explicit events.
-- Diarization no longer has to crash entire UI flow:
-  - `advanced_pyannote` can fallback to `stable_local` unless `fail_on_error=true`.
+- Diarization is fully local-only in V2 component mode (no HF token dependency).
 
 ## Build/Run
 - Backend dev run:

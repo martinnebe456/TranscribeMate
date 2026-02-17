@@ -11,7 +11,7 @@ public class SpeakerTranscriptModuleComponent extends AbstractModuleComponent {
                 "Speaker Transcript",
                 new ModuleFlowSpec(
                         "Module: Speaker Transcript",
-                        "1) Configure source in Run.\n2) Review diarization options in Diarization tab.\n3) Start and check speaker output.",
+                        "1) Configure local source in Run.\n2) Tune speaker options in Diarization (accuracy profile + backend + min/max speakers).\n3) Start and map detected speakers to names.",
                         "open_diarization",
                         "Open Diarization"
                 )
@@ -23,7 +23,10 @@ public class SpeakerTranscriptModuleComponent extends AbstractModuleComponent {
         ui.selectSourceMode("local");
         ui.selectOutputMode("conference");
         ui.setDiarizationEnabled(true);
-        ui.selectDiarizationBackend("stable_local");
+        ui.selectDiarizationAccuracyProfile("maximum");
+        ui.selectDiarizationBackend("local_cluster_accurate");
+        ui.setDiarizationMinSpeakers(2);
+        ui.setDiarizationMaxSpeakers(8);
         ui.setDiarizationProfilePrefill(true);
         ui.setDiarizationPrefixSrt(true);
     }
