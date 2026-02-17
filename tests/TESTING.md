@@ -37,20 +37,15 @@ File: `tests/test_pipeline_helpers.py`
 - `hex_to_ass_color` RGB → ASS color conversion.
 - `format_timestamp` formatting at zero duration.
 
-### Runtime helpers
-File: `tests/test_runtime_version_helpers.py`
-- Parsing torch version from dist-info metadata.
-- Parsing torch version from `torch/version.py`.
-
 ### Transcript metadata and prompts
 File: `tests/test_transcripts_metadata.py`
 - Metadata rendering for multi-line "Topic".
 - Summary prompt language instruction (explicit and auto/detected).
 
 ## What is not covered (yet)
-- End-to-end UI flows (Tkinter) and drag-and-drop behavior.
+- End-to-end JavaFX UI flows and process integration behavior.
 - Integration with FFmpeg, yt-dlp, Whisper, or translation models.
-- GPU detection, CUDA setup, and runtime bootstrap behaviors.
+- GPU detection and CUDA environment-specific setup behaviors.
 
 ## Tips for adding tests
 - Keep tests fast and deterministic (no network, no external binaries).

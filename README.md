@@ -1,132 +1,162 @@
 # TranscribeMate
 
-TranscribeMate is a Windows desktop GUI for:
-- downloading media from YouTube (optional, via `yt-dlp`),
-- speech-to-text transcription (via `faster-whisper`),
-- subtitle translation,
-- optional speaker diarization with post-process speaker mapping (`*.diarization.json` sidecar),
-- optional speaker-labeled SRT subtitles and batch speaker post-processing from sidecars,
-- conference-style folder transcription to `.txt` / `.md`,
-- exporting video with subtitles, `.srt`, timestamped transcripts, and summary packs for ChatGPT / Confluence.
+Desktop transcription application with:
+- JavaFX frontend (`javafx-client/`)
+- Python backend worker (`transcribemate/v2/backend/`)
+- JSON-line IPC over `stdin/stdout`
 
-## Important Legal Notice
-Use this tool only with content you are legally allowed to process.
+> Important legal and licensing info:
+> - Read `DISCLAIMER.md` before use: [DISCLAIMER.md](DISCLAIMER.md)
+> - Project license: [LICENSE](LICENSE)
 
-- The user is solely responsible for how the software is used.
-- Any downloading and transcription must be done with the author’s / rights holder’s permission when required.
-- Users must follow the laws of their country and the terms of the platforms involved (e.g., YouTube).
+This repository is V2-only (JavaFX + Python). Legacy Tkinter/PyInstaller flow is not part of this branch.
 
-See `DISCLAIMER.md` for the full legal disclaimer (EN + CZ).
+## For Users (Windows)
 
-## End User Install (Recommended)
-No Python installation is required for end users.
+### What You Get
+- Desktop app for transcription, translation, subtitles, and optional speaker diarization.
+- Installer that also prepares backend runtime automatically:
+  - embedded Python runtime in `%LOCALAPPDATA%\TranscribeMate\runtime\python`
+  - Python dependencies
+  - default AI models
+  - FFmpeg binaries
+- No system-wide Python installation required after successful install.
 
-1. Download `TranscribeMate-Setup.exe` from Releases.
-1. Run the installer.
-1. Launch TranscribeMate from the Desktop or Start Menu shortcut.
+### Installation
+1. Download installer `.exe` from project releases.
+2. Run installer.
+3. Wait for the mandatory "Online Runtime Setup" step to finish.
+4. Launch TranscribeMate.
 
-During installation, setup installs speaker diarization dependencies automatically and can optionally install core deps/model prefetch so first launch is faster.
-- On a fresh install, optional dependency tasks are preselected.
-- On upgrades, optional dependency tasks default to off to avoid unnecessary redownloads.
-- On every launch the app still validates dependencies and repairs missing parts if needed.
+### Installation Requirements
+- Windows x64
+- Internet connection during installation (online runtime bootstrap is mandatory)
+- Enough free disk space for runtime, dependencies, and models (can be several GB)
 
-On first launch the app may:
-- download FFmpeg,
-- download speech/translation models,
-- take longer than usual.
+### Troubleshooting
+- Online setup log:
+  - `%LOCALAPPDATA%\TranscribeMate\runtime-bootstrap.log`
+- Application runtime log:
+  - `%LOCALAPPDATA%\TranscribeMate\runtime.log`
+- If installation fails during online setup:
+  1. Check `runtime-bootstrap.log`.
+  2. Verify internet/proxy/firewall policy.
+  3. Re-run installer.
 
-A startup window explains what is happening.
+### Runtime Data
+- User data root:
+  - `%LOCALAPPDATA%\TranscribeMate`
+- Typical content:
+  - `config.json`
+  - `runtime.log`
+  - `runtime-bootstrap.log`
+  - `runtime\python\`
+  - `cache\huggingface`
+  - `cache\whisper`
+  - `assets\` (ffmpeg/ffprobe)
 
-## Where Data Lives
-The installed EXE stores writable data here:
-- `%LOCALAPPDATA%/TranscribeMate`
+### Output Location
+- Outputs are written under:
+  - `<out_dir>\transcribemate_outputs\`
 
-This includes:
-- `assets/` (FFmpeg),
-- `cache/` (models),
-- `runtime.log` (startup log),
-- `config.json` (settings).
-- A legacy `config.json` next to the EXE is migrated automatically.
+---
 
-There is a built-in button: **Open app data folder**.
+## For Developers
 
-## Outputs
-The app saves outputs into:
-- `transcribemate_outputs/transcripts`
-- `transcribemate_outputs/summaries` (timestamped transcripts, summary prompts, Confluence templates)
-- `transcribemate_outputs/subtitles_source`
-- `transcribemate_outputs/subtitles_translated`
-- `transcribemate_outputs/videos`
-- `transcribemate_outputs/originals` (only if enabled)
+### Stack
+- Frontend: Java 21 + JavaFX + Maven (`javafx-client/`)
+- Backend: Python 3.12 (`transcribemate/v2/backend/`)
+- Protocol: JSON lines over stdio
 
-When speaker diarization is enabled, transcript outputs include speaker prefixes and the app stores a diarization sidecar in `transcripts/` for later speaker-name post-processing (single file or batch folder mode).
+### Prerequisites
+- Python 3.12+
+- Java JDK 21+ (with `jpackage`)
+- Maven 3.9+
+- PowerShell (for helper scripts on Windows)
 
-Temporary working folders named `_tm_work_*` are created inside your output directory and deleted automatically after each run.
+### Local Setup
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
 
-## Developer Setup
+Optional diarization extras:
+```powershell
+python -m pip install -r requirements-diarization.txt
+```
 
-### Requirements
-- Python 3.12 (64-bit recommended)
-- Inno Setup 6 (https://jrsoftware.org/isinfo.php)
+### Run Backend (Dev)
+```powershell
+./run_v2_backend.ps1
+```
 
-Optional speaker diarization requires:
-- `pyannote.audio` Python package (included in `requirements.txt`; can also be installed via `requirements-diarization.txt`)
-- `HF_TOKEN` with access to `pyannote/speaker-diarization-3.1`
+or directly:
+```powershell
+python -m transcribemate.v2.backend.server --stdio
+```
 
-If speaker diarization is enabled and `pyannote.audio` is missing, the app will attempt an automatic on-demand install into the per-user app data environment.
+### Run Frontend (Dev)
+```powershell
+./run_v2_frontend.ps1
+```
 
-### Testing
+or:
+```powershell
+cd javafx-client
+mvn javafx:run
+```
+
+### Tests
 ```powershell
 python -m pip install -r requirements-dev.txt
 python -m pytest
 ```
-Tests currently cover core helpers, i18n summary language helpers, pipeline utility functions, runtime version parsing, and transcript metadata formatting.
 
-### Run From Source
+### Build Installer (Windows)
+One-command build:
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
-python main.py
+./build_v2_installer.ps1
 ```
 
-## Build EXE (Windows)
-```powershell
-./build_exe.ps1
-```
+Useful options:
+- `-SkipFrontendBuild` reuse existing `javafx-client/target` artifacts
+- `-SkipInstaller` build app image only (no ISCC run)
+- `-RequireInstaller` fail if `ISCC.exe` is not found
+- `-AppVersion 26.02.17.004` manually set version (also writes `version.txt`)
 
-If `requirements-diarization.txt` is present, the build script also attempts to install optional diarization dependencies so the speaker feature is available in the packaged EXE.
+Versioning:
+- On each `./build_v2_installer.ps1` run, `version.txt` is auto-updated at start to format `yy.MM.dd.NNN`.
+- Example: `26.02.17.015` means year `2026`, month `02`, day `17`, build `15` for that day.
 
-Output:
-- `dist/TranscribeMate/TranscribeMate.exe`
+Build outputs:
+- App image: `dist/TranscribeMate/`
+- Installer: `dist_installer/TranscribeMate-Setup.exe`
 
-Notes:
-- The build script removes `assets/*.exe` before packaging to avoid bundling FFmpeg.
-- FFmpeg will be downloaded on first run into `%LOCALAPPDATA%/TranscribeMate/assets`.
+Manual ISS compile entry:
+- `installer/TranscribeMate.iss`
 
-## Build Installer (Inno Setup)
-1. Build the EXE first:
-```powershell
-./build_exe.ps1
-```
-1. Open `installer/TranscribeMate.iss` in Inno Setup and click **Build**.
+### Environment Variables
+- `TM_BACKEND_CMD` full backend command override
+- `TM_BACKEND_PYTHON` Python interpreter override
+- `TM_PROJECT_ROOT` backend working directory override
 
-Installer output:
-- `dist_installer/TranscribeMate-Setup.exe`
+### Architecture and Protocol Docs
+- `docs/v2/architecture.md`
+- `docs/v2/protocol.md`
+- `docs/v2/protocol.schema.json`
 
-The installer defaults to:
-- `%LOCALAPPDATA%/Programs/TranscribeMate`
+### Repository Map
+- `javafx-client/` JavaFX UI
+- `transcribemate/v2/backend/` backend service and protocol handlers
+- `transcribemate/core/` shared runtime/helpers
+- `transcribemate/pipeline/` transcription/translation/subtitle/diarization orchestration
+- `scripts/bootstrap_runtime.ps1` installer online runtime bootstrap
+- `installer/TranscribeMate.iss` Inno Setup installer
 
-This avoids admin-rights issues and works well with per-user app data.
+---
 
-## Project Structure
-The codebase is organized into typed components under `transcribemate/`:
-- `runtime/` handles EXE startup, splash screen, and FFmpeg setup (`transcribemate/runtime/runtime.py`).
-- `ui/` contains the GUI (`transcribemate/ui/ui.py`).
-- `pipeline/` implements the processing pipeline (`transcribemate/pipeline/*.py`).
-- `core/` contains shared services, paths, config, i18n, and file helpers (`transcribemate/core/*.py`).
-
-## License
-PolyForm Noncommercial 1.0.0 — see `LICENSE`.
+## Legal
+- Disclaimer: [DISCLAIMER.md](DISCLAIMER.md)
+- License: [LICENSE](LICENSE)

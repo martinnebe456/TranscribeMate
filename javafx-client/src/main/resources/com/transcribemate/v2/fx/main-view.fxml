@@ -1,0 +1,475 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import java.lang.String?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.Button?>
+<?import javafx.scene.control.CheckBox?>
+<?import javafx.scene.control.ColorPicker?>
+<?import javafx.scene.control.ComboBox?>
+<?import javafx.scene.control.Label?>
+<?import javafx.scene.control.ProgressBar?>
+<?import javafx.scene.control.ScrollPane?>
+<?import javafx.scene.control.Separator?>
+<?import javafx.scene.control.Spinner?>
+<?import javafx.scene.control.Tab?>
+<?import javafx.scene.control.TabPane?>
+<?import javafx.scene.control.TableColumn?>
+<?import javafx.scene.control.TableView?>
+<?import javafx.scene.control.TextArea?>
+<?import javafx.scene.control.TextField?>
+<?import javafx.scene.layout.BorderPane?>
+<?import javafx.scene.layout.ColumnConstraints?>
+<?import javafx.scene.layout.GridPane?>
+<?import javafx.scene.layout.HBox?>
+<?import javafx.scene.layout.Priority?>
+<?import javafx.scene.layout.VBox?>
+
+<BorderPane fx:id="rootPane" xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.transcribemate.v2.fx.MainController">
+  <styleClass>
+    <String fx:value="app-shell"/>
+    <String fx:value="theme-light"/>
+  </styleClass>
+  <top>
+    <VBox spacing="8.0" styleClass="top-pane">
+      <padding>
+        <Insets top="12.0" right="16.0" bottom="10.0" left="16.0"/>
+      </padding>
+      <Label fx:id="appTitleLabel" text="TranscribeMate" styleClass="title"/>
+      <Label text="Modern JavaFX control center for transcription, translation and diarization" styleClass="subtitle"/>
+
+      <HBox spacing="10.0" alignment="CENTER_LEFT">
+        <children>
+          <Label text="Status" styleClass="small-label"/>
+          <Label fx:id="statusLabel" text="Ready" styleClass="status-value"/>
+          <Separator orientation="VERTICAL" prefHeight="20.0"/>
+          <Label text="Step" styleClass="small-label"/>
+          <Label fx:id="stepLabel" text="-" styleClass="status-value"/>
+          <ProgressBar fx:id="progressBar" prefWidth="360.0" HBox.hgrow="ALWAYS"/>
+        </children>
+      </HBox>
+
+      <HBox spacing="10.0" alignment="CENTER_LEFT" styleClass="header-actions">
+        <children>
+          <CheckBox fx:id="simpleModeBox" text="Simple mode" selected="true" onAction="#onToggleSimpleMode"/>
+          <CheckBox fx:id="autoPreflightBox" text="Run preflight before Start" selected="true"/>
+          <Button fx:id="monitorButton" text="System monitor" onAction="#onOpenMonitor" styleClass="accent-btn"/>
+        </children>
+      </HBox>
+    </VBox>
+  </top>
+
+  <center>
+    <HBox spacing="12.0" styleClass="workspace-shell">
+      <padding>
+        <Insets top="10.0" right="16.0" bottom="10.0" left="16.0"/>
+      </padding>
+
+      <children>
+        <VBox spacing="8.0" styleClass="module-menu card-pane" prefWidth="210.0">
+          <padding>
+            <Insets top="12.0" right="10.0" bottom="12.0" left="10.0"/>
+          </padding>
+          <children>
+            <Label text="Modules" styleClass="section-title"/>
+            <Button fx:id="runModuleButton" text="Offline A/V" onAction="#onModuleOffline" styleClass="button module-btn"/>
+            <Button fx:id="advancedModuleButton" text="YouTube Transcript" onAction="#onModuleYoutube" styleClass="button module-btn"/>
+            <Button fx:id="diarizationModuleButton" text="Speaker Transcript" onAction="#onModuleSpeaker" styleClass="button module-btn"/>
+            <Button fx:id="logsModuleButton" text="Conference Mode" onAction="#onModuleConference" styleClass="button module-btn"/>
+            <Button fx:id="jobsModuleButton" text="YouTube Subtitles" onAction="#onModuleYoutubeSubtitles" styleClass="button module-btn"/>
+            <Button fx:id="youtubeDubModuleButton" text="YouTube Dub" onAction="#onModuleYoutubeDub" styleClass="button module-btn"/>
+            <Button fx:id="settingsModuleButton" text="Settings" onAction="#onModuleSettings" styleClass="button module-btn"/>
+            <Separator/>
+            <Label fx:id="moduleFlowTitleLabel" text="Module: Offline A/V" styleClass="section-title"/>
+            <Label fx:id="moduleFlowLabel" text="1) Select local source.&#10;2) Configure model in Settings.&#10;3) Run Preflight and Start." wrapText="true" styleClass="small-label"/>
+            <Button fx:id="moduleFlowActionButton" text="Run Preflight" onAction="#onModuleFlowAction" styleClass="button accent-btn"/>
+          </children>
+        </VBox>
+
+        <VBox spacing="10.0" HBox.hgrow="ALWAYS">
+          <TabPane fx:id="mainTabs" tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS" styleClass="module-tabs">
+            <tabs>
+              <Tab fx:id="runTab" text="Run">
+                <ScrollPane fitToWidth="true" fitToHeight="true">
+                  <content>
+                    <VBox spacing="10.0" styleClass="scroll-content">
+                      <padding>
+                        <Insets top="6.0" right="6.0" bottom="6.0" left="6.0"/>
+                      </padding>
+
+                      <VBox spacing="8.0" styleClass="card-pane">
+                        <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                        <Label text="Source" styleClass="section-title"/>
+                        <GridPane hgap="10.0" vgap="8.0">
+                          <columnConstraints>
+                            <ColumnConstraints minWidth="170.0" prefWidth="180.0"/>
+                            <ColumnConstraints hgrow="ALWAYS"/>
+                            <ColumnConstraints minWidth="120.0" prefWidth="160.0"/>
+                          </columnConstraints>
+
+                          <Label text="Source mode" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="sourceModeBox" GridPane.rowIndex="0" GridPane.columnIndex="1" prefWidth="240.0"/>
+
+                          <Label text="Local file/folder" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                          <TextField fx:id="localPathField" promptText="C:\\path\\to\\file_or_folder" GridPane.rowIndex="1" GridPane.columnIndex="1"/>
+                          <Button text="Browse" onAction="#onBrowseLocalPath" GridPane.rowIndex="1" GridPane.columnIndex="2"/>
+
+                          <Label text="YouTube URL" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                          <TextField fx:id="youtubeUrlField" promptText="https://www.youtube.com/watch?v=..." GridPane.rowIndex="2" GridPane.columnIndex="1"/>
+                          <CheckBox fx:id="playlistBox" text="Playlist" GridPane.rowIndex="2" GridPane.columnIndex="2"/>
+
+                          <Label text="YouTube quality" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="qualityBox" GridPane.rowIndex="3" GridPane.columnIndex="1" prefWidth="220.0"/>
+                        </GridPane>
+                      </VBox>
+
+                      <VBox spacing="8.0" styleClass="card-pane">
+                        <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                        <Label text="Output" styleClass="section-title"/>
+                        <GridPane hgap="10.0" vgap="8.0">
+                          <columnConstraints>
+                            <ColumnConstraints minWidth="170.0" prefWidth="180.0"/>
+                            <ColumnConstraints hgrow="ALWAYS"/>
+                            <ColumnConstraints minWidth="120.0" prefWidth="170.0"/>
+                          </columnConstraints>
+
+                          <Label text="Output directory" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                          <TextField fx:id="outputDirField" GridPane.rowIndex="0" GridPane.columnIndex="1"/>
+                          <Button text="Browse" onAction="#onBrowseOutputDir" GridPane.rowIndex="0" GridPane.columnIndex="2"/>
+
+                          <Label text="Output mode" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="outputModeBox" GridPane.rowIndex="1" GridPane.columnIndex="1" prefWidth="220.0"/>
+
+                          <Label text="Output prefix" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                          <TextField fx:id="outputPrefixField" promptText="optional" GridPane.rowIndex="2" GridPane.columnIndex="1"/>
+                          <CheckBox fx:id="keepOriginalsBox" text="Keep originals" GridPane.rowIndex="2" GridPane.columnIndex="2"/>
+                        </GridPane>
+                      </VBox>
+
+                      <VBox spacing="8.0" styleClass="card-pane" fx:id="simpleHintCard">
+                        <padding><Insets top="10.0" right="12.0" bottom="10.0" left="12.0"/></padding>
+                        <Label text="Tip" styleClass="section-title"/>
+                        <Label text="Use module buttons on the left to switch workflow. Each module keeps its own model and processing settings." wrapText="true" styleClass="small-label"/>
+                      </VBox>
+                    </VBox>
+                  </content>
+                </ScrollPane>
+              </Tab>
+
+              <Tab fx:id="advancedTab" text="Advanced">
+                <ScrollPane fitToWidth="true" fitToHeight="true">
+                  <content>
+                    <VBox spacing="10.0" styleClass="scroll-content">
+                      <padding><Insets top="6.0" right="6.0" bottom="6.0" left="6.0"/></padding>
+
+                      <VBox spacing="8.0" styleClass="card-pane">
+                        <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                        <Label text="Subtitles" styleClass="section-title"/>
+                        <GridPane hgap="10.0" vgap="8.0">
+                          <columnConstraints>
+                            <ColumnConstraints minWidth="170.0" prefWidth="180.0"/>
+                            <ColumnConstraints hgrow="ALWAYS"/>
+                          </columnConstraints>
+
+                          <Label text="Subtitle mode" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="subtitleModeBox" GridPane.rowIndex="0" GridPane.columnIndex="1" prefWidth="220.0"/>
+
+                          <Label text="Font" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                          <TextField fx:id="subtitleFontField" GridPane.rowIndex="1" GridPane.columnIndex="1"/>
+
+                          <Label text="Size" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                          <Spinner fx:id="subtitleSizeSpinner" GridPane.rowIndex="2" GridPane.columnIndex="1" prefWidth="120.0" editable="true"/>
+
+                          <Label text="Colors" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
+                          <HBox spacing="8.0" GridPane.rowIndex="3" GridPane.columnIndex="1">
+                            <children>
+                              <Label text="Text" styleClass="small-label"/>
+                              <ColorPicker fx:id="subtitleColorPicker"/>
+                              <Label text="Outline" styleClass="small-label"/>
+                              <ColorPicker fx:id="subtitleOutlineColorPicker"/>
+                              <Label text="Width" styleClass="small-label"/>
+                              <Spinner fx:id="subtitleOutlineWidthSpinner" prefWidth="90.0" editable="true"/>
+                            </children>
+                          </HBox>
+
+                          <Label text="Translation" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
+                          <CheckBox fx:id="translateSubtitlesBox" text="Translate subtitles before embedding" selected="true" GridPane.rowIndex="4" GridPane.columnIndex="1"/>
+                        </GridPane>
+                      </VBox>
+
+                      <VBox spacing="8.0" styleClass="card-pane">
+                        <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                        <Label text="Conference metadata" styleClass="section-title"/>
+                        <GridPane hgap="10.0" vgap="8.0">
+                          <columnConstraints>
+                            <ColumnConstraints minWidth="170.0" prefWidth="180.0"/>
+                            <ColumnConstraints hgrow="ALWAYS"/>
+                          </columnConstraints>
+
+                          <Label text="Conference title" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                          <TextField fx:id="conferenceTitleField" promptText="Conference title" GridPane.rowIndex="0" GridPane.columnIndex="1"/>
+
+                          <Label text="Conference date" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                          <TextField fx:id="conferenceDateField" promptText="YYYY-MM-DD" GridPane.rowIndex="1" GridPane.columnIndex="1"/>
+
+                          <Label text="Default speaker" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                          <TextField fx:id="speakerField" promptText="Speaker" GridPane.rowIndex="2" GridPane.columnIndex="1"/>
+
+                          <Label text="Default topic" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
+                          <TextField fx:id="topicField" promptText="Topic / session" GridPane.rowIndex="3" GridPane.columnIndex="1"/>
+                        </GridPane>
+
+                        <HBox spacing="8.0" alignment="CENTER_LEFT">
+                          <children>
+                            <Button text="Add file row" onAction="#onAddConferenceFile"/>
+                            <Button text="Remove row" onAction="#onRemoveConferenceFile"/>
+                            <Button text="Sync from source" onAction="#onSyncConferenceFiles"/>
+                          </children>
+                        </HBox>
+
+                        <TableView fx:id="conferenceFilesTable" editable="true" prefHeight="220.0" VBox.vgrow="ALWAYS">
+                          <columns>
+                            <TableColumn fx:id="conferenceFilePathColumn" text="File" prefWidth="260.0"/>
+                            <TableColumn fx:id="conferenceSpeakerColumn" text="Speaker" prefWidth="140.0"/>
+                            <TableColumn fx:id="conferenceDescriptionColumn" text="Description" prefWidth="220.0"/>
+                            <TableColumn fx:id="conferenceDateColumn" text="Date" prefWidth="120.0"/>
+                          </columns>
+                        </TableView>
+
+                        <Label text="Conference mode uses this table to assign per-file metadata into transcript metadata." wrapText="true" styleClass="small-label"/>
+                      </VBox>
+                    </VBox>
+                  </content>
+                </ScrollPane>
+              </Tab>
+
+              <Tab fx:id="diarizationTab" text="Diarization">
+                <VBox spacing="10.0" styleClass="card-pane">
+                  <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+
+                  <GridPane hgap="10.0" vgap="8.0">
+                    <columnConstraints>
+                      <ColumnConstraints minWidth="170.0" prefWidth="180.0"/>
+                      <ColumnConstraints hgrow="ALWAYS"/>
+                    </columnConstraints>
+
+                    <Label text="Enable diarization" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                    <CheckBox fx:id="diarizationEnabledBox" text="Enabled" GridPane.rowIndex="0" GridPane.columnIndex="1"/>
+
+                    <Label text="Backend" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                    <ComboBox fx:id="diarizationBackendBox" GridPane.rowIndex="1" GridPane.columnIndex="1" prefWidth="220.0"/>
+
+                    <Label text="Min / max speakers" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                    <HBox spacing="8.0" GridPane.rowIndex="2" GridPane.columnIndex="1">
+                      <children>
+                        <Spinner fx:id="diarizationMinSpinner" prefWidth="100.0" editable="true"/>
+                        <Spinner fx:id="diarizationMaxSpinner" prefWidth="100.0" editable="true"/>
+                      </children>
+                    </HBox>
+
+                    <Label text="Options" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
+                    <VBox spacing="6.0" GridPane.rowIndex="3" GridPane.columnIndex="1">
+                      <children>
+                        <CheckBox fx:id="diarizationReviewBox" text="Review after each file"/>
+                        <CheckBox fx:id="diarizationIncludeUnmappedBox" text="Include unmapped SPEAKER labels"/>
+                        <CheckBox fx:id="diarizationPrefixSrtBox" text="Prefix speakers in SRT"/>
+                        <CheckBox fx:id="diarizationProfilePrefillBox" text="Prefill from profiles"/>
+                        <CheckBox fx:id="diarizationFailOnErrorBox" text="Fail when diarization backend errors"/>
+                      </children>
+                    </VBox>
+
+                    <Label text="HF token" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
+                    <TextField fx:id="hfTokenField" promptText="optional for advanced backend" GridPane.rowIndex="4" GridPane.columnIndex="1"/>
+                  </GridPane>
+
+                  <Separator/>
+                  <Label text="Speaker profile mapping" styleClass="section-title"/>
+                  <HBox spacing="8.0" alignment="CENTER_LEFT">
+                    <children>
+                      <Button text="Add" onAction="#onAddSpeakerProfile"/>
+                      <Button text="Remove" onAction="#onRemoveSpeakerProfile"/>
+                      <Button text="Import" onAction="#onImportSpeakerProfiles"/>
+                      <Button text="Export" onAction="#onExportSpeakerProfiles"/>
+                      <Button text="Preview" onAction="#onPreviewSpeakerProfiles"/>
+                    </children>
+                  </HBox>
+
+                  <TableView fx:id="speakerProfilesTable" editable="true" VBox.vgrow="ALWAYS">
+                    <columns>
+                      <TableColumn fx:id="speakerLabelColumn" text="Label" prefWidth="220.0"/>
+                      <TableColumn fx:id="speakerNameColumn" text="Name" prefWidth="300.0"/>
+                    </columns>
+                  </TableView>
+
+                  <TextArea fx:id="profilePreviewArea" editable="false" prefRowCount="4" wrapText="true" promptText="Profile preview"/>
+                </VBox>
+              </Tab>
+
+              <Tab fx:id="logsTab" text="Logs">
+                <VBox spacing="8.0">
+                  <padding><Insets top="8.0" right="8.0" bottom="8.0" left="8.0"/></padding>
+
+                  <HBox spacing="8.0" alignment="CENTER_LEFT" styleClass="card-pane">
+                    <padding><Insets top="8.0" right="8.0" bottom="8.0" left="8.0"/></padding>
+                    <children>
+                      <Label text="Search" styleClass="small-label"/>
+                      <TextField fx:id="logSearchField" promptText="filter log text" HBox.hgrow="ALWAYS"/>
+                      <Label text="Level" styleClass="small-label"/>
+                      <ComboBox fx:id="logLevelFilterBox" prefWidth="130.0"/>
+                      <CheckBox fx:id="showUserLogsBox" text="User" selected="true"/>
+                      <CheckBox fx:id="showTechnicalLogsBox" text="Technical" selected="true"/>
+                      <Button text="Clear" onAction="#onClearLogs"/>
+                    </children>
+                  </HBox>
+
+                  <Label text="Filtered log" styleClass="section-title"/>
+                  <TextArea fx:id="filteredLogArea" editable="false" wrapText="true" prefRowCount="8" VBox.vgrow="ALWAYS"/>
+
+                  <HBox spacing="8.0" VBox.vgrow="ALWAYS">
+                    <children>
+                      <VBox spacing="6.0" HBox.hgrow="ALWAYS" VBox.vgrow="ALWAYS">
+                        <children>
+                          <Label text="User stream" styleClass="section-title"/>
+                          <TextArea fx:id="userLogArea" editable="false" wrapText="true" VBox.vgrow="ALWAYS"/>
+                        </children>
+                      </VBox>
+                      <VBox spacing="6.0" HBox.hgrow="ALWAYS" VBox.vgrow="ALWAYS">
+                        <children>
+                          <Label text="Technical stream" styleClass="section-title"/>
+                          <TextArea fx:id="technicalLogArea" editable="false" wrapText="true" VBox.vgrow="ALWAYS"/>
+                        </children>
+                      </VBox>
+                    </children>
+                  </HBox>
+                </VBox>
+              </Tab>
+
+              <Tab fx:id="jobsTab" text="Jobs">
+                <VBox spacing="10.0">
+                  <padding>
+                    <Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/>
+                  </padding>
+
+                  <VBox spacing="8.0" styleClass="card-pane" VBox.vgrow="ALWAYS">
+                    <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                    <HBox spacing="8.0" alignment="CENTER_LEFT">
+                      <children>
+                        <Label text="Run history" styleClass="section-title"/>
+                        <Button fx:id="refreshJobsButton" text="Refresh" onAction="#onRefreshJobs"/>
+                        <Button fx:id="removeJobButton" text="Remove" onAction="#onRemoveSelectedJob"/>
+                      </children>
+                    </HBox>
+
+                    <TableView fx:id="jobHistoryTable" VBox.vgrow="ALWAYS">
+                      <columns>
+                        <TableColumn fx:id="jobIdColumn" text="Job" prefWidth="130.0"/>
+                        <TableColumn fx:id="jobStatusColumn" text="Status" prefWidth="90.0"/>
+                        <TableColumn fx:id="jobModeColumn" text="Mode" prefWidth="95.0"/>
+                        <TableColumn fx:id="jobSourceColumn" text="Source" prefWidth="110.0"/>
+                        <TableColumn fx:id="jobCreatedColumn" text="Created" prefWidth="110.0"/>
+                      </columns>
+                    </TableView>
+
+                    <Label text="Selected job details" styleClass="section-title"/>
+                    <TextArea fx:id="jobDetailArea" editable="false" wrapText="true" prefRowCount="8" VBox.vgrow="SOMETIMES"/>
+                  </VBox>
+                </VBox>
+              </Tab>
+
+              <Tab fx:id="settingsTab" text="Settings">
+                <ScrollPane fitToWidth="true" fitToHeight="true">
+                  <content>
+                    <VBox spacing="10.0" styleClass="scroll-content">
+                      <padding>
+                        <Insets top="8.0" right="8.0" bottom="8.0" left="8.0"/>
+                      </padding>
+
+                      <VBox spacing="8.0" styleClass="card-pane">
+                        <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                        <Label text="Appearance" styleClass="section-title"/>
+                        <GridPane hgap="10.0" vgap="8.0">
+                          <columnConstraints>
+                            <ColumnConstraints minWidth="170.0" prefWidth="180.0"/>
+                            <ColumnConstraints hgrow="ALWAYS"/>
+                          </columnConstraints>
+                          <Label text="Theme" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="themeBox" prefWidth="220.0" onAction="#onThemeChanged" GridPane.rowIndex="0" GridPane.columnIndex="1"/>
+                        </GridPane>
+                        <Label text="Theme applies instantly and is remembered for next app start." wrapText="true" styleClass="small-label"/>
+                      </VBox>
+
+                      <VBox spacing="8.0" styleClass="card-pane">
+                        <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                        <Label text="Core processing" styleClass="section-title"/>
+                        <GridPane hgap="10.0" vgap="8.0">
+                          <columnConstraints>
+                            <ColumnConstraints minWidth="170.0" prefWidth="180.0"/>
+                            <ColumnConstraints hgrow="ALWAYS"/>
+                            <ColumnConstraints minWidth="180.0" prefWidth="260.0"/>
+                          </columnConstraints>
+
+                          <Label text="Whisper model" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="modelField" GridPane.rowIndex="0" GridPane.columnIndex="1" prefWidth="220.0"/>
+                          <HBox spacing="10.0" GridPane.rowIndex="0" GridPane.columnIndex="2">
+                            <children>
+                              <CheckBox fx:id="autoModelBox" text="Auto model"/>
+                              <CheckBox fx:id="useGpuBox" text="Prefer GPU"/>
+                            </children>
+                          </HBox>
+
+                          <Label text="Speech language" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="sourceLangBox" GridPane.rowIndex="1" GridPane.columnIndex="1" prefWidth="220.0"/>
+
+                          <Label text="Summary language" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="summaryLangBox" GridPane.rowIndex="2" GridPane.columnIndex="1" prefWidth="220.0"/>
+
+                          <Label text="Translation target" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="targetLangBox" GridPane.rowIndex="3" GridPane.columnIndex="1" prefWidth="220.0"/>
+
+                          <Label text="Batch size" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
+                          <Spinner fx:id="batchSizeSpinner" GridPane.rowIndex="4" GridPane.columnIndex="1" prefWidth="120.0" editable="true"/>
+
+                          <Label text="Text options" GridPane.rowIndex="5" GridPane.columnIndex="0"/>
+                          <HBox spacing="10.0" GridPane.rowIndex="5" GridPane.columnIndex="1" GridPane.columnSpan="2">
+                            <children>
+                              <CheckBox fx:id="cleanTextBox" text="Clean text"/>
+                              <CheckBox fx:id="exportMdBox" text="Markdown"/>
+                              <CheckBox fx:id="summaryPackBox" text="Summary pack"/>
+                              <CheckBox fx:id="notifyDoneBox" text="Open output when done"/>
+                            </children>
+                          </HBox>
+
+                          <Label text="Split minutes" GridPane.rowIndex="6" GridPane.columnIndex="0"/>
+                          <Spinner fx:id="splitMinutesSpinner" GridPane.rowIndex="6" GridPane.columnIndex="1" prefWidth="120.0" editable="true"/>
+                        </GridPane>
+                      </VBox>
+
+                      <VBox spacing="8.0" styleClass="card-pane">
+                        <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                        <Label text="Module flow" styleClass="section-title"/>
+                        <Label text="Offline A/V, YouTube transcript, Speaker transcript, Conference mode, YouTube subtitles and YouTube dub are separate modules with independent saved settings." wrapText="true" styleClass="small-label"/>
+                      </VBox>
+                    </VBox>
+                  </content>
+                </ScrollPane>
+              </Tab>
+            </tabs>
+          </TabPane>
+
+          <HBox spacing="8.0" alignment="CENTER_LEFT" styleClass="action-row">
+            <children>
+              <Button fx:id="startButton" text="Start" onAction="#onStart" styleClass="primary-btn"/>
+              <Button fx:id="cancelButton" text="Cancel" onAction="#onCancel"/>
+              <Button fx:id="preflightButton" text="Preflight" onAction="#onRunPreflight"/>
+              <Separator orientation="VERTICAL" prefHeight="20.0"/>
+              <Button fx:id="refreshModelsButton" text="Refresh model cache" onAction="#onRefreshModels"/>
+              <Button fx:id="installRuntimeButton" text="Online runtime setup" onAction="#onInstallOnlineRuntime"/>
+              <Button fx:id="openOutputButton" text="Open output" onAction="#onOpenOutput"/>
+              <Button fx:id="openDataButton" text="Open app data" onAction="#onOpenData"/>
+              <Button fx:id="healthButton" text="Health" onAction="#onHealth"/>
+            </children>
+          </HBox>
+        </VBox>
+      </children>
+    </HBox>
+  </center>
+</BorderPane>

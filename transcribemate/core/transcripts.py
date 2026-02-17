@@ -213,6 +213,10 @@ def build_metadata(
     part_total: int,
     speaker: str | None = None,
     topic: str | None = None,
+    lecture_description: str | None = None,
+    lecture_date: str | None = None,
+    conference_title: str | None = None,
+    conference_date: str | None = None,
     speaker_map: Dict[str, str] | None = None,
 ) -> Dict[str, str]:
     generated = datetime.now().isoformat(timespec="minutes")
@@ -243,6 +247,22 @@ def build_metadata(
         cleaned_topic = str(topic).strip()
         if cleaned_topic:
             metadata["Topic"] = cleaned_topic
+    if lecture_description is not None:
+        cleaned_description = str(lecture_description).strip()
+        if cleaned_description:
+            metadata["Lecture description"] = cleaned_description
+    if lecture_date is not None:
+        cleaned_lecture_date = str(lecture_date).strip()
+        if cleaned_lecture_date:
+            metadata["Lecture date"] = cleaned_lecture_date
+    if conference_title is not None:
+        cleaned_conference_title = str(conference_title).strip()
+        if cleaned_conference_title:
+            metadata["Conference title"] = cleaned_conference_title
+    if conference_date is not None:
+        cleaned_conference_date = str(conference_date).strip()
+        if cleaned_conference_date:
+            metadata["Conference date"] = cleaned_conference_date
     if speaker_map:
         lines: List[str] = []
         for speaker_id in sorted(speaker_map.keys()):
@@ -492,6 +512,10 @@ def export_transcripts(
     log,
     speaker: str = "",
     topic: str = "",
+    lecture_description: str = "",
+    lecture_date: str = "",
+    conference_title: str = "",
+    conference_date: str = "",
     summary_lang: str = "auto",
     base_name_override: str = "",
     include_unmapped_speakers: bool = True,
@@ -515,6 +539,10 @@ def export_transcripts(
             part_total=len(parts),
             speaker=speaker,
             topic=topic,
+            lecture_description=lecture_description,
+            lecture_date=lecture_date,
+            conference_title=conference_title,
+            conference_date=conference_date,
             speaker_map=result.speaker_map,
         )
 

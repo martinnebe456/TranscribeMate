@@ -1,5 +1,8 @@
-"""TranscribeMate application package."""
+"""TranscribeMate package root.
 
-from .runtime import launch_app
+V2 architecture:
+- JavaFX frontend (`javafx-client/`)
+- Python backend (`transcribemate.v2.backend`)
+"""
 
-__all__ = ["launch_app"]
+__all__: list[str] = []
