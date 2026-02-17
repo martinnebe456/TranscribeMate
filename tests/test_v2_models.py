@@ -12,7 +12,13 @@ def _base_payload():
         "translation": {"enabled": False, "target_lang": "en→cs"},
         "subtitles": {"mode": "soft", "font": "Arial", "size": 24, "color": "#fff", "outline_color": "#000", "outline_width": 2},
         "text": {"clean_text": False, "export_md": False, "summary_pack": False, "split_minutes": 0, "summary_lang": "auto"},
-        "diarization": {"enabled": False, "backend": "stable_local", "min_speakers": 0, "max_speakers": 0},
+        "diarization": {
+            "enabled": False,
+            "backend": "local_cluster_accurate",
+            "accuracy_profile": "balanced",
+            "min_speakers": 0,
+            "max_speakers": 0,
+        },
     }
 
 
@@ -54,6 +60,35 @@ def test_pipeline_request_normalizes_translation_target_variants():
 def test_pipeline_request_rejects_unknown_module():
     payload = _base_payload()
     payload["module"] = "unknown_module"
+    with pytest.raises(RequestValidationError):
+        PipelineRequest.from_payload(payload)
+
+
+def test_pipeline_request_maps_legacy_diarization_backends():
+    payload = _base_payload()
+    payload["diarization"]["backend"] = "advanced_pyannote"
+    req = PipelineRequest.from_payload(payload)
+    assert req.diarization.backend == "local_cluster_accurate"
+
+    payload["diarization"]["backend"] = "stable_local"
+    req = PipelineRequest.from_payload(payload)
+    assert req.diarization.backend == "local_cluster_fast"
+
+
+def test_pipeline_request_normalizes_diarization_accuracy_profile():
+    payload = _base_payload()
+    payload["diarization"]["accuracy_profile"] = "max"
+    req = PipelineRequest.from_payload(payload)
+    assert req.diarization.accuracy_profile == "maximum"
+
+    payload["diarization"]["accuracy_profile"] = "small"
+    req = PipelineRequest.from_payload(payload)
+    assert req.diarization.accuracy_profile == "low"
+
+
+def test_pipeline_request_rejects_invalid_diarization_accuracy_profile():
+    payload = _base_payload()
+    payload["diarization"]["accuracy_profile"] = "ultra"
     with pytest.raises(RequestValidationError):
         PipelineRequest.from_payload(payload)
 

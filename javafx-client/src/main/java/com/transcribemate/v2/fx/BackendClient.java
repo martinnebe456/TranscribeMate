@@ -180,6 +180,7 @@ public final class BackendClient implements AutoCloseable {
         if (process != null && process.isAlive()) {
             return;
         }
+        AppFileLogger.log("INFO", "backend.client", "Starting backend process.");
 
         ProcessBuilder pb = new ProcessBuilder(command);
         if (workDir != null && !workDir.isBlank()) {
@@ -191,6 +192,7 @@ public final class BackendClient implements AutoCloseable {
         pb.environment().putIfAbsent("PYTHONIOENCODING", "utf-8");
 
         process = pb.start();
+        AppFileLogger.log("INFO", "backend.client", "Backend process started (pid=" + process.pid() + ").");
         stdin = new BufferedWriter(new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8));
 
         ioExecutor = Executors.newFixedThreadPool(2, r -> {
@@ -243,6 +245,7 @@ public final class BackendClient implements AutoCloseable {
         } catch (Exception ex) {
             pending.remove(id);
             future.completeExceptionally(ex);
+            AppFileLogger.logException("backend.client.send_request", ex);
         }
 
         return future;
@@ -260,6 +263,7 @@ public final class BackendClient implements AutoCloseable {
                 handleServerLine(line);
             }
         } catch (Exception ex) {
+            AppFileLogger.logException("backend.client.stdout", ex);
             publishSyntheticEvent("backend.io_error", "stdout", ex.toString());
         } finally {
             failPending("Backend stdout closed.");
@@ -270,9 +274,11 @@ public final class BackendClient implements AutoCloseable {
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getErrorStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
+                AppFileLogger.log("DEBUG", "backend.stderr", line);
                 publishSyntheticEvent("backend.stderr", "stderr", line);
             }
         } catch (Exception ex) {
+            AppFileLogger.logException("backend.client.stderr", ex);
             publishSyntheticEvent("backend.io_error", "stderr", ex.toString());
         }
     }
@@ -303,6 +309,7 @@ public final class BackendClient implements AutoCloseable {
                 }
             }
         } catch (Exception ex) {
+            AppFileLogger.logException("backend.client.protocol", ex);
             publishSyntheticEvent("backend.protocol_error", "stdout", ex.toString() + " | line=" + line);
         }
     }
@@ -321,6 +328,7 @@ public final class BackendClient implements AutoCloseable {
     }
 
     private void failPending(String reason) {
+        AppFileLogger.log("WARN", "backend.client", reason);
         for (Map.Entry<String, CompletableFuture<JsonNode>> entry : pending.entrySet()) {
             entry.getValue().completeExceptionally(new IllegalStateException(reason));
         }

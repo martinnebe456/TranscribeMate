@@ -78,11 +78,13 @@ File: `tests/test_v2_models.py`
 File: `tests/test_v2_service.py`
 - service capabilities and health/preflight surface
 - preflight behavior when `torch` is missing (warn vs fail by mode)
+- `list_jobs` module filter behavior (`module_id` / `module`)
 
 File: `tests/test_v2_components.py`
 - backend component registry integrity
 - per-module request normalization/contract enforcement
 - component metadata exposure in capabilities response
+- module `ui_schema` exposure in capabilities response
 
 ## Current scope boundaries
 The suite is intentionally fast and deterministic.

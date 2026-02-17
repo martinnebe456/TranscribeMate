@@ -11,7 +11,8 @@ from ...core.i18n import LANG_CODES, TRANSLATION_MODELS
 ALLOWED_SOURCE_MODES = {"local", "youtube"}
 ALLOWED_OUTPUT_MODES = {"conference", "video_subs", "video_dub", "srt_only", "txt_only"}
 ALLOWED_SUBTITLE_MODES = {"soft", "hard"}
-ALLOWED_DIARIZATION_BACKENDS = {"stable_local", "advanced_pyannote"}
+ALLOWED_DIARIZATION_BACKENDS = {"local_cluster_fast", "local_cluster_accurate"}
+ALLOWED_DIARIZATION_ACCURACY_PROFILES = {"low", "balanced", "high", "maximum"}
 ALLOWED_MODULES = {
     "offline_transcribe",
     "youtube_transcribe",
@@ -108,6 +109,29 @@ def _normalize_module(value: Any) -> str:
     if not module:
         module = "offline_transcribe"
     return module
+
+
+def _normalize_diarization_backend(value: Any) -> str:
+    backend = _normalized_str(value, default="local_cluster_accurate").lower()
+    legacy_map = {
+        "advanced_pyannote": "local_cluster_accurate",
+        "stable_local": "local_cluster_fast",
+    }
+    return legacy_map.get(backend, backend)
+
+
+def _normalize_diarization_accuracy_profile(value: Any) -> str:
+    profile = _normalized_str(value, default="balanced").lower()
+    legacy_map = {
+        "small": "low",
+        "minimal": "low",
+        "default": "balanced",
+        "medium": "balanced",
+        "normal": "balanced",
+        "max": "maximum",
+        "best": "maximum",
+    }
+    return legacy_map.get(profile, profile)
 
 
 def _default_downloads_dir() -> Path:
@@ -319,7 +343,8 @@ class ConferenceDefaultsSpec:
 @dataclass(slots=True)
 class DiarizationSpec:
     enabled: bool = False
-    backend: str = "stable_local"
+    backend: str = "local_cluster_accurate"
+    accuracy_profile: str = "balanced"
     min_speakers: int = 0
     max_speakers: int = 0
     include_unmapped_speakers: bool = True
@@ -327,16 +352,21 @@ class DiarizationSpec:
     review_after_file: bool = False
     profile_prefill: bool = True
     speaker_profiles: dict[str, str] = field(default_factory=dict)
-    hf_token: str = ""
-    fail_on_error: bool = False
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "DiarizationSpec":
-        backend = _normalized_str(payload.get("backend"), default="stable_local").lower()
+        backend = _normalize_diarization_backend(payload.get("backend"))
         if backend not in ALLOWED_DIARIZATION_BACKENDS:
             raise RequestValidationError(
-                "diarization.backend must be one of: stable_local, advanced_pyannote",
+                "diarization.backend must be one of: local_cluster_fast, local_cluster_accurate",
                 details={"diarization.backend": backend},
+            )
+
+        accuracy_profile = _normalize_diarization_accuracy_profile(payload.get("accuracy_profile"))
+        if accuracy_profile not in ALLOWED_DIARIZATION_ACCURACY_PROFILES:
+            raise RequestValidationError(
+                "diarization.accuracy_profile must be one of: low, balanced, high, maximum",
+                details={"diarization.accuracy_profile": accuracy_profile},
             )
 
         min_speakers = _as_int(payload.get("min_speakers"), default=0, minimum=0, maximum=32)
@@ -356,6 +386,7 @@ class DiarizationSpec:
         return cls(
             enabled=_as_bool(payload.get("enabled"), default=False),
             backend=backend,
+            accuracy_profile=accuracy_profile,
             min_speakers=min_speakers,
             max_speakers=max_speakers,
             include_unmapped_speakers=_as_bool(payload.get("include_unmapped_speakers"), default=True),
@@ -363,8 +394,6 @@ class DiarizationSpec:
             review_after_file=_as_bool(payload.get("review_after_file"), default=False),
             profile_prefill=_as_bool(payload.get("profile_prefill"), default=True),
             speaker_profiles=speaker_profiles,
-            hf_token=_normalized_str(payload.get("hf_token")),
-            fail_on_error=_as_bool(payload.get("fail_on_error"), default=False),
         )
 
 
@@ -512,6 +541,7 @@ class PipelineRequest:
             "diarization": {
                 "enabled": self.diarization.enabled,
                 "backend": self.diarization.backend,
+                "accuracy_profile": self.diarization.accuracy_profile,
                 "min_speakers": self.diarization.min_speakers,
                 "max_speakers": self.diarization.max_speakers,
                 "include_unmapped_speakers": self.diarization.include_unmapped_speakers,
@@ -519,7 +549,6 @@ class PipelineRequest:
                 "review_after_file": self.diarization.review_after_file,
                 "profile_prefill": self.diarization.profile_prefill,
                 "speaker_profiles": dict(self.diarization.speaker_profiles),
-                "fail_on_error": self.diarization.fail_on_error,
             },
             "conference_defaults": {
                 "speaker": self.conference_defaults.speaker,

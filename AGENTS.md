@@ -40,7 +40,7 @@ This guide describes the current repository state (V2-only stack).
   - `models.py` - request validation/defaulting
   - `pipeline.py` - orchestration using shared pipeline/core modules
   - `protocol.py` - request/response/event structures
-  - `diarization.py` - backend abstraction (`stable_local`, `advanced_pyannote`)
+  - `diarization.py` - backend abstraction (`local_cluster_fast`, `local_cluster_accurate`)
 - `transcribemate/v2/backend/components/`
   - `core/` - backend component contracts/adapters
   - `registry.py` - backend module registry

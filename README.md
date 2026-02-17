@@ -15,6 +15,14 @@ This branch is V2-only (JavaFX + Python). Legacy Tkinter/PyInstaller and Inno in
 - `youtube_subtitles` - YouTube download + subtitle rendering (translated or source)
 - `youtube_dub` - YouTube download + translated dubbing
 
+## Module UX Isolation
+- Frontend reads module `ui_schema` from backend `get_capabilities` and shows only relevant tabs/sections/fields for the active module.
+- Settings are module-scoped and persist independently in `config.json`.
+- Module presets can be saved/loaded/deleted per module in Settings.
+- Job history is filtered by active module and supports replay of selected job request.
+- Output folders are separated by module:
+  - `<out_dir>/transcribemate_outputs/<module_id>/...`
+
 ## Component-Based Architecture
 - Frontend modules are component-based and isolated:
   - `javafx-client/src/main/java/com/transcribemate/v2/fx/modules/`

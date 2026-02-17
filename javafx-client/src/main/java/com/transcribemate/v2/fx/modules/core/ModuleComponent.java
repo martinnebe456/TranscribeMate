@@ -29,6 +29,12 @@ public interface ModuleComponent {
 
         void selectDiarizationBackend(String value);
 
+        void selectDiarizationAccuracyProfile(String value);
+
+        void setDiarizationMinSpeakers(int value);
+
+        void setDiarizationMaxSpeakers(int value);
+
         void setDiarizationProfilePrefill(boolean value);
 
         void setDiarizationPrefixSrt(boolean value);
