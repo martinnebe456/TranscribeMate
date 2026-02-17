@@ -1,7 +1,5 @@
 param(
     [switch]$SkipFrontendBuild,
-    [switch]$SkipInstaller,
-    [switch]$RequireInstaller,
     [string]$AppVersion,
     [string]$CodeSignThumbprint,
     [string]$CodeSignTimestampUrl = "http://timestamp.digicert.com",
@@ -56,26 +54,6 @@ function Resolve-JavaHome {
     $candidate = Split-Path -Parent (Split-Path -Parent $javaCmd.Source)
     if (Test-JavaHome $candidate) {
         return $candidate
-    }
-
-    return $null
-}
-
-function Resolve-Iscc {
-    $cmd = Get-Command iscc -ErrorAction SilentlyContinue
-    if ($cmd) {
-        return $cmd.Source
-    }
-
-    $candidates = @(
-        (Join-Path ${env:ProgramFiles(x86)} "Inno Setup 6\ISCC.exe"),
-        (Join-Path $env:ProgramFiles "Inno Setup 6\ISCC.exe")
-    )
-
-    foreach ($candidate in $candidates) {
-        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate)) {
-            return $candidate
-        }
     }
 
     return $null
@@ -228,7 +206,59 @@ function Remove-PathWithRetry(
 Reason: $lastError
 
 Close all running TranscribeMate app windows/processes and close any Explorer window opened inside this folder.
-Then run build_v2_installer.ps1 again.
+Then run build_v2_release.ps1 again.
+"@
+    throw $hint
+}
+
+function New-ReleaseZipWithRetry(
+    [string]$SourcePath,
+    [string]$DestinationPath,
+    [int]$MaxAttempts = 8,
+    [int]$DelayMilliseconds = 1500
+) {
+    if (-not (Test-Path -LiteralPath $SourcePath)) {
+        throw ("[TM] Cannot create ZIP. Source path not found: {0}" -f $SourcePath)
+    }
+
+    $lastError = $null
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            if (Test-Path -LiteralPath $DestinationPath) {
+                Remove-PathWithRetry -TargetPath $DestinationPath -Description "previous release zip" -MaxAttempts 3 -DelayMilliseconds 400
+            }
+
+            Compress-Archive -Path $SourcePath -DestinationPath $DestinationPath -CompressionLevel Optimal -ErrorAction Stop
+
+            if (-not (Test-Path -LiteralPath $DestinationPath)) {
+                throw ("ZIP was not created: {0}" -f $DestinationPath)
+            }
+
+            $zipInfo = Get-Item -LiteralPath $DestinationPath -ErrorAction Stop
+            if ($zipInfo.Length -le 0) {
+                throw ("ZIP has invalid size (0 B): {0}" -f $DestinationPath)
+            }
+
+            return
+        }
+        catch {
+            $lastError = $_.Exception.Message
+            if ($attempt -lt $MaxAttempts) {
+                Write-Warning ("[TM] ZIP creation failed (attempt {0}/{1}): {2}" -f $attempt, $MaxAttempts, $lastError)
+                Start-Sleep -Milliseconds ($DelayMilliseconds * $attempt)
+                continue
+            }
+        }
+    }
+
+    $hint = @"
+[TM] Failed to create ZIP release package.
+Source: $SourcePath
+Destination: $DestinationPath
+Reason: $lastError
+
+Close running TranscribeMate instances and close any Explorer window opened inside dist/TranscribeMate.
+If antivirus is scanning files, wait a moment and run build_v2_release.ps1 again.
 "@
     throw $hint
 }
@@ -310,13 +340,11 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $frontendDir = Join-Path $root "javafx-client"
 $distDir = Join-Path $root "dist"
 $appImageDir = Join-Path $distDir "TranscribeMate"
-$issFile = Join-Path $root "installer\TranscribeMate.iss"
+$releaseDir = Join-Path $root "dist_release"
+$zipPath = ""
 
 if (-not (Test-Path $frontendDir)) {
     throw "[TM] Missing javafx-client directory."
-}
-if (-not (Test-Path $issFile)) {
-    throw "[TM] Missing installer script: $issFile"
 }
 
 $resolvedJavaHome = Resolve-JavaHome
@@ -340,6 +368,8 @@ if (-not $mvnCmd) {
 $appVersion = Resolve-AppVersion -Requested $AppVersion -RootPath $root
 Write-Host "[TM] JAVA_HOME=$($env:JAVA_HOME)"
 Write-Host "[TM] Version=$appVersion"
+$zipName = "TranscribeMate-$appVersion-win-x64.zip"
+$zipPath = Join-Path $releaseDir $zipName
 
 if (-not $SkipFrontendBuild) {
     Write-Host "[TM] Building frontend JAR and runtime dependencies..."
@@ -441,7 +471,7 @@ if ($RequireCodeSigning -and -not $codeSigningEnabled) {
     throw "[TM] Code signing is required, but no valid -CodeSignThumbprint was provided."
 }
 if (-not $codeSigningEnabled) {
-    Write-Warning "[TM] Build is unsigned. Windows SmartScreen/Smart App Control may block install or app launch."
+    Write-Warning "[TM] Build is unsigned. Windows SmartScreen/Smart App Control may block app launch."
 }
 
 # Bundle Python backend source inside the Java app image.
@@ -479,41 +509,28 @@ if ($codeSigningEnabled) {
 }
 Unblock-PathRecursive -TargetPath $appImageDir -Description "app image files"
 
-if (-not $SkipInstaller) {
-    $iscc = Resolve-Iscc
-    if (-not $iscc) {
-        $message = @"
-[TM] Inno Setup compiler (ISCC.exe) was not found.
-Installer step is skipped.
-Run Inno Setup Compiler manually, install Inno Setup 6, or use -RequireInstaller to fail on missing ISCC.
-"@
-        if ($RequireInstaller) {
-            throw $message
-        }
-        Write-Warning $message
-        Write-Host "[TM] App image is ready for manual Inno compilation: $appImageDir"
-        Write-Host "[TM] Suggested ISS file: $issFile"
-        Write-Host "[TM] Skipping installer build."
-        Write-Host "[TM] Done."
-        exit 0
-    }
-
-    Write-Host "[TM] Building installer via ISCC..."
-    & $iscc "/DMyAppVersion=$appVersion" $issFile
-    if ($LASTEXITCODE -ne 0) {
-        throw "ISCC failed with exit code $LASTEXITCODE"
-    }
-
-    if ($codeSigningEnabled) {
-        $setupExe = Join-Path $root "dist_installer\TranscribeMate-Setup.exe"
-        Sign-File -SignTool $signtool -Thumbprint $normalizedThumbprint -TimestampUrl $CodeSignTimestampUrl -FilePath $setupExe
-    }
-    Unblock-PathRecursive -TargetPath (Join-Path $root "dist_installer\TranscribeMate-Setup.exe") -Description "installer executable"
-
-    Write-Host "[TM] Installer ready in: $(Join-Path $root 'dist_installer')"
-}
-else {
-    Write-Host "[TM] Skipping installer build (-SkipInstaller)."
+if (-not (Test-Path $releaseDir)) {
+    New-Item -Path $releaseDir -ItemType Directory | Out-Null
 }
 
+if (Test-Path $zipPath) {
+    Remove-PathWithRetry -TargetPath $zipPath -Description "existing release zip"
+}
+
+Write-Host "[TM] Creating ZIP release package..."
+New-ReleaseZipWithRetry -SourcePath $appImageDir -DestinationPath $zipPath
+Unblock-PathRecursive -TargetPath $zipPath -Description "release zip"
+
+if (-not (Test-Path -LiteralPath $zipPath)) {
+    throw ("[TM] ZIP release package was not created: {0}" -f $zipPath)
+}
+
+$checksumPath = Join-Path $releaseDir "checksums.txt"
+$zipHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$checksumLine = "$zipHash *$zipName"
+Set-Content -Path $checksumPath -Value $checksumLine -Encoding ASCII
+Unblock-PathRecursive -TargetPath $checksumPath -Description "release checksums"
+
+Write-Host "[TM] ZIP release ready: $zipPath"
+Write-Host "[TM] SHA256 checksums written to: $checksumPath"
 Write-Host "[TM] Done."

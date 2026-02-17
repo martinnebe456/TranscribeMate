@@ -18,8 +18,8 @@ This guide describes the current repository state (V2-only stack).
 - Backend (Python):
   - `./run_v2_backend.ps1`
   - or `python -m transcribemate.v2.backend.server --stdio`
-- Installer build (Windows):
-  - `./build_v2_installer.ps1`
+- Release build (Windows ZIP):
+  - `./build_v2_release.ps1`
 
 ## Code map
 - `javafx-client/src/main/java/com/transcribemate/v2/fx/`
@@ -49,7 +49,7 @@ This guide describes the current repository state (V2-only stack).
 - Runtime log: `runtime.log`
 - Cache: `cache/huggingface`, `cache/whisper`
 - Runtime Python packages: `runtime/python/Lib/site-packages/`
-- Online installer runtime interpreter: `runtime/python/python.exe`
+- Managed runtime interpreter: `runtime/python/python.exe`
 - Output root: `<out_dir>/transcribemate_outputs/`
 
 ## Tests
@@ -62,12 +62,11 @@ This guide describes the current repository state (V2-only stack).
 
 ## Build/packaging note
 - Legacy Tkinter/PyInstaller flow was removed from this branch.
-- V2 installer template is available at `installer/TranscribeMate.iss`.
-- The ISS script expects a packaged app image in `dist/TranscribeMate/`.
-- `build_v2_installer.ps1` builds Java app-image via `jpackage` and then runs `ISCC`.
-- Installer includes optional task `online_runtime` to bootstrap embedded Python runtime + dependencies + default models + FFmpeg assets at install time.
-- `online_runtime` runs inside installer with a dedicated progress page (live status from bootstrap script output).
-- Successful `online_runtime` means end users do not need system Python installation.
+- Inno installer flow is removed.
+- `build_v2_release.ps1` builds Java app-image via `jpackage` and then creates a distributable ZIP package.
+- Build output includes `dist_release/checksums.txt` with SHA256 for ZIP verification.
+- ZIP distribution entry point is `TranscribeMate.exe` inside extracted package.
+- Runtime bootstrap (embedded Python + deps + models + FFmpeg) runs on first app launch.
 
 ## Legal
 - `DISCLAIMER.md`

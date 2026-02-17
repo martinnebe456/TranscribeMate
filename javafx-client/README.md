@@ -25,7 +25,7 @@ Runtime resolution order:
 - `TM_BACKEND_CMD` (full override)
 - `TM_BACKEND_PYTHON` (interpreter override)
 - project `.venv` (dev mode)
-- managed runtime `%LOCALAPPDATA%\TranscribeMate\runtime\python\python.exe` (installer mode)
+- managed runtime `%LOCALAPPDATA%\TranscribeMate\runtime\python\python.exe` (packaged ZIP mode)
 - fallback `python`
 
 Optional overrides:
