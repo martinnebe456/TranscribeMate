@@ -1,0 +1,86 @@
+name: Path-Gated CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: path-gated-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      docs_contract: ${{ steps.filter.outputs.docs_contract }}
+      lint: ${{ steps.filter.outputs.lint }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'transcribemate/**'
+              - 'tests/**'
+              - 'requirements*.txt'
+              - 'scripts/run_v2_backend.py'
+              - 'run_v2_backend.ps1'
+            frontend:
+              - 'javafx-client/**'
+              - 'run_v2_frontend.ps1'
+            docs_contract:
+              - 'docs/**'
+              - 'README.md'
+              - 'AGENTS.md'
+              - 'config.example.json'
+              - 'docs/v2/protocol.md'
+              - 'docs/v2/protocol.schema.json'
+              - 'transcribemate/v2/backend/protocol.py'
+              - 'tests/test_v2_protocol.py'
+            lint:
+              - '**/*.py'
+              - '**/*.ps1'
+              - 'version.txt'
+              - '.github/workflows/**'
+
+  backend:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    uses: ./.github/workflows/ci-backend.yml
+
+  frontend:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    uses: ./.github/workflows/ci-frontend.yml
+
+  docs_and_contract:
+    needs: changes
+    if: needs.changes.outputs.docs_contract == 'true'
+    uses: ./.github/workflows/docs-and-contract.yml
+
+  lint_and_sanity:
+    needs: changes
+    if: needs.changes.outputs.lint == 'true'
+    uses: ./.github/workflows/lint-and-sanity.yml
+
+  no_relevant_changes:
+    needs: changes
+    if: |
+      needs.changes.outputs.backend != 'true' &&
+      needs.changes.outputs.frontend != 'true' &&
+      needs.changes.outputs.docs_contract != 'true' &&
+      needs.changes.outputs.lint != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "No relevant file changes detected. Skipping component workflows."
