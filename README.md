@@ -27,8 +27,10 @@ This branch is V2-only (JavaFX + Python). Legacy Tkinter/PyInstaller and Inno in
 - V2 UI now includes a shell with dedicated sections:
   - `Dashboard` (project stats, recent artifacts, timeline tail)
   - `Projects` (create/select/delete/open project)
-  - `Files` (import, browse, open, preview/edit/save text artifacts)
-  - `Module` (run/advanced/diarization/logs/jobs/settings for selected module)
+  - `Files` (import, drag & drop, search, preview/edit/save text artifacts, sidecar preview, history snapshots)
+  - `Modules` (module-specific run + advanced options with guided run card)
+  - `Operations` (unified jobs queue + live logs + diagnostics)
+  - `Settings` (module-scoped configuration + presets)
 - Workspace metadata is stored in:
   - `%LOCALAPPDATA%/TranscribeMate/workspace/workspace.json`
 - Project data root:

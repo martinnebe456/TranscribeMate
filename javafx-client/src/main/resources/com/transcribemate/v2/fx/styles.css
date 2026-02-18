@@ -196,6 +196,10 @@
     -fx-padding: 10 12 10 12;
 }
 
+#modulesPane .module-btn {
+    -fx-max-width: 240;
+}
+
 .module-btn:hover {
     -fx-background-color: -tm-bg-soft-2;
 }

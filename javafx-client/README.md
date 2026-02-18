@@ -15,6 +15,14 @@ From repository root you can also run:
 ./run_v2_frontend.ps1
 ```
 
+## UI structure (V2 shell)
+- `Dashboard`: project overview, recent outputs, timeline.
+- `Projects`: create/select/delete project workspace folders.
+- `Files`: in-app project file browser/editor with search and sidecar preview.
+- `Modules`: guided run and module-specific controls.
+- `Operations`: unified jobs + logs + diagnostics.
+- `Settings`: module-scoped settings and presets.
+
 ## Backend command resolution
 The frontend starts Python backend automatically.
 
