@@ -126,3 +126,28 @@ def test_pipeline_request_parses_conference_metadata_extensions():
     assert item["speaker"] == "Alice"
     assert item["lecture_description"] == "Keynote"
     assert item["lecture_date"] == "2026-02-17"
+
+
+def test_pipeline_request_parses_project_context():
+    payload = _base_payload()
+    payload["project"] = {
+        "project_id": "hrapp_brainstorming",
+        "name": "HRAPP Brainstorming",
+        "root_dir": "workspace/projects/hrapp_brainstorming",
+    }
+
+    req = PipelineRequest.from_payload(payload)
+
+    assert req.project.project_id == "hrapp_brainstorming"
+    assert req.project.name == "HRAPP Brainstorming"
+    assert req.project.jobs_dir.endswith("jobs")
+    assert req.project.timeline_path.endswith("timeline.jsonl")
+    assert req.to_dict()["project"]["project_id"] == "hrapp_brainstorming"
+
+
+def test_pipeline_request_rejects_invalid_project_type():
+    payload = _base_payload()
+    payload["project"] = "invalid"
+
+    with pytest.raises(RequestValidationError):
+        PipelineRequest.from_payload(payload)

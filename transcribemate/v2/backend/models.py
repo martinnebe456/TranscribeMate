@@ -341,6 +341,53 @@ class ConferenceDefaultsSpec:
 
 
 @dataclass(slots=True)
+class ProjectContextSpec:
+    project_id: str = ""
+    name: str = ""
+    root_dir: str = ""
+    input_dir: str = ""
+    output_dir: str = ""
+    jobs_dir: str = ""
+    timeline_path: str = ""
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.project_id and self.root_dir)
+
+    @classmethod
+    def from_payload(cls, payload: dict[str, Any]) -> "ProjectContextSpec":
+        project_id = _normalized_str(payload.get("project_id"))
+        name = _normalized_str(payload.get("name"))
+        root_dir = _normalized_str(payload.get("root_dir"))
+        input_dir = _normalized_str(payload.get("input_dir"))
+        output_dir = _normalized_str(payload.get("output_dir"))
+        jobs_dir = _normalized_str(payload.get("jobs_dir"))
+        timeline_path = _normalized_str(payload.get("timeline_path"))
+
+        if root_dir:
+            root_path = Path(root_dir).expanduser()
+            if not input_dir:
+                input_dir = str(root_path / "input")
+            if not output_dir:
+                output_dir = str(root_path / "output")
+            if not jobs_dir:
+                jobs_dir = str(root_path / "jobs")
+
+        if jobs_dir and not timeline_path:
+            timeline_path = str(Path(jobs_dir).expanduser() / "timeline.jsonl")
+
+        return cls(
+            project_id=project_id,
+            name=name,
+            root_dir=root_dir,
+            input_dir=input_dir,
+            output_dir=output_dir,
+            jobs_dir=jobs_dir,
+            timeline_path=timeline_path,
+        )
+
+
+@dataclass(slots=True)
 class DiarizationSpec:
     enabled: bool = False
     backend: str = "local_cluster_accurate"
@@ -407,6 +454,7 @@ class PipelineRequest:
     subtitles: SubtitleStyleSpec
     text_export: TextExportSpec
     diarization: DiarizationSpec
+    project: ProjectContextSpec = field(default_factory=ProjectContextSpec)
     conference_defaults: ConferenceDefaultsSpec = field(default_factory=ConferenceDefaultsSpec)
     conference_meta: dict[str, dict[str, str]] = field(default_factory=dict)
 
@@ -437,6 +485,10 @@ class PipelineRequest:
         subtitles = SubtitleStyleSpec.from_payload(dict(payload.get("subtitles") or {}))
         text_export = TextExportSpec.from_payload(dict(payload.get("text") or {}))
         diarization = DiarizationSpec.from_payload(dict(payload.get("diarization") or {}))
+        project_raw = payload.get("project") or {}
+        if not isinstance(project_raw, dict):
+            raise RequestValidationError("project must be an object.")
+        project = ProjectContextSpec.from_payload(project_raw)
         conference_defaults = ConferenceDefaultsSpec.from_payload(dict(payload.get("conference_defaults") or {}))
 
         conference_meta_raw = payload.get("conference_meta") or {}
@@ -486,6 +538,7 @@ class PipelineRequest:
             subtitles=subtitles,
             text_export=text_export,
             diarization=diarization,
+            project=project,
             conference_defaults=conference_defaults,
             conference_meta=conference_meta,
         )
@@ -549,6 +602,15 @@ class PipelineRequest:
                 "review_after_file": self.diarization.review_after_file,
                 "profile_prefill": self.diarization.profile_prefill,
                 "speaker_profiles": dict(self.diarization.speaker_profiles),
+            },
+            "project": {
+                "project_id": self.project.project_id,
+                "name": self.project.name,
+                "root_dir": self.project.root_dir,
+                "input_dir": self.project.input_dir,
+                "output_dir": self.project.output_dir,
+                "jobs_dir": self.project.jobs_dir,
+                "timeline_path": self.project.timeline_path,
             },
             "conference_defaults": {
                 "speaker": self.conference_defaults.speaker,
