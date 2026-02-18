@@ -177,6 +177,14 @@
     -fx-line-spacing: 2px;
 }
 
+#runModuleContextCard {
+    -fx-border-color: -tm-accent-c;
+}
+
+#runModuleContextLabel {
+    -fx-text-fill: -tm-text-muted;
+}
+
 .module-btn {
     -fx-max-width: Infinity;
     -fx-alignment: CENTER_LEFT;
@@ -527,6 +535,22 @@
 #technicalLogArea .text,
 #jobDetailArea .text,
 #profilePreviewArea .text {
+    -fx-fill: -tm-log-text;
+}
+
+#dashboardTimelineArea {
+    -fx-control-inner-background: -tm-log-bg;
+    -fx-text-fill: -tm-log-text;
+    -fx-highlight-fill: -tm-accent-c;
+    -fx-highlight-text-fill: -tm-accent-on;
+    -fx-border-color: -tm-border-strong;
+}
+
+#dashboardTimelineArea .content {
+    -fx-background-color: -tm-log-bg;
+}
+
+#dashboardTimelineArea .text {
     -fx-fill: -tm-log-text;
 }
 

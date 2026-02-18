@@ -107,7 +107,7 @@
             <Button fx:id="navSettingsButton" text="Settings" onAction="#onNavSettings" styleClass="button main-nav-btn"/>
             <Separator/>
             <Label text="Workspace shortcut" styleClass="section-title"/>
-            <Label text="Projects and Files will be fully enabled in the next phase. Current module workflows are already available in Modules." wrapText="true" styleClass="small-label"/>
+            <Label text="Use Dashboard for project overview, Projects for selection, Files for in-app editing, and Modules for processing workflows." wrapText="true" styleClass="small-label"/>
           </children>
         </VBox>
 
@@ -117,16 +117,53 @@
               <children>
                 <VBox spacing="10.0" styleClass="card-pane">
                   <padding><Insets top="16.0" right="16.0" bottom="16.0" left="16.0"/></padding>
-                  <Label text="Dashboard" styleClass="section-title"/>
-                  <Label text="Welcome to the new V2 workspace shell. Use Main menu to navigate sections. Modules keep full existing functionality and settings." wrapText="true" styleClass="small-label"/>
+                  <Label text="Project Dashboard" styleClass="section-title"/>
+                  <Label fx:id="dashboardActiveProjectLabel" text="Active project: none" wrapText="true" styleClass="small-label"/>
+                  <Label fx:id="dashboardProjectStatsLabel" text="Input: 0 | Output: 0 | Transcripts: 0 | Job snapshots: 0" wrapText="true" styleClass="small-label"/>
                   <HBox spacing="8.0">
                     <children>
-                      <Button text="Open Modules" onAction="#onNavModules" styleClass="accent-btn"/>
-                      <Button text="Open Jobs" onAction="#onNavJobs"/>
-                      <Button text="Open Logs" onAction="#onNavLogs"/>
+                      <Button fx:id="dashboardRefreshButton" text="Refresh dashboard" onAction="#onRefreshDashboard" styleClass="accent-btn"/>
+                      <Button fx:id="dashboardOpenProjectButton" text="Open project folder" onAction="#onDashboardOpenProjectFolder"/>
+                      <Button fx:id="dashboardImportFilesButton" text="Import files" onAction="#onDashboardImportFiles"/>
+                      <Button fx:id="dashboardOpenOutputFolderButton" text="Open output folder" onAction="#onDashboardOpenOutputFolder"/>
                     </children>
                   </HBox>
                 </VBox>
+
+                <HBox spacing="10.0" VBox.vgrow="ALWAYS">
+                  <children>
+                    <VBox spacing="8.0" styleClass="card-pane" HBox.hgrow="ALWAYS" VBox.vgrow="ALWAYS">
+                      <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                      <HBox spacing="8.0" alignment="CENTER_LEFT">
+                        <children>
+                          <Label text="Recent project outputs" styleClass="section-title"/>
+                          <Region HBox.hgrow="ALWAYS"/>
+                          <Button fx:id="dashboardOpenSelectedRecentButton" text="Open selected" onAction="#onDashboardOpenSelectedRecentFile"/>
+                        </children>
+                      </HBox>
+                      <TableView fx:id="dashboardRecentFilesTable" VBox.vgrow="ALWAYS">
+                        <columns>
+                          <TableColumn fx:id="dashboardRecentPathColumn" text="Path" prefWidth="410.0"/>
+                          <TableColumn fx:id="dashboardRecentTypeColumn" text="Type" prefWidth="100.0"/>
+                          <TableColumn fx:id="dashboardRecentModifiedColumn" text="Modified" prefWidth="170.0"/>
+                        </columns>
+                      </TableView>
+                    </VBox>
+
+                    <VBox spacing="8.0" styleClass="card-pane" HBox.hgrow="ALWAYS" VBox.vgrow="ALWAYS">
+                      <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                      <HBox spacing="8.0" alignment="CENTER_LEFT">
+                        <children>
+                          <Label text="Project timeline" styleClass="section-title"/>
+                          <Region HBox.hgrow="ALWAYS"/>
+                          <Button fx:id="dashboardOpenTimelineButton" text="Open timeline file" onAction="#onDashboardOpenTimeline"/>
+                        </children>
+                      </HBox>
+                      <Label fx:id="dashboardTimelineInfoLabel" text="Timeline: no data yet." styleClass="small-label"/>
+                      <TextArea fx:id="dashboardTimelineArea" editable="false" wrapText="false" prefRowCount="16" VBox.vgrow="ALWAYS"/>
+                    </VBox>
+                  </children>
+                </HBox>
               </children>
             </VBox>
 
@@ -201,7 +238,7 @@
                     <Button fx:id="logsModuleButton" text="Conference Mode" onAction="#onModuleConference" styleClass="button module-btn"/>
                     <Button fx:id="jobsModuleButton" text="YouTube Subtitles" onAction="#onModuleYoutubeSubtitles" styleClass="button module-btn"/>
                     <Button fx:id="youtubeDubModuleButton" text="YouTube Dub" onAction="#onModuleYoutubeDub" styleClass="button module-btn"/>
-                    <Button fx:id="settingsModuleButton" text="Settings" onAction="#onModuleSettings" styleClass="button module-btn"/>
+                    <Button fx:id="settingsModuleButton" text="Module settings" onAction="#onModuleSettings" styleClass="button module-btn"/>
                     <Separator/>
                     <Label fx:id="moduleFlowTitleLabel" text="Module: Offline A/V" styleClass="section-title"/>
                     <Label fx:id="moduleFlowLabel" text="1) Select local source.&#10;2) Configure model in Settings.&#10;3) Run Preflight and Start." wrapText="true" styleClass="small-label"/>
@@ -219,6 +256,12 @@
                       <padding>
                         <Insets top="6.0" right="6.0" bottom="6.0" left="6.0"/>
                       </padding>
+
+                      <VBox fx:id="runModuleContextCard" spacing="6.0" styleClass="card-pane">
+                        <padding><Insets top="10.0" right="12.0" bottom="10.0" left="12.0"/></padding>
+                        <Label text="Module context" styleClass="section-title"/>
+                        <Label fx:id="runModuleContextLabel" text="Active module: Offline A/V Transcript" wrapText="true" styleClass="small-label"/>
+                      </VBox>
 
                       <VBox fx:id="runSourceCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
@@ -538,8 +581,8 @@
 
                       <VBox fx:id="settingsCoreCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
-                        <Label text="Core processing" styleClass="section-title"/>
-                        <HBox fx:id="settingsModuleScopeRow" spacing="8.0" alignment="CENTER_LEFT">
+                        <Label fx:id="settingsScopeLabel" text="Core processing - active module" styleClass="section-title"/>
+                        <HBox fx:id="settingsModuleScopeRow" spacing="8.0" alignment="CENTER_LEFT" visible="false" managed="false">
                           <children>
                             <Label text="Settings module"/>
                             <ComboBox fx:id="settingsModuleBox" prefWidth="240.0" onAction="#onSettingsModuleChanged"/>

@@ -23,6 +23,21 @@ This branch is V2-only (JavaFX + Python). Legacy Tkinter/PyInstaller and Inno in
 - Output folders are separated by module:
   - `<out_dir>/transcribemate_outputs/<module_id>/...`
 
+## Workspace & Project Management
+- V2 UI now includes a shell with dedicated sections:
+  - `Dashboard` (project stats, recent artifacts, timeline tail)
+  - `Projects` (create/select/delete/open project)
+  - `Files` (import, browse, open, preview/edit/save text artifacts)
+  - `Module` (run/advanced/diarization/logs/jobs/settings for selected module)
+- Workspace metadata is stored in:
+  - `%LOCALAPPDATA%/TranscribeMate/workspace/workspace.json`
+- Project data root:
+  - `%LOCALAPPDATA%/TranscribeMate/workspace/projects/<project_id>/`
+- Each project keeps separated folders:
+  - `input/`, `output/`, `transcripts/`, `jobs/`, `assets/`, `temp/`
+- Job timeline events are persisted to:
+  - `jobs/timeline.jsonl`
+
 ## Component-Based Architecture
 - Frontend modules are component-based and isolated:
   - `javafx-client/src/main/java/com/transcribemate/v2/fx/modules/`
