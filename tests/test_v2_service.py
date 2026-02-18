@@ -1,4 +1,5 @@
 import builtins
+import json
 from pathlib import Path
 
 from transcribemate.core.types import SpeakerTurn, TranscriptSegment, TranscriptionResult
@@ -218,3 +219,91 @@ def test_list_jobs_supports_module_filter():
     assert len(youtube_jobs) == 1
     assert offline_jobs[0]["request"]["module"] == "offline_transcribe"
     assert youtube_jobs[0]["request"]["module"] == "youtube_transcribe"
+
+
+def test_list_jobs_supports_project_filter(tmp_path):
+    svc = BackendService(emit_event=lambda _: None)
+
+    alpha_root = tmp_path / "alpha"
+    beta_root = tmp_path / "beta"
+
+    alpha_payload = _payload(output_mode="txt_only")
+    alpha_payload["project"] = {
+        "project_id": "project-alpha",
+        "name": "Project Alpha",
+        "root_dir": str(alpha_root),
+    }
+    alpha_request = PipelineRequest.from_payload(alpha_payload)
+
+    beta_payload = _payload(output_mode="txt_only")
+    beta_payload["project"] = {
+        "project_id": "project-beta",
+        "name": "Project Beta",
+        "root_dir": str(beta_root),
+    }
+    beta_request = PipelineRequest.from_payload(beta_payload)
+
+    svc._jobs["job-alpha"] = JobRecord(
+        job_id="job-alpha",
+        request=alpha_request,
+        created_at="2026-02-17T10:00:00+00:00",
+    )
+    svc._jobs["job-beta"] = JobRecord(
+        job_id="job-beta",
+        request=beta_request,
+        created_at="2026-02-17T10:01:00+00:00",
+    )
+
+    alpha_jobs = svc.handle_request("list_jobs", {"project_id": "project-alpha"})["jobs"]
+    beta_jobs = svc.handle_request("list_jobs", {"project_id": "project-beta"})["jobs"]
+
+    assert len(alpha_jobs) == 1
+    assert len(beta_jobs) == 1
+    assert alpha_jobs[0]["request"]["project"]["project_id"] == "project-alpha"
+    assert beta_jobs[0]["request"]["project"]["project_id"] == "project-beta"
+
+
+def test_project_job_timeline_is_persisted(tmp_path):
+    captured = []
+    svc = BackendService(emit_event=lambda event: captured.append(event))
+
+    payload = _payload(output_mode="txt_only")
+    payload["project"] = {
+        "project_id": "project-alpha",
+        "name": "Project Alpha",
+        "root_dir": str(tmp_path),
+    }
+    request = PipelineRequest.from_payload(payload)
+
+    record = JobRecord(
+        job_id="job-alpha",
+        request=request,
+        created_at="2026-02-17T10:00:00+00:00",
+        status="running",
+    )
+    svc._jobs["job-alpha"] = record
+
+    svc._emit_job_event(
+        "job.progress",
+        "job-alpha",
+        {"status": "running", "step": "transcribe", "overall_pct": 42.0},
+    )
+    svc._emit_job_event("job.started", "job-alpha", {"status": "running"})
+
+    jobs_dir = tmp_path / "jobs"
+    snapshot_path = jobs_dir / "job-alpha.json"
+    timeline_path = jobs_dir / "timeline.jsonl"
+
+    assert captured
+    assert snapshot_path.is_file()
+    assert timeline_path.is_file()
+
+    timeline_rows = [
+        json.loads(line)
+        for line in timeline_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert timeline_rows
+    assert timeline_rows[0]["event"] == "job.progress"
+    assert timeline_rows[0]["project_id"] == "project-alpha"
+    assert timeline_rows[0]["overall_pct"] == 42.0

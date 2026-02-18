@@ -7,6 +7,7 @@ import platform
 import re
 import shutil
 import subprocess
+import json
 import traceback
 import uuid
 from collections import deque
@@ -598,6 +599,7 @@ class BackendService:
         with self._lock:
             self._jobs[job_id] = record
 
+        self._persist_project_job_state(record, event="job.queued", payload={"status": record.status})
         thread.start()
         return {"job_id": job_id, "status": record.status}
 
@@ -635,6 +637,11 @@ class BackendService:
         module_filter = str(params.get("module_id") or params.get("module") or "").strip().lower()
         if module_filter and module_filter not in supported_module_ids():
             module_filter = ""
+        project_filter = str(params.get("project_id") or "").strip()
+        if not project_filter:
+            project_node = params.get("project")
+            if isinstance(project_node, dict):
+                project_filter = str(project_node.get("project_id") or "").strip()
 
         with self._lock:
             snapshots = [record.snapshot() for record in self._jobs.values()]
@@ -644,6 +651,12 @@ class BackendService:
                 snapshot
                 for snapshot in snapshots
                 if str(snapshot.get("request", {}).get("module", "")).strip().lower() == module_filter
+            ]
+        if project_filter:
+            snapshots = [
+                snapshot
+                for snapshot in snapshots
+                if str(snapshot.get("request", {}).get("project", {}).get("project_id", "")).strip() == project_filter
             ]
 
         snapshots.sort(key=lambda item: item.get("created_at", ""), reverse=True)
@@ -760,7 +773,106 @@ class BackendService:
         self._emit_job_event("job.progress", record.job_id, dict(record.progress))
 
     def _emit_job_event(self, event: str, job_id: str, payload: dict):
-        self._emit_event(EventMessage(event=event, payload=payload, job_id=job_id))
+        normalized_payload = dict(payload or {})
+        self._emit_event(EventMessage(event=event, payload=normalized_payload, job_id=job_id))
+        with self._lock:
+            record = self._jobs.get(job_id)
+        if record is not None:
+            persist_timeline = event != "job.log"
+            persist_snapshot = event in {
+                "job.queued",
+                "job.started",
+                "job.completed",
+                "job.failed",
+                "job.cancelled",
+                "job.cancel_requested",
+            }
+            if persist_timeline or persist_snapshot:
+                self._persist_project_job_state(
+                    record,
+                    event=event,
+                    payload=normalized_payload,
+                    write_snapshot=persist_snapshot,
+                    write_timeline=persist_timeline,
+                )
+
+    def _persist_project_job_state(
+        self,
+        record: JobRecord,
+        *,
+        event: str,
+        payload: dict | None = None,
+        write_snapshot: bool = True,
+        write_timeline: bool = True,
+    ) -> None:
+        project = record.request.project
+        if not project.enabled:
+            return
+
+        try:
+            jobs_dir = self._resolve_project_jobs_dir(record)
+            if jobs_dir is None:
+                return
+            jobs_dir.mkdir(parents=True, exist_ok=True)
+
+            if write_snapshot:
+                snapshot_path = jobs_dir / f"{record.job_id}.json"
+                snapshot_path.write_text(
+                    json.dumps(record.snapshot(), ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+
+            if write_timeline:
+                timeline_path = self._resolve_project_timeline_path(record, jobs_dir)
+                timeline_entry: dict[str, object] = {
+                    "ts": _utc_now(),
+                    "event": str(event or ""),
+                    "job_id": record.job_id,
+                    "status": str((payload or {}).get("status") or record.status),
+                    "module": record.request.module,
+                    "project_id": project.project_id,
+                    "project_name": project.name,
+                    "source_mode": record.request.source.mode,
+                    "output_mode": record.request.output.mode,
+                }
+                if payload:
+                    step = payload.get("step")
+                    if step is not None:
+                        timeline_entry["step"] = step
+                    overall_pct = payload.get("overall_pct")
+                    if overall_pct is not None:
+                        timeline_entry["overall_pct"] = overall_pct
+                    line = str(payload.get("line") or "").strip()
+                    if line:
+                        timeline_entry["line"] = line[:4096]
+                    error_payload = payload.get("error")
+                    if isinstance(error_payload, dict) and error_payload:
+                        timeline_entry["error"] = error_payload
+
+                with timeline_path.open("a", encoding="utf-8") as handle:
+                    handle.write(json.dumps(timeline_entry, ensure_ascii=False))
+                    handle.write("\n")
+        except Exception:
+            # Timeline persistence must never fail the active job.
+            return
+
+    @staticmethod
+    def _resolve_project_jobs_dir(record: JobRecord) -> Path | None:
+        project = record.request.project
+        jobs_dir = str(project.jobs_dir or "").strip()
+        if jobs_dir:
+            return Path(jobs_dir).expanduser()
+        root_dir = str(project.root_dir or "").strip()
+        if root_dir:
+            return Path(root_dir).expanduser() / "jobs"
+        return None
+
+    @staticmethod
+    def _resolve_project_timeline_path(record: JobRecord, jobs_dir: Path) -> Path:
+        timeline_path = str(record.request.project.timeline_path or "").strip()
+        if timeline_path:
+            return Path(timeline_path).expanduser()
+        return jobs_dir / "timeline.jsonl"
 
 
 def _utc_now() -> str:
