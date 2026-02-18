@@ -55,6 +55,8 @@ public class TranscribeMateApp extends Application {
             stage.setScene(scene);
             controller.installShortcuts(scene);
             stage.show();
+            stage.setMaximized(true);
+            stage.setFullScreen(false);
             AppFileLogger.log("INFO", "app.start", "Primary stage displayed.");
 
             if (mandatoryRuntimeSetup) {

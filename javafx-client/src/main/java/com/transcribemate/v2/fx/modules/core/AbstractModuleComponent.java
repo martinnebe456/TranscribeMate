@@ -6,11 +6,17 @@ public abstract class AbstractModuleComponent implements ModuleComponent {
     private final String id;
     private final String label;
     private final ModuleFlowSpec flowSpec;
+    private final ModuleUiSchemaSpec uiSchema;
 
     protected AbstractModuleComponent(String id, String label, ModuleFlowSpec flowSpec) {
+        this(id, label, flowSpec, ModuleUiSchemaSpec.all());
+    }
+
+    protected AbstractModuleComponent(String id, String label, ModuleFlowSpec flowSpec, ModuleUiSchemaSpec uiSchema) {
         this.id = id;
         this.label = label;
         this.flowSpec = flowSpec;
+        this.uiSchema = uiSchema == null ? ModuleUiSchemaSpec.all() : uiSchema;
     }
 
     @Override
@@ -26,6 +32,11 @@ public abstract class AbstractModuleComponent implements ModuleComponent {
     @Override
     public ModuleFlowSpec flowSpec() {
         return flowSpec;
+    }
+
+    @Override
+    public ModuleUiSchemaSpec uiSchema() {
+        return uiSchema;
     }
 
     @Override

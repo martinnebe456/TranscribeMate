@@ -11,6 +11,7 @@
 <?import javafx.scene.control.ScrollPane?>
 <?import javafx.scene.control.Separator?>
 <?import javafx.scene.control.Spinner?>
+<?import javafx.scene.control.SplitPane?>
 <?import javafx.scene.control.Tab?>
 <?import javafx.scene.control.TabPane?>
 <?import javafx.scene.control.TableColumn?>
@@ -102,12 +103,11 @@
             <Button fx:id="navProjectsButton" text="Projects" onAction="#onNavProjects" styleClass="button main-nav-btn"/>
             <Button fx:id="navFilesButton" text="Files" onAction="#onNavFiles" styleClass="button main-nav-btn"/>
             <Button fx:id="navModulesButton" text="Modules" onAction="#onNavModules" styleClass="button main-nav-btn"/>
-            <Button fx:id="navJobsButton" text="Jobs" onAction="#onNavJobs" styleClass="button main-nav-btn"/>
-            <Button fx:id="navLogsButton" text="Logs" onAction="#onNavLogs" styleClass="button main-nav-btn"/>
+            <Button fx:id="navOperationsButton" text="Operations" onAction="#onNavOperations" styleClass="button main-nav-btn"/>
             <Button fx:id="navSettingsButton" text="Settings" onAction="#onNavSettings" styleClass="button main-nav-btn"/>
             <Separator/>
             <Label text="Workspace shortcut" styleClass="section-title"/>
-            <Label text="Use Dashboard for project overview, Projects for selection, Files for in-app editing, and Modules for processing workflows." wrapText="true" styleClass="small-label"/>
+            <Label text="Use Dashboard for project overview, Projects for selection, Files for in-app editing, Modules for workflow setup and Operations for job control + diagnostics." wrapText="true" styleClass="small-label"/>
           </children>
         </VBox>
 
@@ -208,8 +208,17 @@
                       <Button fx:id="filesOpenSelectedButton" text="Open selected" onAction="#onOpenSelectedProjectFile"/>
                       <Button fx:id="filesOpenProjectFolderButton" text="Open project folder" onAction="#onOpenProjectFolder"/>
                       <Button fx:id="filesSaveEditorButton" text="Save editor" onAction="#onSaveProjectFileEditor"/>
+                      <Button fx:id="filesHistoryButton" text="Open history" onAction="#onOpenEditedFileHistory"/>
                     </children>
                   </HBox>
+                  <HBox spacing="8.0" alignment="CENTER_LEFT">
+                    <children>
+                      <Label text="Search" styleClass="small-label"/>
+                      <TextField fx:id="filesSearchField" promptText="filename, path, transcript content..." HBox.hgrow="ALWAYS"/>
+                      <CheckBox fx:id="filesSearchContentBox" text="Search inside text files" selected="true"/>
+                    </children>
+                  </HBox>
+                  <Label fx:id="filesDropHintLabel" text="Tip: drag and drop files/folders here to import into project input." styleClass="small-label"/>
                   <TableView fx:id="projectFilesTable" prefHeight="250.0">
                     <columns>
                       <TableColumn fx:id="projectFileRelativePathColumn" text="Path" prefWidth="520.0"/>
@@ -219,35 +228,50 @@
                     </columns>
                   </TableView>
                   <Label fx:id="fileEditorStatusLabel" text="Preview/editor: select a text file (.txt/.srt/.json/.md) from the table." styleClass="small-label"/>
-                  <TextArea fx:id="projectFileEditorArea" prefRowCount="14" wrapText="false" VBox.vgrow="ALWAYS"/>
+                  <SplitPane dividerPositions="0.62" VBox.vgrow="ALWAYS">
+                    <items>
+                      <TextArea fx:id="projectFileEditorArea" prefRowCount="14" wrapText="false"/>
+                      <TextArea fx:id="projectSidecarPreviewArea" prefRowCount="14" editable="false" wrapText="false" promptText="Related diarization / transcript sidecar preview"/>
+                    </items>
+                  </SplitPane>
                 </VBox>
               </children>
             </VBox>
 
-            <HBox fx:id="modulesPane" spacing="12.0" visible="false" managed="false">
+            <VBox fx:id="modulesPane" spacing="10.0" visible="false" managed="false">
               <children>
-                <VBox spacing="8.0" styleClass="module-menu card-pane" prefWidth="210.0">
+                <VBox spacing="8.0" styleClass="card-pane">
                   <padding>
-                    <Insets top="12.0" right="10.0" bottom="12.0" left="10.0"/>
+                    <Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/>
                   </padding>
                   <children>
-                    <Label text="Modules" styleClass="section-title"/>
-                    <Button fx:id="runModuleButton" text="Offline A/V" onAction="#onModuleOffline" styleClass="button module-btn"/>
-                    <Button fx:id="advancedModuleButton" text="YouTube Transcript" onAction="#onModuleYoutube" styleClass="button module-btn"/>
-                    <Button fx:id="diarizationModuleButton" text="Speaker Transcript" onAction="#onModuleSpeaker" styleClass="button module-btn"/>
-                    <Button fx:id="logsModuleButton" text="Conference Mode" onAction="#onModuleConference" styleClass="button module-btn"/>
-                    <Button fx:id="jobsModuleButton" text="YouTube Subtitles" onAction="#onModuleYoutubeSubtitles" styleClass="button module-btn"/>
-                    <Button fx:id="youtubeDubModuleButton" text="YouTube Dub" onAction="#onModuleYoutubeDub" styleClass="button module-btn"/>
-                    <Button fx:id="settingsModuleButton" text="Module settings" onAction="#onModuleSettings" styleClass="button module-btn"/>
-                    <Separator/>
+                    <HBox spacing="8.0" alignment="CENTER_LEFT">
+                      <children>
+                        <Label text="Module workspace" styleClass="section-title"/>
+                        <Region HBox.hgrow="ALWAYS"/>
+                        <Label text="Active module" styleClass="small-label"/>
+                        <ComboBox fx:id="moduleSwitcherBox" prefWidth="260.0" onAction="#onModuleSwitcherChanged"/>
+                        <Button fx:id="modulePreviousButton" text="Last used" onAction="#onModulePrevious"/>
+                        <Button fx:id="settingsModuleButton" text="Settings tab" onAction="#onModuleSettings" styleClass="button"/>
+                      </children>
+                    </HBox>
+                    <FlowPane hgap="8.0" vgap="8.0">
+                      <children>
+                        <Button fx:id="runModuleButton" text="Offline A/V" onAction="#onModuleOffline" styleClass="button module-btn"/>
+                        <Button fx:id="advancedModuleButton" text="YouTube Transcript" onAction="#onModuleYoutube" styleClass="button module-btn"/>
+                        <Button fx:id="diarizationModuleButton" text="Speaker Transcript" onAction="#onModuleSpeaker" styleClass="button module-btn"/>
+                        <Button fx:id="logsModuleButton" text="Conference Mode" onAction="#onModuleConference" styleClass="button module-btn"/>
+                        <Button fx:id="jobsModuleButton" text="YouTube Subtitles" onAction="#onModuleYoutubeSubtitles" styleClass="button module-btn"/>
+                        <Button fx:id="youtubeDubModuleButton" text="YouTube Dub" onAction="#onModuleYoutubeDub" styleClass="button module-btn"/>
+                      </children>
+                    </FlowPane>
                     <Label fx:id="moduleFlowTitleLabel" text="Module: Offline A/V" styleClass="section-title"/>
                     <Label fx:id="moduleFlowLabel" text="1) Select local source.&#10;2) Configure model in Settings.&#10;3) Run Preflight and Start." wrapText="true" styleClass="small-label"/>
                     <Button fx:id="moduleFlowActionButton" text="Run Preflight" onAction="#onModuleFlowAction" styleClass="button accent-btn"/>
                   </children>
                 </VBox>
 
-                <VBox spacing="10.0" HBox.hgrow="ALWAYS">
-                  <TabPane fx:id="mainTabs" tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS" styleClass="module-tabs">
+                <TabPane fx:id="mainTabs" tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS" styleClass="module-tabs">
             <tabs>
               <Tab fx:id="runTab" text="Run">
                 <ScrollPane fitToWidth="true" fitToHeight="true">
@@ -261,6 +285,20 @@
                         <padding><Insets top="10.0" right="12.0" bottom="10.0" left="12.0"/></padding>
                         <Label text="Module context" styleClass="section-title"/>
                         <Label fx:id="runModuleContextLabel" text="Active module: Offline A/V Transcript" wrapText="true" styleClass="small-label"/>
+                      </VBox>
+
+                      <VBox fx:id="runWizardCard" spacing="8.0" styleClass="card-pane">
+                        <padding><Insets top="10.0" right="12.0" bottom="10.0" left="12.0"/></padding>
+                        <Label text="Guided run" styleClass="section-title"/>
+                        <HBox spacing="8.0" alignment="CENTER_LEFT">
+                          <children>
+                            <Button fx:id="wizardSourceButton" text="1. Source" onAction="#onWizardSource"/>
+                            <Button fx:id="wizardOutputButton" text="2. Output" onAction="#onWizardOutput"/>
+                            <Button fx:id="wizardPreflightButton" text="3. Preflight" onAction="#onWizardPreflight"/>
+                            <Button fx:id="wizardRunButton" text="4. Start" onAction="#onWizardRun" styleClass="accent-btn"/>
+                          </children>
+                        </HBox>
+                        <Label fx:id="wizardStateLabel" text="Fill source and output, then run preflight." styleClass="small-label" wrapText="true"/>
                       </VBox>
 
                       <VBox fx:id="runSourceCard" spacing="8.0" styleClass="card-pane">
@@ -315,7 +353,27 @@
                       <VBox spacing="8.0" styleClass="card-pane" fx:id="simpleHintCard">
                         <padding><Insets top="10.0" right="12.0" bottom="10.0" left="12.0"/></padding>
                         <Label text="Tip" styleClass="section-title"/>
-                        <Label text="Use module buttons on the left to switch workflow. Each module keeps its own model and processing settings." wrapText="true" styleClass="small-label"/>
+                        <Label text="Use the module toolbar above to switch workflow. Each module keeps its own model and processing settings." wrapText="true" styleClass="small-label"/>
+                      </VBox>
+
+                      <VBox fx:id="runPreflightCard" spacing="8.0" styleClass="card-pane">
+                        <padding><Insets top="10.0" right="12.0" bottom="10.0" left="12.0"/></padding>
+                        <Label text="Preflight checks and quick fixes" styleClass="section-title"/>
+                        <HBox spacing="8.0" alignment="CENTER_LEFT">
+                          <children>
+                            <Label fx:id="preflightSummaryLabel" text="Preflight not executed yet." styleClass="small-label"/>
+                            <Region HBox.hgrow="ALWAYS"/>
+                            <Button fx:id="applyPreflightFixButton" text="Apply selected fix" onAction="#onApplySelectedPreflightFix"/>
+                          </children>
+                        </HBox>
+                        <TableView fx:id="preflightChecksTable" prefHeight="180.0">
+                          <columns>
+                            <TableColumn fx:id="preflightNameColumn" text="Check" prefWidth="170.0"/>
+                            <TableColumn fx:id="preflightStatusColumn" text="Status" prefWidth="90.0"/>
+                            <TableColumn fx:id="preflightMessageColumn" text="Message" prefWidth="520.0"/>
+                            <TableColumn fx:id="preflightFixColumn" text="Suggested fix" prefWidth="200.0"/>
+                          </columns>
+                        </TableView>
                       </VBox>
                     </VBox>
                   </content>
@@ -478,36 +536,31 @@
                 <VBox spacing="8.0">
                   <padding><Insets top="8.0" right="8.0" bottom="8.0" left="8.0"/></padding>
 
-                  <HBox spacing="8.0" alignment="CENTER_LEFT" styleClass="card-pane">
-                    <padding><Insets top="8.0" right="8.0" bottom="8.0" left="8.0"/></padding>
-                    <children>
-                      <Label text="Search" styleClass="small-label"/>
-                      <TextField fx:id="logSearchField" promptText="filter log text" HBox.hgrow="ALWAYS"/>
-                      <Label text="Level" styleClass="small-label"/>
-                      <ComboBox fx:id="logLevelFilterBox" prefWidth="130.0"/>
-                      <CheckBox fx:id="showUserLogsBox" text="User" selected="true"/>
-                      <CheckBox fx:id="showTechnicalLogsBox" text="Technical" selected="true"/>
-                      <Button text="Clear" onAction="#onClearLogs"/>
-                    </children>
-                  </HBox>
+                  <VBox spacing="8.0" styleClass="card-pane" VBox.vgrow="ALWAYS">
+                    <padding><Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/></padding>
+                    <HBox spacing="8.0" alignment="CENTER_LEFT">
+                      <children>
+                        <Label text="Search" styleClass="small-label"/>
+                        <TextField fx:id="logSearchField" promptText="filter log text" HBox.hgrow="ALWAYS"/>
+                        <Label text="Level" styleClass="small-label"/>
+                        <ComboBox fx:id="logLevelFilterBox" prefWidth="130.0"/>
+                        <CheckBox fx:id="showUserLogsBox" text="User" selected="true"/>
+                        <CheckBox fx:id="showTechnicalLogsBox" text="Technical" selected="true"/>
+                        <CheckBox fx:id="logsErrorsOnlyBox" text="Errors only"/>
+                        <CheckBox fx:id="logsPauseAutoscrollBox" text="Pause autoscroll"/>
+                        <CheckBox fx:id="logsLinkSelectedJobBox" text="Follow selected job" selected="true"/>
+                        <Button text="Clear" onAction="#onClearLogs"/>
+                      </children>
+                    </HBox>
+                    <Label fx:id="logsJobFilterLabel" text="Log scope: all jobs" styleClass="small-label"/>
+                    <Label fx:id="logsStreamInfoLabel" text="Showing 0 entries." styleClass="small-label"/>
+                    <TextArea fx:id="filteredLogArea" editable="false" wrapText="true" prefRowCount="14" VBox.vgrow="ALWAYS"/>
+                  </VBox>
 
-                  <Label text="Filtered log" styleClass="section-title"/>
-                  <TextArea fx:id="filteredLogArea" editable="false" wrapText="true" prefRowCount="8" VBox.vgrow="ALWAYS"/>
-
-                  <HBox spacing="8.0" VBox.vgrow="ALWAYS">
+                  <HBox spacing="8.0" visible="false" managed="false">
                     <children>
-                      <VBox spacing="6.0" HBox.hgrow="ALWAYS" VBox.vgrow="ALWAYS">
-                        <children>
-                          <Label text="User stream" styleClass="section-title"/>
-                          <TextArea fx:id="userLogArea" editable="false" wrapText="true" VBox.vgrow="ALWAYS"/>
-                        </children>
-                      </VBox>
-                      <VBox spacing="6.0" HBox.hgrow="ALWAYS" VBox.vgrow="ALWAYS">
-                        <children>
-                          <Label text="Technical stream" styleClass="section-title"/>
-                          <TextArea fx:id="technicalLogArea" editable="false" wrapText="true" VBox.vgrow="ALWAYS"/>
-                        </children>
-                      </VBox>
+                      <TextArea fx:id="userLogArea" editable="false" wrapText="true" VBox.vgrow="ALWAYS"/>
+                      <TextArea fx:id="technicalLogArea" editable="false" wrapText="true" VBox.vgrow="ALWAYS"/>
                     </children>
                   </HBox>
                 </VBox>
@@ -519,30 +572,100 @@
                     <Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/>
                   </padding>
 
-                  <VBox spacing="8.0" styleClass="card-pane" VBox.vgrow="ALWAYS">
+                  <VBox spacing="8.0" styleClass="card-pane">
                     <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                     <HBox spacing="8.0" alignment="CENTER_LEFT">
                       <children>
                         <Label text="Run history" styleClass="section-title"/>
+                        <Label text="Search" styleClass="small-label"/>
+                        <TextField fx:id="jobsSearchField" promptText="job id, mode, source..." HBox.hgrow="ALWAYS"/>
+                        <Label text="Status" styleClass="small-label"/>
+                        <ComboBox fx:id="jobsStatusFilterBox" prefWidth="130.0"/>
+                        <CheckBox fx:id="jobsActiveModuleOnlyBox" text="Active module only" selected="true"/>
                         <Button fx:id="refreshJobsButton" text="Refresh" onAction="#onRefreshJobs"/>
-                        <Button fx:id="replayJobButton" text="Replay selected" onAction="#onReplaySelectedJob"/>
-                        <Button fx:id="removeJobButton" text="Remove" onAction="#onRemoveSelectedJob"/>
                       </children>
                     </HBox>
-
-                    <TableView fx:id="jobHistoryTable" VBox.vgrow="ALWAYS">
-                      <columns>
-                        <TableColumn fx:id="jobIdColumn" text="Job" prefWidth="130.0"/>
-                        <TableColumn fx:id="jobStatusColumn" text="Status" prefWidth="90.0"/>
-                        <TableColumn fx:id="jobModeColumn" text="Mode" prefWidth="95.0"/>
-                        <TableColumn fx:id="jobSourceColumn" text="Source" prefWidth="110.0"/>
-                        <TableColumn fx:id="jobCreatedColumn" text="Created" prefWidth="110.0"/>
-                      </columns>
-                    </TableView>
-
-                    <Label text="Selected job details" styleClass="section-title"/>
-                    <TextArea fx:id="jobDetailArea" editable="false" wrapText="true" prefRowCount="8" VBox.vgrow="SOMETIMES"/>
+                    <Label fx:id="jobsInfoLabel" text="Showing 0 jobs." styleClass="small-label"/>
                   </VBox>
+
+                  <HBox spacing="10.0" VBox.vgrow="ALWAYS">
+                    <children>
+                      <VBox spacing="8.0" styleClass="card-pane" HBox.hgrow="ALWAYS" VBox.vgrow="ALWAYS">
+                        <padding><Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/></padding>
+                        <Label text="Jobs list" styleClass="section-title"/>
+                        <TableView fx:id="jobHistoryTable" VBox.vgrow="ALWAYS">
+                          <columns>
+                            <TableColumn fx:id="jobIdColumn" text="Job" prefWidth="150.0"/>
+                            <TableColumn fx:id="jobStatusColumn" text="Status" prefWidth="110.0"/>
+                            <TableColumn fx:id="jobModeColumn" text="Module" prefWidth="170.0"/>
+                            <TableColumn fx:id="jobSourceColumn" text="Source" prefWidth="130.0"/>
+                            <TableColumn fx:id="jobCreatedColumn" text="Created" prefWidth="160.0"/>
+                          </columns>
+                        </TableView>
+                      </VBox>
+
+                      <VBox spacing="8.0" styleClass="card-pane" HBox.hgrow="ALWAYS" VBox.vgrow="ALWAYS">
+                        <padding><Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/></padding>
+                        <HBox spacing="8.0" alignment="CENTER_LEFT">
+                          <children>
+                            <Label text="Selected job details" styleClass="section-title"/>
+                            <Region HBox.hgrow="ALWAYS"/>
+                            <Button fx:id="replayJobButton" text="Replay selected" onAction="#onReplaySelectedJob"/>
+                            <Button fx:id="removeJobButton" text="Remove" onAction="#onRemoveSelectedJob"/>
+                          </children>
+                        </HBox>
+                        <TextArea fx:id="jobDetailArea" editable="false" wrapText="true" prefRowCount="14" VBox.vgrow="ALWAYS"/>
+                      </VBox>
+                    </children>
+                  </HBox>
+                </VBox>
+              </Tab>
+
+              <Tab fx:id="operationsTab" text="Operations">
+                <VBox spacing="10.0">
+                  <padding><Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/></padding>
+
+                  <VBox spacing="8.0" styleClass="card-pane">
+                    <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                    <HBox spacing="8.0" alignment="CENTER_LEFT">
+                      <children>
+                        <Label text="Unified operations center" styleClass="section-title"/>
+                        <Region HBox.hgrow="ALWAYS"/>
+                        <Label text="Status" styleClass="small-label"/>
+                        <Label fx:id="operationsStatusLabel" text="Ready" styleClass="status-value"/>
+                        <Button fx:id="operationsRefreshDiagnosticsButton" text="Refresh diagnostics" onAction="#onRefreshOperationsDiagnostics"/>
+                        <Button fx:id="operationsOpenMonitorButton" text="Open monitor" onAction="#onOpenMonitor"/>
+                      </children>
+                    </HBox>
+                    <Label fx:id="operationsMetricsLabel" text="Diagnostics snapshot unavailable." styleClass="small-label" wrapText="true"/>
+                  </VBox>
+
+                  <HBox spacing="10.0" VBox.vgrow="ALWAYS">
+                    <children>
+                      <VBox spacing="8.0" styleClass="card-pane" HBox.hgrow="ALWAYS" VBox.vgrow="ALWAYS">
+                        <padding><Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/></padding>
+                        <Label text="Jobs queue" styleClass="section-title"/>
+                        <TableView fx:id="operationsJobsTable" VBox.vgrow="ALWAYS">
+                          <columns>
+                            <TableColumn fx:id="operationsJobIdColumn" text="Job" prefWidth="140.0"/>
+                            <TableColumn fx:id="operationsJobStatusColumn" text="Status" prefWidth="100.0"/>
+                            <TableColumn fx:id="operationsJobModeColumn" text="Module" prefWidth="160.0"/>
+                            <TableColumn fx:id="operationsJobCreatedColumn" text="Created" prefWidth="150.0"/>
+                          </columns>
+                        </TableView>
+                      </VBox>
+                      <VBox spacing="8.0" styleClass="card-pane" HBox.hgrow="ALWAYS" VBox.vgrow="ALWAYS">
+                        <padding><Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/></padding>
+                        <Label text="Live logs (filtered)" styleClass="section-title"/>
+                        <TextArea fx:id="operationsLogsArea" editable="false" wrapText="true" VBox.vgrow="ALWAYS"/>
+                      </VBox>
+                      <VBox spacing="8.0" styleClass="card-pane" HBox.hgrow="ALWAYS" VBox.vgrow="ALWAYS">
+                        <padding><Insets top="10.0" right="10.0" bottom="10.0" left="10.0"/></padding>
+                        <Label text="Diagnostics details" styleClass="section-title"/>
+                        <TextArea fx:id="operationsDiagnosticsArea" editable="false" wrapText="true" VBox.vgrow="ALWAYS"/>
+                      </VBox>
+                    </children>
+                  </HBox>
                 </VBox>
               </Tab>
 
@@ -554,9 +677,25 @@
                         <Insets top="8.0" right="8.0" bottom="8.0" left="8.0"/>
                       </padding>
 
+                      <VBox spacing="8.0" styleClass="card-pane">
+                        <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                        <Label text="Settings scope" styleClass="section-title"/>
+                        <HBox spacing="8.0" alignment="CENTER_LEFT">
+                          <children>
+                            <Label text="Active module"/>
+                            <ComboBox fx:id="settingsModuleBox" prefWidth="240.0" onAction="#onSettingsModuleChanged"/>
+                            <Button fx:id="settingsLoadModuleButton" text="Load module state" onAction="#onLoadSettingsModule"/>
+                            <Button fx:id="settingsResetModuleDefaultsButton" text="Reset defaults" onAction="#onResetSettingsModuleDefaults"/>
+                            <Region HBox.hgrow="ALWAYS"/>
+                            <Label text="Search" styleClass="small-label"/>
+                            <TextField fx:id="settingsSearchField" promptText="theme, runtime, model, language..." prefWidth="280.0"/>
+                          </children>
+                        </HBox>
+                      </VBox>
+
                       <VBox fx:id="settingsAppearanceCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
-                        <Label text="Appearance" styleClass="section-title"/>
+                        <Label text="Global - Appearance" styleClass="section-title"/>
                         <GridPane hgap="10.0" vgap="8.0">
                           <columnConstraints>
                             <ColumnConstraints minWidth="170.0" prefWidth="180.0"/>
@@ -570,24 +709,24 @@
 
                       <VBox fx:id="settingsRuntimeCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
-                        <Label text="Runtime maintenance" styleClass="section-title"/>
+                        <Label text="Global - Runtime &amp; Paths" styleClass="section-title"/>
                         <Label text="Use repair when runtime dependencies or models are broken. This re-runs online setup and may download several GB. Restart app after success." wrapText="true" styleClass="small-label"/>
                         <HBox spacing="8.0">
                           <children>
                             <Button fx:id="settingsRepairRuntimeButton" text="Repair runtime" onAction="#onRepairRuntime"/>
+                            <Button text="Open app data" onAction="#onOpenData"/>
+                            <Button text="Open output" onAction="#onOpenOutput"/>
                           </children>
                         </HBox>
                       </VBox>
 
                       <VBox fx:id="settingsCoreCard" spacing="8.0" styleClass="card-pane">
                         <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
-                        <Label fx:id="settingsScopeLabel" text="Core processing - active module" styleClass="section-title"/>
-                        <HBox fx:id="settingsModuleScopeRow" spacing="8.0" alignment="CENTER_LEFT" visible="false" managed="false">
+                        <Label fx:id="settingsScopeLabel" text="Module settings - active module" styleClass="section-title"/>
+                        <HBox fx:id="settingsModuleScopeRow" spacing="8.0" alignment="CENTER_LEFT" visible="true" managed="true">
                           <children>
                             <Label text="Settings module"/>
-                            <ComboBox fx:id="settingsModuleBox" prefWidth="240.0" onAction="#onSettingsModuleChanged"/>
-                            <Button fx:id="settingsLoadModuleButton" text="Load module state" onAction="#onLoadSettingsModule"/>
-                            <Button fx:id="settingsResetModuleDefaultsButton" text="Reset defaults" onAction="#onResetSettingsModuleDefaults"/>
+                            <Label text="Controlled by scope panel above." styleClass="small-label"/>
                           </children>
                         </HBox>
                         <HBox fx:id="settingsPresetRow" spacing="8.0" alignment="CENTER_LEFT">
@@ -654,10 +793,8 @@
               </Tab>
             </tabs>
           </TabPane>
-
-                </VBox>
               </children>
-            </HBox>
+            </VBox>
           </children>
         </StackPane>
       </children>
