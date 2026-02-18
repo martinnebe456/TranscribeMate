@@ -1422,6 +1422,7 @@ public class MainController {
             activeProjectRoot = null;
             activeEditedFilePath = null;
             refreshActiveProjectLabels();
+            refreshJobsSilently();
             return;
         }
 
@@ -1460,6 +1461,7 @@ public class MainController {
         activeEditedFilePath = null;
         applyActiveProjectToRunFields();
         refreshActiveProjectLabels();
+        refreshJobsSilently();
         if (persist) {
             saveWorkspaceState();
         }
@@ -3786,6 +3788,19 @@ public class MainController {
         ObjectNode params = mapper.createObjectNode();
         params.put("module", activeModule);
 
+        ObjectNode project = params.putObject("project");
+        ProjectWorkspace activeWorkspace = projectsById.get(activeProjectId);
+        if (activeWorkspace != null && activeProjectRoot != null) {
+            Path projectRoot = activeProjectRoot.toAbsolutePath().normalize();
+            project.put("project_id", activeWorkspace.projectId());
+            project.put("name", activeWorkspace.name());
+            project.put("root_dir", projectRoot.toString());
+            project.put("input_dir", projectRoot.resolve("input").toString());
+            project.put("output_dir", projectRoot.resolve("output").toString());
+            project.put("jobs_dir", projectRoot.resolve("jobs").toString());
+            project.put("timeline_path", projectRoot.resolve("jobs").resolve("timeline.jsonl").toString());
+        }
+
         ObjectNode source = params.putObject("source");
         source.put("mode", safeValue(sourceModeBox));
         source.put("path", trimToEmpty(localPathField.getText()));
@@ -4070,6 +4085,9 @@ public class MainController {
         if (schema.jobsFilterModule()) {
             params.put("module_id", activeModule);
         }
+        if (!trimToEmpty(activeProjectId).isBlank()) {
+            params.put("project_id", trimToEmpty(activeProjectId));
+        }
 
         backendClient.sendRequest("list_jobs", params)
                 .thenAccept(result -> Platform.runLater(() -> {
@@ -4097,12 +4115,16 @@ public class MainController {
                     refreshJobsButton.setDisable(false);
 
                     if (verbose) {
+                        String projectHint = trimToEmpty(activeProjectId).isBlank()
+                                ? ""
+                                : " | project=" + trimToEmpty(activeProjectId);
                         addUserLog(
                                 "INFO",
                                 "Job history refreshed for "
                                         + moduleLabel(activeModule)
                                         + ". Jobs: "
                                         + jobsById.size()
+                                        + projectHint
                         );
                     }
                 }))

@@ -86,10 +86,12 @@ Transport is newline-delimited JSON (`\n`-terminated objects).
 ## `list_jobs` params (optional)
 ```json
 {
-  "module_id": "speaker_transcribe"
+  "module_id": "speaker_transcribe",
+  "project_id": "hrapp_brainstorming"
 }
 ```
 - `module_id` (or alias `module`) filters returned jobs to one module.
+- `project_id` filters returned jobs to one workspace project.
 
 ## `run_pipeline` params shape (simplified)
 ```json
@@ -143,6 +145,15 @@ Transport is newline-delimited JSON (`\n`-terminated objects).
     "max_speakers": 0,
     "include_unmapped_speakers": true,
     "speaker_prefix_in_srt": true
+  },
+  "project": {
+    "project_id": "hrapp_brainstorming",
+    "name": "HRAPP Brainstorming",
+    "root_dir": "C:/Users/name/AppData/Local/TranscribeMate/workspace/projects/hrapp_brainstorming",
+    "input_dir": "C:/Users/name/AppData/Local/TranscribeMate/workspace/projects/hrapp_brainstorming/input",
+    "output_dir": "C:/Users/name/AppData/Local/TranscribeMate/workspace/projects/hrapp_brainstorming/output",
+    "jobs_dir": "C:/Users/name/AppData/Local/TranscribeMate/workspace/projects/hrapp_brainstorming/jobs",
+    "timeline_path": "C:/Users/name/AppData/Local/TranscribeMate/workspace/projects/hrapp_brainstorming/jobs/timeline.jsonl"
   },
   "conference_meta": {}
 }
