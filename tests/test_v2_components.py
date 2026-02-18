@@ -19,6 +19,11 @@ def _base_payload(module: str = "offline_transcribe") -> dict:
         "subtitles": {"mode": "soft"},
         "text": {},
         "diarization": {"enabled": False, "backend": "local_cluster_accurate"},
+        "project": {
+            "project_id": "project-default",
+            "name": "Project Default",
+            "root_dir": ".",
+        },
     }
 
 

@@ -2,9 +2,11 @@ import builtins
 import json
 from pathlib import Path
 
+import pytest
+
 from transcribemate.core.types import SpeakerTurn, TranscriptSegment, TranscriptionResult
 from transcribemate.pipeline.diarize import build_speaker_sidecar, load_speaker_sidecar, save_speaker_sidecar
-from transcribemate.v2.backend.models import PipelineRequest
+from transcribemate.v2.backend.models import PipelineRequest, RequestValidationError
 from transcribemate.v2.backend.protocol import EventMessage
 from transcribemate.v2.backend.service import BackendService, JobRecord
 
@@ -25,6 +27,11 @@ def _payload(*, output_mode: str = "txt_only") -> dict:
         "subtitles": {"mode": "soft"},
         "text": {},
         "diarization": {},
+        "project": {
+            "project_id": "project-default",
+            "name": "Project Default",
+            "root_dir": ".",
+        },
     }
 
 
@@ -307,3 +314,58 @@ def test_project_job_timeline_is_persisted(tmp_path):
     assert timeline_rows[0]["event"] == "job.progress"
     assert timeline_rows[0]["project_id"] == "project-alpha"
     assert timeline_rows[0]["overall_pct"] == 42.0
+
+
+def test_run_pipeline_rejects_parallel_job(tmp_path):
+    svc = BackendService(emit_event=lambda _: None)
+    active_payload = _payload(output_mode="txt_only")
+    active_payload["project"] = {
+        "project_id": "project-alpha",
+        "name": "Project Alpha",
+        "root_dir": str(tmp_path / "alpha"),
+    }
+    active_request = PipelineRequest.from_payload(active_payload)
+    svc._jobs["active-job"] = JobRecord(
+        job_id="active-job",
+        request=active_request,
+        created_at="2026-02-17T10:00:00+00:00",
+        status="running",
+    )
+
+    queued_payload = _payload(output_mode="txt_only")
+    queued_payload["project"] = {
+        "project_id": "project-beta",
+        "name": "Project Beta",
+        "root_dir": str(tmp_path / "beta"),
+    }
+
+    with pytest.raises(RequestValidationError) as exc:
+        svc.handle_request("run_pipeline", queued_payload)
+
+    assert exc.value.code == "job_limit_reached"
+
+
+def test_project_job_logs_are_persisted(tmp_path):
+    svc = BackendService(emit_event=lambda _: None)
+    payload = _payload(output_mode="txt_only")
+    payload["project"] = {
+        "project_id": "project-logs",
+        "name": "Project Logs",
+        "root_dir": str(tmp_path),
+    }
+    request = PipelineRequest.from_payload(payload)
+    record = JobRecord(
+        job_id="job-logs",
+        request=request,
+        created_at="2026-02-17T10:00:00+00:00",
+        status="running",
+    )
+
+    svc._on_job_log(record, "[INFO] Testing project log persistence.")
+
+    project_log = tmp_path / "logs" / "project.log"
+    job_log = tmp_path / "logs" / "job-logs.log"
+    assert project_log.is_file()
+    assert job_log.is_file()
+    assert "job-logs" in project_log.read_text(encoding="utf-8")
+    assert "Testing project log persistence" in job_log.read_text(encoding="utf-8")
