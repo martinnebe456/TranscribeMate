@@ -7,12 +7,15 @@ import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.transcribemate.v2.fx.modules.core.ModuleComponent;
 import com.transcribemate.v2.fx.modules.core.ModuleFlowSpec;
+import com.transcribemate.v2.fx.modules.core.ModuleUiSchemaSpec;
 import com.transcribemate.v2.fx.modules.registry.ModuleRegistry;
 import javafx.animation.KeyFrame;
+import javafx.animation.PauseTransition;
 import javafx.animation.Timeline;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import javafx.collections.transformation.FilteredList;
 import javafx.fxml.FXML;
 import javafx.geometry.Insets;
 import javafx.scene.Scene;
@@ -121,7 +124,7 @@ public class MainController {
     private static final String WORKSPACE_META_FILE = "workspace.json";
     private static final String WORKSPACE_PROJECTS_DIR = "projects";
     private static final long EDITOR_MAX_BYTES = 2L * 1024L * 1024L;
-    private static final Set<String> UI_SCHEMA_TABS = Set.of("run", "advanced", "diarization", "logs", "jobs", "settings");
+    private static final Set<String> UI_SCHEMA_TABS = Set.of("run", "advanced", "diarization", "logs", "jobs", "operations", "settings");
     private static final Set<String> SUPPORTED_MODULES = ModuleRegistry.supportedModuleIds();
     private static final List<String> WHISPER_MODELS = List.of(
             "tiny",
@@ -147,7 +150,8 @@ public class MainController {
 
     private record LogEntry(LocalDateTime timestamp, String level, LogCategory category, String message) {
         String format() {
-            return "[" + timestamp.format(TS_FMT) + "] [" + level + "] " + message;
+            String categoryLabel = category == LogCategory.USER ? "USER" : "TECH";
+            return "[" + timestamp.format(TS_FMT) + "] [" + level + "] [" + categoryLabel + "] " + message;
         }
     }
 
@@ -219,6 +223,9 @@ public class MainController {
     private Button navModulesButton;
 
     @FXML
+    private Button navOperationsButton;
+
+    @FXML
     private Button navJobsButton;
 
     @FXML
@@ -279,7 +286,7 @@ public class MainController {
     private VBox filesPane;
 
     @FXML
-    private HBox modulesPane;
+    private VBox modulesPane;
 
     @FXML
     private Button projectCreateButton;
@@ -333,6 +340,18 @@ public class MainController {
     private Button filesSaveEditorButton;
 
     @FXML
+    private Button filesHistoryButton;
+
+    @FXML
+    private TextField filesSearchField;
+
+    @FXML
+    private CheckBox filesSearchContentBox;
+
+    @FXML
+    private Label filesDropHintLabel;
+
+    @FXML
     private TableView<WorkspaceFileRow> projectFilesTable;
 
     @FXML
@@ -352,6 +371,9 @@ public class MainController {
 
     @FXML
     private TextArea projectFileEditorArea;
+
+    @FXML
+    private TextArea projectSidecarPreviewArea;
 
     @FXML
     private CheckBox simpleModeBox;
@@ -396,6 +418,9 @@ public class MainController {
     private Tab jobsTab;
 
     @FXML
+    private Tab operationsTab;
+
+    @FXML
     private Tab settingsTab;
 
     @FXML
@@ -408,10 +433,52 @@ public class MainController {
     private Label runModuleContextLabel;
 
     @FXML
+    private VBox runWizardCard;
+
+    @FXML
     private VBox runOutputCard;
 
     @FXML
+    private VBox runPreflightCard;
+
+    @FXML
     private VBox simpleHintCard;
+
+    @FXML
+    private Button wizardSourceButton;
+
+    @FXML
+    private Button wizardOutputButton;
+
+    @FXML
+    private Button wizardPreflightButton;
+
+    @FXML
+    private Button wizardRunButton;
+
+    @FXML
+    private Label wizardStateLabel;
+
+    @FXML
+    private Label preflightSummaryLabel;
+
+    @FXML
+    private Button applyPreflightFixButton;
+
+    @FXML
+    private TableView<PreflightCheckRow> preflightChecksTable;
+
+    @FXML
+    private TableColumn<PreflightCheckRow, String> preflightNameColumn;
+
+    @FXML
+    private TableColumn<PreflightCheckRow, String> preflightStatusColumn;
+
+    @FXML
+    private TableColumn<PreflightCheckRow, String> preflightMessageColumn;
+
+    @FXML
+    private TableColumn<PreflightCheckRow, String> preflightFixColumn;
 
     @FXML
     private Label sourceModeLabel;
@@ -660,6 +727,21 @@ public class MainController {
     private CheckBox showTechnicalLogsBox;
 
     @FXML
+    private CheckBox logsErrorsOnlyBox;
+
+    @FXML
+    private CheckBox logsPauseAutoscrollBox;
+
+    @FXML
+    private CheckBox logsLinkSelectedJobBox;
+
+    @FXML
+    private Label logsJobFilterLabel;
+
+    @FXML
+    private Label logsStreamInfoLabel;
+
+    @FXML
     private TextArea filteredLogArea;
 
     @FXML
@@ -688,6 +770,51 @@ public class MainController {
 
     @FXML
     private TextArea jobDetailArea;
+
+    @FXML
+    private TextField jobsSearchField;
+
+    @FXML
+    private ComboBox<String> jobsStatusFilterBox;
+
+    @FXML
+    private CheckBox jobsActiveModuleOnlyBox;
+
+    @FXML
+    private Label jobsInfoLabel;
+
+    @FXML
+    private Label operationsStatusLabel;
+
+    @FXML
+    private Label operationsMetricsLabel;
+
+    @FXML
+    private Button operationsRefreshDiagnosticsButton;
+
+    @FXML
+    private Button operationsOpenMonitorButton;
+
+    @FXML
+    private TableView<JobRow> operationsJobsTable;
+
+    @FXML
+    private TableColumn<JobRow, String> operationsJobIdColumn;
+
+    @FXML
+    private TableColumn<JobRow, String> operationsJobStatusColumn;
+
+    @FXML
+    private TableColumn<JobRow, String> operationsJobModeColumn;
+
+    @FXML
+    private TableColumn<JobRow, String> operationsJobCreatedColumn;
+
+    @FXML
+    private TextArea operationsLogsArea;
+
+    @FXML
+    private TextArea operationsDiagnosticsArea;
 
     @FXML
     private Button startButton;
@@ -747,6 +874,12 @@ public class MainController {
     private Button settingsModuleButton;
 
     @FXML
+    private ComboBox<String> moduleSwitcherBox;
+
+    @FXML
+    private Button modulePreviousButton;
+
+    @FXML
     private ComboBox<String> themeBox;
 
     @FXML
@@ -774,6 +907,9 @@ public class MainController {
     private Button settingsDeletePresetButton;
 
     @FXML
+    private TextField settingsSearchField;
+
+    @FXML
     private Label moduleFlowTitleLabel;
 
     @FXML
@@ -785,11 +921,14 @@ public class MainController {
     private final ObjectMapper mapper = new ObjectMapper();
     private final JsonPreferences preferences = new JsonPreferences(mapper, resolveRuntimeAppDataDir().resolve("config.json"));
     private final ObservableList<JobRow> jobRows = FXCollections.observableArrayList();
+    private final FilteredList<JobRow> filteredJobRows = new FilteredList<>(jobRows, row -> true);
     private final Map<String, JobRow> jobsById = new LinkedHashMap<>();
     private final ObservableList<ProjectRow> projectRows = FXCollections.observableArrayList();
     private final Map<String, ProjectWorkspace> projectsById = new LinkedHashMap<>();
     private final ObservableList<WorkspaceFileRow> dashboardRecentFileRows = FXCollections.observableArrayList();
     private final ObservableList<WorkspaceFileRow> workspaceFileRows = FXCollections.observableArrayList();
+    private final FilteredList<WorkspaceFileRow> filteredWorkspaceFileRows = new FilteredList<>(workspaceFileRows, row -> true);
+    private final ObservableList<PreflightCheckRow> preflightCheckRows = FXCollections.observableArrayList();
     private final ObservableList<SpeakerProfileRow> speakerProfiles = FXCollections.observableArrayList();
     private final ObservableList<ConferenceFileRow> conferenceFiles = FXCollections.observableArrayList();
     private final List<LogEntry> allLogs = new ArrayList<>();
@@ -808,17 +947,33 @@ public class MainController {
     private Path activeProjectRoot;
     private Path activeEditedFilePath;
     private Path lastDiarizationSidecarPath;
+    private String loadedEditedFileText = "";
+    private boolean editorDirty;
+    private boolean editorAutoSaving;
+    private long editorLastSaveMillis;
+    private boolean lastPreflightOk;
+    private long lastPreflightMillis;
     private boolean themeInitializing;
     private boolean restoringPreferences;
     private boolean runtimeBootstrapRunning;
     private boolean settingsModuleSelectorSync;
+    private boolean moduleSwitcherSync;
     private String moduleFlowActionKey = "";
     private String activeModule = MODULE_OFFLINE;
-    private String activeSection = SECTION_MODULES;
+    private String previousModule = "";
+    private String selectedJobLogFilter = "";
+    private String activeSection = SECTION_DASHBOARD;
+    private boolean settingsAppearanceAllowed = true;
+    private boolean settingsRuntimeAllowed = true;
+    private boolean settingsCoreAllowed = true;
+    private boolean settingsModuleFlowAllowed = true;
+    private boolean settingsModuleScopeAllowed = true;
+    private boolean settingsPresetRowAllowed = true;
     private long etaAnchorMillis = -1L;
     private double etaAnchorPercent = -1.0;
 
     private Timeline jobsRefreshTimeline;
+    private PauseTransition editorAutosavePause;
     private SystemMonitorWindow monitorWindow;
 
     private final Consumer<JsonNode> eventListener = this::handleBackendEvent;
@@ -829,13 +984,38 @@ public class MainController {
         setupCombosAndDefaults();
         setupTables();
         setupFilters();
+        setupEditorBehaviors();
+        setupFileDropImport();
         setupModuleNavigation();
         setupShellNavigation();
         setupThemeSelector();
         setupSettingsModuleSelector();
+        setupModuleSwitcher();
         initializeWorkspace();
 
-        sourceModeBox.valueProperty().addListener((obs, oldVal, newVal) -> updateSourceModeUi());
+        sourceModeBox.valueProperty().addListener((obs, oldVal, newVal) -> {
+            updateSourceModeUi();
+            invalidatePreflightState();
+            updateWizardState();
+        });
+        if (localPathField != null) {
+            localPathField.textProperty().addListener((obs, oldVal, newVal) -> {
+                invalidatePreflightState();
+                updateWizardState();
+            });
+        }
+        if (youtubeUrlField != null) {
+            youtubeUrlField.textProperty().addListener((obs, oldVal, newVal) -> {
+                invalidatePreflightState();
+                updateWizardState();
+            });
+        }
+        if (outputDirField != null) {
+            outputDirField.textProperty().addListener((obs, oldVal, newVal) -> {
+                invalidatePreflightState();
+                updateWizardState();
+            });
+        }
         translateSubtitlesBox.selectedProperty().addListener((obs, oldVal, newVal) -> updateTranslationUi());
         jobHistoryTable.getSelectionModel().selectedItemProperty().addListener((obs, oldItem, newItem) -> onJobSelectionChanged(newItem));
 
@@ -856,6 +1036,8 @@ public class MainController {
         if (replayJobButton != null) {
             replayJobButton.setDisable(true);
         }
+        // Always open shell on Dashboard after startup initialization.
+        showShellSection(SECTION_DASHBOARD);
     }
 
     public void initBackend(BackendClient client) {
@@ -887,6 +1069,7 @@ public class MainController {
                                     ? "Backend connected."
                                     : "Backend connected (version " + backendVersion + ")."
                     );
+                    refreshOperationsDiagnostics();
                 }))
                 .exceptionally(ex -> {
                     Platform.runLater(() -> addTechnicalLog("ERROR", "Backend capability check failed: " + ex.getMessage()));
@@ -1030,15 +1213,15 @@ public class MainController {
         );
         scene.getAccelerators().put(
                 new KeyCodeCombination(KeyCode.DIGIT4, KeyCombination.CONTROL_DOWN),
-                () -> Platform.runLater(() -> selectModule(logsTab))
+                () -> Platform.runLater(() -> selectModule(operationsTab != null ? operationsTab : logsTab))
         );
         scene.getAccelerators().put(
                 new KeyCodeCombination(KeyCode.DIGIT5, KeyCombination.CONTROL_DOWN),
-                () -> Platform.runLater(() -> selectModule(jobsTab))
+                () -> Platform.runLater(() -> selectModule(settingsTab))
         );
         scene.getAccelerators().put(
                 new KeyCodeCombination(KeyCode.DIGIT6, KeyCombination.CONTROL_DOWN),
-                () -> Platform.runLater(() -> selectModule(settingsTab))
+                () -> Platform.runLater(() -> selectModule(operationsTab != null ? operationsTab : settingsTab))
         );
     }
 
@@ -1085,15 +1268,22 @@ public class MainController {
     }
 
     @FXML
-    private void onNavJobs() {
+    private void onNavOperations() {
         showShellSection(SECTION_MODULES);
-        selectModule(jobsTab);
+        if (operationsTab != null) {
+            selectModule(operationsTab);
+        }
+        refreshOperationsDiagnostics();
+    }
+
+    @FXML
+    private void onNavJobs() {
+        onNavOperations();
     }
 
     @FXML
     private void onNavLogs() {
-        showShellSection(SECTION_MODULES);
-        selectModule(logsTab);
+        onNavOperations();
     }
 
     @FXML
@@ -1335,17 +1525,561 @@ public class MainController {
             addUserLog("WARN", "Selected file is not editable in the built-in editor.");
             return;
         }
-        try {
-            Files.writeString(activeEditedFilePath, projectFileEditorArea.getText(), StandardCharsets.UTF_8);
-            if (fileEditorStatusLabel != null) {
-                fileEditorStatusLabel.setText("Saved: " + activeEditedFilePath.getFileName());
-            }
-            refreshProjectFiles();
-            addUserLog("SUCCESS", "File saved: " + activeEditedFilePath.getFileName());
-        } catch (Exception ex) {
-            addTechnicalLog("ERROR", "Failed to save file: " + ex.getMessage());
-            addUserLog("ERROR", "Save failed.");
+        saveEditedFileWithHistory(true);
+    }
+
+    @FXML
+    private void onOpenEditedFileHistory() {
+        if (activeProjectRoot == null || activeEditedFilePath == null) {
+            addUserLog("WARN", "Select an editable file first.");
+            return;
         }
+        try {
+            Path relative = activeProjectRoot.relativize(activeEditedFilePath.toAbsolutePath().normalize());
+            String safe = relative.toString().replace('\\', '_').replace('/', '_');
+            Path historyRoot = activeProjectRoot.resolve(".history");
+            Files.createDirectories(historyRoot);
+            Path target = historyRoot.resolve(safe);
+            Files.createDirectories(target);
+            openPath(target.toString());
+        } catch (Exception ex) {
+            addTechnicalLog("ERROR", "Failed to open history folder: " + ex.getMessage());
+            addUserLog("ERROR", "Cannot open history folder.");
+        }
+    }
+
+    @FXML
+    private void onWizardSource() {
+        selectModule(runTab);
+        requestFocusIfVisible(sourceModeBox, localPathField, youtubeUrlField);
+    }
+
+    @FXML
+    private void onWizardOutput() {
+        selectModule(runTab);
+        requestFocusIfVisible(outputDirField);
+    }
+
+    @FXML
+    private void onWizardPreflight() {
+        onRunPreflight();
+    }
+
+    @FXML
+    private void onWizardRun() {
+        onStart();
+    }
+
+    @FXML
+    private void onApplySelectedPreflightFix() {
+        PreflightCheckRow selected = preflightChecksTable == null ? null : preflightChecksTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            addUserLog("WARN", "Select a preflight check first.");
+            return;
+        }
+        applyPreflightQuickFix(selected);
+    }
+
+    @FXML
+    private void onRefreshOperationsDiagnostics() {
+        refreshOperationsDiagnostics();
+    }
+
+    private void setupEditorBehaviors() {
+        if (projectFileEditorArea != null) {
+            editorAutosavePause = new PauseTransition(Duration.seconds(1.2));
+            editorAutosavePause.setOnFinished(event -> saveEditedFileWithHistory(false));
+            projectFileEditorArea.textProperty().addListener((obs, oldVal, newVal) -> {
+                if (editorAutoSaving || activeEditedFilePath == null || !projectFileEditorArea.isEditable()) {
+                    return;
+                }
+                editorDirty = !Objects.equals(trimToEmpty(newVal), trimToEmpty(loadedEditedFileText));
+                updateEditorButtonsState();
+                updateWizardState();
+                if (editorDirty && editorAutosavePause != null) {
+                    editorAutosavePause.playFromStart();
+                }
+            });
+        }
+        updateEditorButtonsState();
+        updateWizardState();
+    }
+
+    private void setupFileDropImport() {
+        if (filesPane != null) {
+            filesPane.setOnDragOver(event -> {
+                if (event.getDragboard().hasFiles() && activeProjectRoot != null) {
+                    event.acceptTransferModes(javafx.scene.input.TransferMode.COPY);
+                }
+                event.consume();
+            });
+            filesPane.setOnDragDropped(event -> {
+                boolean success = false;
+                if (activeProjectRoot != null && event.getDragboard().hasFiles()) {
+                    List<Path> dropped = event.getDragboard().getFiles().stream()
+                            .filter(Objects::nonNull)
+                            .map(File::toPath)
+                            .toList();
+                    int imported = importPathsToProjectInput(dropped);
+                    if (imported > 0) {
+                        refreshProjectFiles();
+                        addUserLog("INFO", "Imported from drag & drop: " + imported + " file(s).");
+                        success = true;
+                    }
+                }
+                event.setDropCompleted(success);
+                event.consume();
+            });
+        }
+        if (projectFilesTable != null) {
+            projectFilesTable.setOnDragOver(event -> {
+                if (event.getDragboard().hasFiles() && activeProjectRoot != null) {
+                    event.acceptTransferModes(javafx.scene.input.TransferMode.COPY);
+                }
+                event.consume();
+            });
+            projectFilesTable.setOnDragDropped(event -> {
+                boolean success = false;
+                if (activeProjectRoot != null && event.getDragboard().hasFiles()) {
+                    List<Path> dropped = event.getDragboard().getFiles().stream()
+                            .filter(Objects::nonNull)
+                            .map(File::toPath)
+                            .toList();
+                    int imported = importPathsToProjectInput(dropped);
+                    if (imported > 0) {
+                        refreshProjectFiles();
+                        addUserLog("INFO", "Imported from drag & drop: " + imported + " file(s).");
+                        success = true;
+                    }
+                }
+                event.setDropCompleted(success);
+                event.consume();
+            });
+        }
+    }
+
+    private int importPathsToProjectInput(List<Path> paths) {
+        if (activeProjectRoot == null || paths == null || paths.isEmpty()) {
+            return 0;
+        }
+        Path inputRoot = activeProjectRoot.resolve("input");
+        int copied = 0;
+        try {
+            Files.createDirectories(inputRoot);
+        } catch (Exception ex) {
+            addTechnicalLog("ERROR", "Cannot prepare input folder: " + ex.getMessage());
+            return 0;
+        }
+
+        for (Path candidate : paths) {
+            if (candidate == null) {
+                continue;
+            }
+            Path absolute = candidate.toAbsolutePath().normalize();
+            if (!Files.exists(absolute)) {
+                continue;
+            }
+            try {
+                if (Files.isDirectory(absolute)) {
+                    String dirName = trimToEmpty(absolute.getFileName() == null ? "" : absolute.getFileName().toString());
+                    Path baseTarget = dirName.isBlank() ? inputRoot : inputRoot.resolve(dirName);
+                    try (Stream<Path> stream = Files.walk(absolute)) {
+                        List<Path> files = stream.filter(Files::isRegularFile).toList();
+                        for (Path file : files) {
+                            Path rel = absolute.relativize(file);
+                            Path destination = resolveUniqueTargetPath(baseTarget.resolve(rel).getParent(), rel.getFileName());
+                            Files.createDirectories(destination.getParent());
+                            Files.copy(file, destination, StandardCopyOption.REPLACE_EXISTING);
+                            copied += 1;
+                        }
+                    }
+                } else if (Files.isRegularFile(absolute)) {
+                    Path destination = resolveUniqueTargetPath(inputRoot, absolute.getFileName());
+                    Files.copy(absolute, destination, StandardCopyOption.REPLACE_EXISTING);
+                    copied += 1;
+                }
+            } catch (Exception ex) {
+                addTechnicalLog("WARN", "Drag import failed for '" + absolute + "': " + ex.getMessage());
+            }
+        }
+        return copied;
+    }
+
+    private void requestFocusIfVisible(Node... nodes) {
+        if (nodes == null) {
+            return;
+        }
+        for (Node node : nodes) {
+            if (node != null && node.isVisible() && !node.isDisable()) {
+                node.requestFocus();
+                return;
+            }
+        }
+    }
+
+    private void updateEditorButtonsState() {
+        boolean running = startButton != null && startButton.isDisabled();
+        boolean editable = activeEditedFilePath != null && projectFileEditorArea != null && projectFileEditorArea.isEditable();
+        if (filesSaveEditorButton != null) {
+            filesSaveEditorButton.setDisable(running || !editable || !editorDirty);
+        }
+        if (filesHistoryButton != null) {
+            filesHistoryButton.setDisable(running || activeEditedFilePath == null || activeProjectRoot == null);
+        }
+        if (fileEditorStatusLabel != null && activeEditedFilePath != null && editable) {
+            if (editorDirty) {
+                fileEditorStatusLabel.setText("Editing*: " + activeEditedFilePath.getFileName() + " (unsaved changes)");
+            } else if (trimToEmpty(fileEditorStatusLabel.getText()).startsWith("Editing*")) {
+                fileEditorStatusLabel.setText("Editing: " + activeEditedFilePath.getFileName());
+            }
+        }
+        if (applyPreflightFixButton != null) {
+            updatePreflightFixButtonState();
+        }
+    }
+
+    private void maybeAutosaveEditedFile() {
+        if (!editorDirty) {
+            return;
+        }
+        saveEditedFileWithHistory(false);
+    }
+
+    private boolean saveEditedFileWithHistory(boolean userInitiated) {
+        if (activeEditedFilePath == null || projectFileEditorArea == null || !projectFileEditorArea.isEditable()) {
+            return false;
+        }
+        String content = projectFileEditorArea.getText();
+        if (!userInitiated && !editorDirty) {
+            return true;
+        }
+        if (Objects.equals(trimToEmpty(content), trimToEmpty(loadedEditedFileText))) {
+            editorDirty = false;
+            updateEditorButtonsState();
+            return true;
+        }
+
+        try {
+            boolean createSnapshot = userInitiated || (System.currentTimeMillis() - editorLastSaveMillis) > 60_000L;
+            if (createSnapshot) {
+                snapshotEditedFile(activeEditedFilePath);
+            }
+
+            editorAutoSaving = true;
+            Files.writeString(activeEditedFilePath, content, StandardCharsets.UTF_8);
+            editorAutoSaving = false;
+            loadedEditedFileText = content;
+            editorDirty = false;
+            editorLastSaveMillis = System.currentTimeMillis();
+
+            if (fileEditorStatusLabel != null) {
+                String mode = userInitiated ? "Saved" : "Auto-saved";
+                fileEditorStatusLabel.setText(mode + ": " + activeEditedFilePath.getFileName());
+            }
+            if (userInitiated) {
+                addUserLog("SUCCESS", "File saved: " + activeEditedFilePath.getFileName());
+            }
+            refreshWorkspaceFileFilter();
+            updateEditorButtonsState();
+            return true;
+        } catch (Exception ex) {
+            editorAutoSaving = false;
+            addTechnicalLog("ERROR", "Failed to save file: " + ex.getMessage());
+            if (userInitiated) {
+                addUserLog("ERROR", "Save failed.");
+            }
+            return false;
+        }
+    }
+
+    private void snapshotEditedFile(Path editedFile) throws Exception {
+        if (editedFile == null || activeProjectRoot == null || !Files.exists(editedFile)) {
+            return;
+        }
+        Path rel = activeProjectRoot.relativize(editedFile.toAbsolutePath().normalize());
+        String safe = rel.toString().replace('\\', '_').replace('/', '_');
+        if (safe.isBlank()) {
+            safe = "unknown";
+        }
+        Path snapshotDir = activeProjectRoot.resolve(".history").resolve(safe);
+        Files.createDirectories(snapshotDir);
+        String stamp = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").format(LocalDateTime.now());
+        Path snapshot = snapshotDir.resolve(stamp + ".bak");
+        Files.copy(editedFile, snapshot, StandardCopyOption.REPLACE_EXISTING);
+    }
+
+    private void loadRelatedSidecarPreview(Path selectedPath) {
+        if (projectSidecarPreviewArea == null) {
+            return;
+        }
+        if (selectedPath == null) {
+            projectSidecarPreviewArea.setText("");
+            return;
+        }
+
+        Path sidecar = null;
+        String fileName = trimToEmpty(selectedPath.getFileName() == null ? "" : selectedPath.getFileName().toString());
+        if (fileName.endsWith(".diarization.json")) {
+            sidecar = selectedPath;
+        } else {
+            String stem = fileName;
+            int dot = stem.lastIndexOf('.');
+            if (dot > 0) {
+                stem = stem.substring(0, dot);
+            }
+            Path sibling = selectedPath.resolveSibling(stem + ".diarization.json");
+            if (Files.isRegularFile(sibling)) {
+                sidecar = sibling;
+            }
+        }
+
+        if (sidecar == null || !Files.isRegularFile(sidecar)) {
+            projectSidecarPreviewArea.setText("No related diarization sidecar found for selected file.");
+            return;
+        }
+
+        try {
+            String raw = Files.readString(sidecar, StandardCharsets.UTF_8);
+            JsonNode node = mapper.readTree(raw);
+            String preview = mapper.writerWithDefaultPrettyPrinter().writeValueAsString(node);
+            if (preview.length() > 200_000) {
+                preview = preview.substring(0, 200_000) + "\n...\n(truncated)";
+            }
+            projectSidecarPreviewArea.setText(preview);
+            projectSidecarPreviewArea.positionCaret(0);
+        } catch (Exception ex) {
+            projectSidecarPreviewArea.setText("Failed to preview sidecar: " + ex.getMessage());
+        }
+    }
+
+    private void refreshWorkspaceFileFilter() {
+        String query = filesSearchField == null ? "" : trimToEmpty(filesSearchField.getText()).toLowerCase(Locale.ROOT);
+        boolean searchContent = filesSearchContentBox != null && filesSearchContentBox.isSelected();
+        filteredWorkspaceFileRows.setPredicate(row -> matchesWorkspaceFileFilter(row, query, searchContent));
+        if (filesDropHintLabel != null) {
+            filesDropHintLabel.setText(
+                    query.isBlank()
+                            ? "Tip: drag and drop files/folders here to import into project input."
+                            : "Filtered files: " + filteredWorkspaceFileRows.size() + " of " + workspaceFileRows.size()
+            );
+        }
+    }
+
+    private boolean matchesWorkspaceFileFilter(WorkspaceFileRow row, String query, boolean searchContent) {
+        if (row == null) {
+            return false;
+        }
+        if (query == null || query.isBlank()) {
+            return true;
+        }
+        String rel = trimToEmpty(row.getRelativePath()).toLowerCase(Locale.ROOT);
+        String abs = trimToEmpty(row.getAbsolutePath()).toLowerCase(Locale.ROOT);
+        if (rel.contains(query) || abs.contains(query)) {
+            return true;
+        }
+        if (!searchContent || query.length() < 3) {
+            return false;
+        }
+        try {
+            Path path = Path.of(row.getAbsolutePath());
+            if (!isEditableTextFile(path) || safeSize(path) > EDITOR_MAX_BYTES) {
+                return false;
+            }
+            String text = Files.readString(path, StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
+            return text.contains(query);
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private void updatePreflightFixButtonState() {
+        if (applyPreflightFixButton == null) {
+            return;
+        }
+        PreflightCheckRow selected = preflightChecksTable == null ? null : preflightChecksTable.getSelectionModel().getSelectedItem();
+        boolean running = startButton != null && startButton.isDisabled();
+        boolean enabled = selected != null && !trimToEmpty(selected.getSuggestedFix()).isBlank();
+        applyPreflightFixButton.setDisable(running || !enabled);
+    }
+
+    private String suggestedFixForCheck(String name, String status) {
+        String normalizedName = trimToEmpty(name);
+        String normalizedStatus = trimToEmpty(status).toLowerCase(Locale.ROOT);
+        if (!"fail".equals(normalizedStatus) && !"warn".equals(normalizedStatus)) {
+            return "";
+        }
+        return switch (normalizedName) {
+            case "source_local" -> "Select valid local source";
+            case "source_youtube_url" -> "Provide valid YouTube URL";
+            case "output_dir" -> "Choose writable output folder";
+            case "gpu_request" -> "Switch to CPU mode";
+            case "ffmpeg", "torch", "edge_tts", "yt_dlp", "diarization_runtime" -> "Run Repair runtime";
+            default -> "Review module settings";
+        };
+    }
+
+    private void applyPreflightQuickFix(PreflightCheckRow row) {
+        if (row == null) {
+            return;
+        }
+        String name = trimToEmpty(row.getName());
+        switch (name) {
+            case "source_local" -> {
+                onBrowseLocalPath();
+                addUserLog("INFO", "Quick fix: select valid local input.");
+            }
+            case "source_youtube_url" -> {
+                requestFocusIfVisible(youtubeUrlField);
+                addUserLog("INFO", "Quick fix: provide valid YouTube URL.");
+            }
+            case "output_dir" -> {
+                onBrowseOutputDir();
+                addUserLog("INFO", "Quick fix: select writable output directory.");
+            }
+            case "gpu_request" -> {
+                if (useGpuBox != null) {
+                    useGpuBox.setSelected(false);
+                }
+                addUserLog("WARN", "Quick fix: switched to CPU mode (disable Prefer GPU).");
+            }
+            case "ffmpeg", "torch", "edge_tts", "yt_dlp", "diarization_runtime" -> {
+                addUserLog("INFO", "Quick fix: launching runtime repair.");
+                onRepairRuntime();
+            }
+            default -> addUserLog("INFO", "No automatic fix for '" + name + "'. " + trimToEmpty(row.getSuggestedFix()));
+        }
+    }
+
+    private void updateWizardState() {
+        boolean sourceReady;
+        if ("youtube".equalsIgnoreCase(safeValue(sourceModeBox))) {
+            sourceReady = !trimToEmpty(youtubeUrlField == null ? "" : youtubeUrlField.getText()).isBlank();
+        } else {
+            sourceReady = !trimToEmpty(localPathField == null ? "" : localPathField.getText()).isBlank();
+        }
+        boolean outputReady = !trimToEmpty(outputDirField == null ? "" : outputDirField.getText()).isBlank();
+        String preflightState = lastPreflightMillis <= 0L
+                ? "not run"
+                : (lastPreflightOk ? "passed" : "has issues");
+        if (wizardStateLabel != null) {
+            wizardStateLabel.setText(
+                    "Source: " + (sourceReady ? "ready" : "missing")
+                            + " | Output: " + (outputReady ? "ready" : "missing")
+                            + " | Preflight: " + preflightState
+            );
+        }
+    }
+
+    private void invalidatePreflightState() {
+        lastPreflightMillis = 0L;
+        lastPreflightOk = false;
+        if (preflightSummaryLabel != null && preflightCheckRows.isEmpty()) {
+            preflightSummaryLabel.setText("Preflight not executed yet.");
+        }
+    }
+
+    private void refreshOperationsDiagnostics() {
+        if (operationsStatusLabel != null) {
+            operationsStatusLabel.setText("Refreshing...");
+        }
+        if (backendClient == null) {
+            if (operationsStatusLabel != null) {
+                operationsStatusLabel.setText("Backend offline");
+            }
+            if (operationsMetricsLabel != null) {
+                operationsMetricsLabel.setText("Diagnostics unavailable: backend is not connected.");
+            }
+            return;
+        }
+
+        CompletableFuture<JsonNode> healthFuture = backendClient.sendRequest("health");
+        CompletableFuture<JsonNode> metricsFuture = backendClient.sendRequest("get_system_metrics");
+        healthFuture.thenCombine(metricsFuture, (health, metrics) -> List.of(health, metrics))
+                .thenAccept(result -> Platform.runLater(() -> applyOperationsDiagnostics(result.get(0), result.get(1))))
+                .exceptionally(ex -> {
+                    Platform.runLater(() -> {
+                        if (operationsStatusLabel != null) {
+                            operationsStatusLabel.setText("Error");
+                        }
+                        if (operationsMetricsLabel != null) {
+                            operationsMetricsLabel.setText("Diagnostics refresh failed: " + rootMessage(ex));
+                        }
+                        if (operationsDiagnosticsArea != null) {
+                            operationsDiagnosticsArea.setText("Refresh failed: " + rootMessage(ex));
+                        }
+                    });
+                    return null;
+                });
+    }
+
+    private void applyOperationsDiagnostics(JsonNode health, JsonNode metrics) {
+        if (operationsStatusLabel != null) {
+            operationsStatusLabel.setText("Updated");
+        }
+        String gpuName = trimToEmpty(metrics.path("gpu_name").asText(""));
+        String driverModel = trimToEmpty(metrics.path("nvidia_driver_model").asText(""));
+        String vram = formatMetric(metrics.path("vram_used_gb").asDouble(Double.NaN), "GB")
+                + " / "
+                + formatMetric(metrics.path("vram_total_gb").asDouble(Double.NaN), "GB");
+        String cpu = formatMetric(metrics.path("cpu_percent").asDouble(Double.NaN), "%");
+        String ram = formatMetric(metrics.path("ram_percent").asDouble(Double.NaN), "%");
+        String gpuUtil = formatMetric(metrics.path("gpu_percent").asDouble(Double.NaN), "%");
+        String gpuMem = formatMetric(metrics.path("gpu_memory_percent").asDouble(Double.NaN), "%");
+
+        if (operationsMetricsLabel != null) {
+            operationsMetricsLabel.setText(
+                    "CPU " + cpu
+                            + " | RAM " + ram
+                            + " | GPU " + gpuUtil
+                            + " | VRAM " + gpuMem
+                            + " (" + vram + ")"
+                            + (gpuName.isBlank() ? "" : " | " + gpuName)
+                            + (driverModel.isBlank() ? "" : " | " + driverModel)
+            );
+        }
+
+        if (operationsDiagnosticsArea != null) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("Health\n");
+            sb.append("- Torch: ").append(health.path("torch_ok").asBoolean(false) ? "OK" : "Missing").append("\n");
+            sb.append("- CUDA ready: ").append(health.path("torch_cuda").asBoolean(false)).append("\n");
+            sb.append("- Active jobs: ").append(health.path("active_jobs").asInt(0)).append("\n");
+            sb.append("- Driver model: ").append(trimToEmpty(health.path("nvidia_driver_model").asText("-"))).append("\n\n");
+            sb.append("System metrics\n");
+            sb.append("- GPU temperature: ").append(formatMetric(metrics.path("gpu_temp_c").asDouble(Double.NaN), "C")).append("\n");
+            sb.append("- GPU power: ").append(formatMetric(metrics.path("gpu_power_w").asDouble(Double.NaN), "W")).append("\n");
+            sb.append("- VRAM free: ").append(formatMetric(metrics.path("vram_free_gb").asDouble(Double.NaN), "GB")).append("\n");
+            sb.append("- Compute apps:\n");
+            JsonNode apps = metrics.path("gpu_compute_apps");
+            if (apps.isArray() && apps.size() > 0) {
+                int count = Math.min(8, apps.size());
+                for (int i = 0; i < count; i++) {
+                    JsonNode app = apps.get(i);
+                    sb.append("  • pid ").append(app.path("pid").asText("?"))
+                            .append(" | ").append(trimToEmpty(app.path("process_name").asText("?")))
+                            .append(" | ").append(formatMetric(app.path("used_memory_gb").asDouble(Double.NaN), "GB"))
+                            .append("\n");
+                }
+            } else {
+                sb.append("  • no active compute processes\n");
+            }
+            operationsDiagnosticsArea.setText(sb.toString());
+            operationsDiagnosticsArea.positionCaret(0);
+        }
+    }
+
+    private String formatMetric(double value, String unit) {
+        if (Double.isNaN(value) || Double.isInfinite(value)) {
+            return "n/a";
+        }
+        String suffix = trimToEmpty(unit);
+        if (suffix.equals("%")) {
+            return String.format(Locale.ROOT, "%.0f%%", value);
+        }
+        if (suffix.isBlank()) {
+            return String.format(Locale.ROOT, "%.2f", value);
+        }
+        return String.format(Locale.ROOT, "%.2f %s", value, suffix);
     }
 
     private void initializeWorkspace() {
@@ -1484,15 +2218,21 @@ public class MainController {
     private void refreshProjectFiles() {
         workspaceFileRows.clear();
         activeEditedFilePath = null;
+        loadedEditedFileText = "";
+        editorDirty = false;
         if (projectFileEditorArea != null) {
             projectFileEditorArea.setText("");
             projectFileEditorArea.setEditable(false);
+        }
+        if (projectSidecarPreviewArea != null) {
+            projectSidecarPreviewArea.setText("");
         }
 
         if (activeProjectRoot == null) {
             if (fileEditorStatusLabel != null) {
                 fileEditorStatusLabel.setText("Preview/editor: no active project selected.");
             }
+            refreshWorkspaceFileFilter();
             return;
         }
 
@@ -1513,6 +2253,7 @@ public class MainController {
         if (fileEditorStatusLabel != null) {
             fileEditorStatusLabel.setText("Preview/editor: select a text file (.txt/.srt/.json/.md) from the table.");
         }
+        refreshWorkspaceFileFilter();
         if (projectFilesTable != null) {
             projectFilesTable.getSelectionModel().clearSelection();
         }
@@ -1804,19 +2545,26 @@ public class MainController {
         if (filesOpenSelectedButton != null) {
             filesOpenSelectedButton.setDisable(running || selected == null);
         }
-        if (filesSaveEditorButton != null) {
-            filesSaveEditorButton.setDisable(true);
-        }
+        updateEditorButtonsState();
+
+        // Prevent losing edits when changing selection.
+        maybeAutosaveEditedFile();
 
         if (selected == null) {
             activeEditedFilePath = null;
+            loadedEditedFileText = "";
+            editorDirty = false;
             if (projectFileEditorArea != null) {
                 projectFileEditorArea.setText("");
                 projectFileEditorArea.setEditable(false);
             }
+            if (projectSidecarPreviewArea != null) {
+                projectSidecarPreviewArea.setText("");
+            }
             if (fileEditorStatusLabel != null) {
                 fileEditorStatusLabel.setText("Preview/editor: select a text file (.txt/.srt/.json/.md) from the table.");
             }
+            updateEditorButtonsState();
             return;
         }
 
@@ -1825,9 +2573,15 @@ public class MainController {
             path = Path.of(selected.getAbsolutePath()).toAbsolutePath().normalize();
         } catch (Exception ex) {
             activeEditedFilePath = null;
+            loadedEditedFileText = "";
+            editorDirty = false;
             if (fileEditorStatusLabel != null) {
                 fileEditorStatusLabel.setText("Invalid file path: " + selected.getAbsolutePath());
             }
+            if (projectSidecarPreviewArea != null) {
+                projectSidecarPreviewArea.setText("");
+            }
+            updateEditorButtonsState();
             return;
         }
 
@@ -1840,6 +2594,10 @@ public class MainController {
             if (fileEditorStatusLabel != null) {
                 fileEditorStatusLabel.setText("Not editable here: " + path.getFileName());
             }
+            loadedEditedFileText = "";
+            editorDirty = false;
+            loadRelatedSidecarPreview(path);
+            updateEditorButtonsState();
             return;
         }
 
@@ -1852,11 +2610,16 @@ public class MainController {
             if (fileEditorStatusLabel != null) {
                 fileEditorStatusLabel.setText("Large file, preview blocked: " + path.getFileName());
             }
+            loadedEditedFileText = "";
+            editorDirty = false;
+            loadRelatedSidecarPreview(path);
+            updateEditorButtonsState();
             return;
         }
 
         try {
             String text = Files.readString(path, StandardCharsets.UTF_8);
+            loadedEditedFileText = text;
             if (projectFileEditorArea != null) {
                 projectFileEditorArea.setText(text);
                 projectFileEditorArea.positionCaret(0);
@@ -1866,19 +2629,25 @@ public class MainController {
                 fileEditorStatusLabel.setText("Editing: " + path.getFileName());
             }
             activeEditedFilePath = path;
-            if (filesSaveEditorButton != null) {
-                filesSaveEditorButton.setDisable(false);
-            }
+            editorDirty = false;
+            loadRelatedSidecarPreview(path);
+            updateEditorButtonsState();
         } catch (Exception ex) {
             addTechnicalLog("WARN", "Unable to read project file: " + ex.getMessage());
             if (projectFileEditorArea != null) {
                 projectFileEditorArea.setText("Failed to load file.");
                 projectFileEditorArea.setEditable(false);
             }
+            if (projectSidecarPreviewArea != null) {
+                projectSidecarPreviewArea.setText("");
+            }
             if (fileEditorStatusLabel != null) {
                 fileEditorStatusLabel.setText("Read failed: " + path.getFileName());
             }
             activeEditedFilePath = null;
+            loadedEditedFileText = "";
+            editorDirty = false;
+            updateEditorButtonsState();
         }
     }
 
@@ -2037,6 +2806,34 @@ public class MainController {
             }
             throw ex;
         }
+    }
+
+    @FXML
+    private void onModuleSwitcherChanged() {
+        if (moduleSwitcherSync) {
+            return;
+        }
+        String selectedLabel = safeValue(moduleSwitcherBox);
+        String moduleId = moduleLabelsToId.get(selectedLabel);
+        if (moduleId == null || moduleId.isBlank()) {
+            return;
+        }
+        activateModule(moduleId, true, true);
+    }
+
+    @FXML
+    private void onModulePrevious() {
+        String raw = trimToEmpty(previousModule);
+        if (raw.isBlank()) {
+            addUserLog("WARN", "No previous module available.");
+            return;
+        }
+        String candidate = normalizeModuleId(raw);
+        if (Objects.equals(candidate, activeModule)) {
+            addUserLog("WARN", "No previous module available.");
+            return;
+        }
+        activateModule(candidate, true, true);
     }
 
     @FXML
@@ -2738,9 +3535,22 @@ public class MainController {
     @FXML
     private void onClearLogs() {
         allLogs.clear();
-        userLogArea.clear();
-        technicalLogArea.clear();
-        filteredLogArea.clear();
+        if (userLogArea != null) {
+            userLogArea.clear();
+        }
+        if (technicalLogArea != null) {
+            technicalLogArea.clear();
+        }
+        if (filteredLogArea != null) {
+            filteredLogArea.clear();
+        }
+        selectedJobLogFilter = "";
+        if (logsJobFilterLabel != null) {
+            logsJobFilterLabel.setText("Log scope: all jobs");
+        }
+        if (logsStreamInfoLabel != null) {
+            logsStreamInfoLabel.setText("Showing 0 entries.");
+        }
         addUserLog("INFO", "Logs cleared.");
     }
 
@@ -2921,7 +3731,7 @@ public class MainController {
             row.setLectureDate(trimToEmpty(event.getNewValue()));
         });
 
-        jobHistoryTable.setItems(jobRows);
+        jobHistoryTable.setItems(filteredJobRows);
         jobIdColumn.setCellValueFactory(new PropertyValueFactory<>("jobId"));
         jobStatusColumn.setCellValueFactory(new PropertyValueFactory<>("status"));
         jobModeColumn.setCellValueFactory(new PropertyValueFactory<>("mode"));
@@ -2939,13 +3749,23 @@ public class MainController {
         }
 
         if (projectFilesTable != null) {
-            projectFilesTable.setItems(workspaceFileRows);
+            projectFilesTable.setItems(filteredWorkspaceFileRows);
             projectFileRelativePathColumn.setCellValueFactory(new PropertyValueFactory<>("relativePath"));
             projectFileTypeColumn.setCellValueFactory(new PropertyValueFactory<>("type"));
             projectFileSizeColumn.setCellValueFactory(new PropertyValueFactory<>("size"));
             projectFileModifiedColumn.setCellValueFactory(new PropertyValueFactory<>("modified"));
             projectFilesTable.getSelectionModel().selectedItemProperty()
                     .addListener((obs, oldItem, newItem) -> onWorkspaceFileSelectionChanged(newItem));
+        }
+
+        if (preflightChecksTable != null) {
+            preflightChecksTable.setItems(preflightCheckRows);
+            preflightNameColumn.setCellValueFactory(new PropertyValueFactory<>("name"));
+            preflightStatusColumn.setCellValueFactory(new PropertyValueFactory<>("status"));
+            preflightMessageColumn.setCellValueFactory(new PropertyValueFactory<>("message"));
+            preflightFixColumn.setCellValueFactory(new PropertyValueFactory<>("suggestedFix"));
+            preflightChecksTable.getSelectionModel().selectedItemProperty()
+                    .addListener((obs, oldItem, newItem) -> updatePreflightFixButtonState());
         }
 
         if (dashboardRecentFilesTable != null) {
@@ -2955,6 +3775,20 @@ public class MainController {
             dashboardRecentModifiedColumn.setCellValueFactory(new PropertyValueFactory<>("modified"));
             dashboardRecentFilesTable.getSelectionModel().selectedItemProperty()
                     .addListener((obs, oldItem, newItem) -> onDashboardRecentSelectionChanged(newItem));
+        }
+
+        if (operationsJobsTable != null) {
+            operationsJobsTable.setItems(filteredJobRows);
+            operationsJobIdColumn.setCellValueFactory(new PropertyValueFactory<>("jobId"));
+            operationsJobStatusColumn.setCellValueFactory(new PropertyValueFactory<>("status"));
+            operationsJobModeColumn.setCellValueFactory(new PropertyValueFactory<>("mode"));
+            operationsJobCreatedColumn.setCellValueFactory(new PropertyValueFactory<>("created"));
+            operationsJobsTable.getSelectionModel().selectedItemProperty()
+                    .addListener((obs, oldVal, newVal) -> {
+                        if (newVal != null && jobHistoryTable != null) {
+                            jobHistoryTable.getSelectionModel().select(newVal);
+                        }
+                    });
         }
     }
 
@@ -2966,10 +3800,57 @@ public class MainController {
         logLevelFilterBox.valueProperty().addListener((obs, oldVal, newVal) -> refreshFilteredLogs());
         showUserLogsBox.selectedProperty().addListener((obs, oldVal, newVal) -> refreshFilteredLogs());
         showTechnicalLogsBox.selectedProperty().addListener((obs, oldVal, newVal) -> refreshFilteredLogs());
+        if (logsErrorsOnlyBox != null) {
+            logsErrorsOnlyBox.selectedProperty().addListener((obs, oldVal, newVal) -> refreshFilteredLogs());
+        }
+        if (logsPauseAutoscrollBox != null) {
+            logsPauseAutoscrollBox.selectedProperty().addListener((obs, oldVal, newVal) -> refreshFilteredLogs());
+        }
+        if (logsLinkSelectedJobBox != null) {
+            logsLinkSelectedJobBox.selectedProperty().addListener((obs, oldVal, newVal) -> refreshFilteredLogs());
+        }
+
+        if (jobsStatusFilterBox != null) {
+            jobsStatusFilterBox.setItems(FXCollections.observableArrayList(
+                    "ALL",
+                    "queued",
+                    "running",
+                    "completed",
+                    "failed",
+                    "cancelled"
+            ));
+            jobsStatusFilterBox.getSelectionModel().select("ALL");
+            jobsStatusFilterBox.valueProperty().addListener((obs, oldVal, newVal) -> refreshJobFilters());
+        }
+        if (jobsSearchField != null) {
+            jobsSearchField.textProperty().addListener((obs, oldVal, newVal) -> refreshJobFilters());
+        }
+        if (jobsActiveModuleOnlyBox != null) {
+            jobsActiveModuleOnlyBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
+                refreshJobsSilently();
+                refreshJobFilters();
+            });
+        }
+
+        if (settingsSearchField != null) {
+            settingsSearchField.textProperty().addListener((obs, oldVal, newVal) -> applySettingsSearchFilter());
+        }
+
+        if (filesSearchField != null) {
+            filesSearchField.textProperty().addListener((obs, oldVal, newVal) -> refreshWorkspaceFileFilter());
+        }
+        if (filesSearchContentBox != null) {
+            filesSearchContentBox.selectedProperty().addListener((obs, oldVal, newVal) -> refreshWorkspaceFileFilter());
+        }
     }
 
     private void setupModuleNavigation() {
-        mainTabs.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> syncModuleButtons());
+        mainTabs.getSelectionModel().selectedItemProperty().addListener((obs, oldTab, newTab) -> {
+            syncModuleButtons();
+            if (newTab == operationsTab) {
+                refreshOperationsDiagnostics();
+            }
+        });
     }
 
     private void setupShellNavigation() {
@@ -3000,6 +3881,22 @@ public class MainController {
         }
         settingsModuleSelectorSync = false;
         refreshModulePresetList(null);
+    }
+
+    private void setupModuleSwitcher() {
+        if (moduleSwitcherBox == null) {
+            return;
+        }
+        moduleSwitcherSync = true;
+        moduleSwitcherBox.setItems(FXCollections.observableArrayList(moduleLabelsToId.keySet()));
+        String currentLabel = moduleLabel(activeModule);
+        if (moduleSwitcherBox.getItems().contains(currentLabel)) {
+            moduleSwitcherBox.getSelectionModel().select(currentLabel);
+        } else if (!moduleSwitcherBox.getItems().isEmpty()) {
+            moduleSwitcherBox.getSelectionModel().selectFirst();
+        }
+        moduleSwitcherSync = false;
+        updateModulePreviousButtonState();
     }
 
     @FXML
@@ -3251,9 +4148,12 @@ public class MainController {
         boolean projectsActive = SECTION_PROJECTS.equals(activeSection);
         boolean filesActive = SECTION_FILES.equals(activeSection);
         boolean modulesActive = SECTION_MODULES.equals(activeSection)
+                && selectedTab != operationsTab
                 && selectedTab != jobsTab
                 && selectedTab != logsTab
                 && selectedTab != settingsTab;
+        boolean operationsActive = SECTION_MODULES.equals(activeSection)
+                && (selectedTab == operationsTab || selectedTab == jobsTab || selectedTab == logsTab);
         boolean jobsActive = SECTION_MODULES.equals(activeSection) && selectedTab == jobsTab;
         boolean logsActive = SECTION_MODULES.equals(activeSection) && selectedTab == logsTab;
         boolean settingsActive = SECTION_MODULES.equals(activeSection) && selectedTab == settingsTab;
@@ -3262,6 +4162,7 @@ public class MainController {
         setMainNavButtonActive(navProjectsButton, projectsActive);
         setMainNavButtonActive(navFilesButton, filesActive);
         setMainNavButtonActive(navModulesButton, modulesActive);
+        setMainNavButtonActive(navOperationsButton, operationsActive);
         setMainNavButtonActive(navJobsButton, jobsActive);
         setMainNavButtonActive(navLogsButton, logsActive);
         setMainNavButtonActive(navSettingsButton, settingsActive);
@@ -3349,6 +4250,9 @@ public class MainController {
         String normalized = normalizeModuleId(moduleId);
         Tab selectedTab = mainTabs.getSelectionModel().getSelectedItem();
         if (!Objects.equals(activeModule, normalized)) {
+            if (!trimToEmpty(activeModule).isBlank()) {
+                previousModule = activeModule;
+            }
             saveActiveModuleState();
             activeModule = normalized;
             preferences.put(PREF_ACTIVE_MODULE, activeModule);
@@ -3361,15 +4265,23 @@ public class MainController {
         }
         enforceModuleConstraints(activeModule, keepCurrentTab);
         if (keepCurrentTab && selectedTab != null) {
-            selectModule(selectedTab);
+            if (SECTION_MODULES.equals(activeSection)) {
+                selectModule(selectedTab);
+            } else {
+                mainTabs.getSelectionModel().select(selectedTab);
+            }
         }
         syncModuleButtons();
         syncSettingsModuleSelector();
+        syncModuleSwitcher();
         refreshModulePresetList(trimToEmpty(preferences.get(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, "")));
         updateModuleSpecificUiVisibility();
         updateModuleContextLabels();
         applyActiveProjectToRunFields();
+        invalidatePreflightState();
+        updateWizardState();
         refreshJobsSilently();
+        refreshJobFilters();
 
         if (logChange) {
             addUserLog("INFO", "Module selected: " + moduleLabel(activeModule));
@@ -3422,6 +4334,31 @@ public class MainController {
         settingsModuleSelectorSync = false;
     }
 
+    private void syncModuleSwitcher() {
+        if (moduleSwitcherBox == null) {
+            return;
+        }
+        String activeLabel = moduleLabel(activeModule);
+        if (Objects.equals(moduleSwitcherBox.getValue(), activeLabel)) {
+            updateModulePreviousButtonState();
+            return;
+        }
+        moduleSwitcherSync = true;
+        moduleSwitcherBox.getSelectionModel().select(activeLabel);
+        moduleSwitcherSync = false;
+        updateModulePreviousButtonState();
+    }
+
+    private void updateModulePreviousButtonState() {
+        if (modulePreviousButton == null) {
+            return;
+        }
+        boolean running = startButton != null && startButton.isDisabled();
+        boolean hasPrevious = !trimToEmpty(previousModule).isBlank()
+                && !Objects.equals(normalizeModuleId(previousModule), activeModule);
+        modulePreviousButton.setDisable(running || !hasPrevious);
+    }
+
     private void updateTranslationUi() {
         boolean canToggle = MODULE_YOUTUBE_SUBS.equals(activeModule);
         boolean forceEnabled = MODULE_YOUTUBE_DUB.equals(activeModule);
@@ -3439,21 +4376,30 @@ public class MainController {
         setTabVisible(runTab, schema.allowsTab("run"));
         setTabVisible(advancedTab, schema.allowsTab("advanced"));
         setTabVisible(diarizationTab, schema.allowsTab("diarization"));
-        setTabVisible(logsTab, schema.allowsTab("logs"));
-        setTabVisible(jobsTab, schema.allowsTab("jobs"));
+        // Legacy per-tab logs/jobs are hidden from the main flow.
+        // Operations tab is the unified surface for logs, jobs and diagnostics.
+        setTabVisible(logsTab, false);
+        setTabVisible(jobsTab, false);
+        boolean operationsAllowed = schema.allowsTab("operations")
+                || schema.allowsTab("logs")
+                || schema.allowsTab("jobs");
+        setTabVisible(operationsTab, operationsAllowed);
         setTabVisible(settingsTab, schema.allowsTab("settings"));
 
         setNodeVisibleManaged(runModuleContextCard, schema.allowsTab("run"));
+        setNodeVisibleManaged(runWizardCard, schema.allowsTab("run"));
+        setNodeVisibleManaged(runPreflightCard, schema.allowsTab("run"));
         setNodeVisibleManaged(runSourceCard, schema.allowsSection("run_source_card"));
         setNodeVisibleManaged(runOutputCard, schema.allowsSection("run_output_card"));
         setNodeVisibleManaged(advancedSubtitlesCard, schema.allowsSection("advanced_subtitles_card"));
         setNodeVisibleManaged(advancedConferenceCard, schema.allowsSection("advanced_conference_card"));
-        setNodeVisibleManaged(settingsAppearanceCard, schema.allowsSection("settings_appearance_card"));
-        setNodeVisibleManaged(settingsRuntimeCard, schema.allowsSection("settings_runtime_card"));
-        setNodeVisibleManaged(settingsCoreCard, schema.allowsSection("settings_core_card"));
-        setNodeVisibleManaged(settingsModuleFlowCard, schema.allowsSection("settings_module_flow_card"));
-        setNodeVisibleManaged(settingsModuleScopeRow, false);
-        setNodeVisibleManaged(settingsPresetRow, schema.allowsSection("settings_preset_row"));
+        settingsAppearanceAllowed = schema.allowsSection("settings_appearance_card");
+        settingsRuntimeAllowed = schema.allowsSection("settings_runtime_card");
+        settingsCoreAllowed = schema.allowsSection("settings_core_card");
+        settingsModuleFlowAllowed = schema.allowsSection("settings_module_flow_card");
+        settingsModuleScopeAllowed = schema.allowsSection("settings_module_scope_row");
+        settingsPresetRowAllowed = schema.allowsSection("settings_preset_row");
+        applySettingsSearchFilter();
 
         boolean showSimpleHint = simpleModeBox.isSelected() && schema.allowsSection("simple_hint_card");
         setNodeVisibleManaged(simpleHintCard, showSimpleHint);
@@ -3523,6 +4469,42 @@ public class MainController {
         setNodeVisibleManaged(settingsSpeakerModuleHintLabel, schema.allowsField("settings.speaker_hint"));
     }
 
+    private void applySettingsSearchFilter() {
+        String query = settingsSearchField == null
+                ? ""
+                : trimToEmpty(settingsSearchField.getText()).toLowerCase(Locale.ROOT);
+
+        boolean appearanceMatch = query.isBlank()
+                || containsAny(query, "theme", "appearance", "global", "ui");
+        boolean runtimeMatch = query.isBlank()
+                || containsAny(query, "runtime", "repair", "path", "output", "data");
+        boolean coreMatch = query.isBlank()
+                || containsAny(
+                query,
+                "module",
+                "model",
+                "language",
+                "batch",
+                "preset",
+                "speaker",
+                "text",
+                "split",
+                "gpu",
+                "transcript",
+                "subtitle",
+                "translation"
+        );
+        boolean flowMatch = query.isBlank()
+                || containsAny(query, "flow", "workflow", "module", "guide");
+
+        setNodeVisibleManaged(settingsAppearanceCard, settingsAppearanceAllowed && appearanceMatch);
+        setNodeVisibleManaged(settingsRuntimeCard, settingsRuntimeAllowed && runtimeMatch);
+        setNodeVisibleManaged(settingsCoreCard, settingsCoreAllowed && coreMatch);
+        setNodeVisibleManaged(settingsModuleFlowCard, settingsModuleFlowAllowed && flowMatch);
+        setNodeVisibleManaged(settingsModuleScopeRow, settingsModuleScopeAllowed && coreMatch);
+        setNodeVisibleManaged(settingsPresetRow, settingsPresetRowAllowed && coreMatch);
+    }
+
     private void setTabVisible(Tab tab, boolean visible) {
         if (tab == null || mainTabs == null) {
             return;
@@ -3560,8 +4542,11 @@ public class MainController {
         if (tab == jobsTab) {
             return 4;
         }
-        if (tab == settingsTab) {
+        if (tab == operationsTab) {
             return 5;
+        }
+        if (tab == settingsTab) {
+            return 6;
         }
         return mainTabs.getTabs().size();
     }
@@ -4228,30 +5213,48 @@ public class MainController {
         return backendClient.sendRequest("preflight_check", params)
                 .thenApply(result -> {
                     boolean ok = result.path("ok").asBoolean(false);
-                    if (verbose) {
-                        Platform.runLater(() -> {
-                            JsonNode checks = result.path("checks");
-                            if (checks.isArray()) {
-                                addUserLog("INFO", "Preflight checks:");
-                                for (JsonNode check : checks) {
-                                    String status = check.path("status").asText("-");
-                                    String name = check.path("name").asText("-");
-                                    String message = check.path("message").asText("");
-                                    String level = switch (status) {
-                                        case "fail" -> "ERROR";
-                                        case "warn" -> "WARN";
-                                        default -> "INFO";
-                                    };
-                                    addUserLog(level, " - " + name + " [" + status + "]: " + message);
-                                }
+                    JsonNode checks = result.path("checks");
+                    List<PreflightCheckRow> rows = new ArrayList<>();
+                    if (checks.isArray()) {
+                        for (JsonNode check : checks) {
+                            String status = trimToEmpty(check.path("status").asText("-"));
+                            String name = trimToEmpty(check.path("name").asText("-"));
+                            String message = trimToEmpty(check.path("message").asText(""));
+                            rows.add(new PreflightCheckRow(name, status, message, suggestedFixForCheck(name, status)));
+                        }
+                    }
+                    Platform.runLater(() -> {
+                        preflightCheckRows.setAll(rows);
+                        lastPreflightOk = ok;
+                        lastPreflightMillis = System.currentTimeMillis();
+                        if (preflightSummaryLabel != null) {
+                            long issues = rows.stream().filter(row -> "fail".equalsIgnoreCase(row.getStatus())).count();
+                            long warns = rows.stream().filter(row -> "warn".equalsIgnoreCase(row.getStatus())).count();
+                            preflightSummaryLabel.setText(
+                                    ok
+                                            ? "Preflight passed (" + rows.size() + " checks)."
+                                            : "Preflight issues: " + issues + " fail, " + warns + " warn."
+                            );
+                        }
+                        updatePreflightFixButtonState();
+                        updateWizardState();
+                        if (verbose) {
+                            addUserLog("INFO", "Preflight checks:");
+                            for (PreflightCheckRow row : rows) {
+                                String level = switch (trimToEmpty(row.getStatus()).toLowerCase(Locale.ROOT)) {
+                                    case "fail" -> "ERROR";
+                                    case "warn" -> "WARN";
+                                    default -> "INFO";
+                                };
+                                addUserLog(level, " - " + row.getName() + " [" + row.getStatus() + "]: " + row.getMessage());
                             }
                             if (ok) {
                                 addUserLog("SUCCESS", "Preflight passed.");
                             } else {
                                 addUserLog("ERROR", "Preflight found blocking issues.");
                             }
-                        });
-                    }
+                        }
+                    });
                     return ok;
                 });
     }
@@ -4289,6 +5292,9 @@ public class MainController {
                 }
                 case "job.started" -> {
                     updateJobStatus(jobId, "running");
+                    if (operationsStatusLabel != null) {
+                        operationsStatusLabel.setText("Job running");
+                    }
                     boolean affectsCurrent = false;
                     if (jobId != null && !jobId.isBlank() && (currentJobId == null || currentJobId.isBlank())) {
                         currentJobId = jobId;
@@ -4305,6 +5311,9 @@ public class MainController {
                 }
                 case "job.completed" -> {
                     updateJobStatus(jobId, "completed");
+                    if (operationsStatusLabel != null) {
+                        operationsStatusLabel.setText("Idle");
+                    }
                     JsonNode result = payload.path("result");
                     String finalOut = result.path("final_output_dir").asText("");
                     Path sidecarPath = extractDiarizationSidecarPath(result);
@@ -4329,11 +5338,15 @@ public class MainController {
                         addUserLog("INFO", withJobPrefix(jobId, "Speaker sidecar ready: " + sidecarPath));
                         promptSpeakerMapping(sidecarPath);
                     }
+                    refreshOperationsDiagnostics();
                     refreshDashboardData();
                     refreshJobsSilently();
                 }
                 case "job.failed" -> {
                     updateJobStatus(jobId, "failed");
+                    if (operationsStatusLabel != null) {
+                        operationsStatusLabel.setText("Failed");
+                    }
                     JsonNode err = payload.path("error");
                     String message = err.path("message").asText("Pipeline failed");
                     addTechnicalLog("ERROR", withJobPrefix(jobId, message));
@@ -4348,11 +5361,15 @@ public class MainController {
                         progressBar.setProgress(0.0);
                         resetEtaDisplay();
                     }
+                    refreshOperationsDiagnostics();
                     refreshDashboardData();
                     refreshJobsSilently();
                 }
                 case "job.cancelled" -> {
                     updateJobStatus(jobId, "cancelled");
+                    if (operationsStatusLabel != null) {
+                        operationsStatusLabel.setText("Cancelled");
+                    }
                     addUserLog("WARN", withJobPrefix(jobId, "Job cancelled."));
                     if (jobId != null && !jobId.isBlank() && jobId.equals(currentJobId)) {
                         setRunning(false);
@@ -4361,6 +5378,7 @@ public class MainController {
                         progressBar.setProgress(0.0);
                         resetEtaDisplay();
                     }
+                    refreshOperationsDiagnostics();
                     refreshDashboardData();
                     refreshJobsSilently();
                 }
@@ -4379,7 +5397,32 @@ public class MainController {
         if (replayJobButton != null) {
             replayJobButton.setDisable(selected == null);
         }
+        if (removeJobButton != null) {
+            removeJobButton.setDisable(selected == null);
+        }
+        if (operationsJobsTable != null && operationsJobsTable.getSelectionModel().getSelectedItem() != selected) {
+            if (selected == null) {
+                operationsJobsTable.getSelectionModel().clearSelection();
+            } else {
+                operationsJobsTable.getSelectionModel().select(selected);
+            }
+        }
+
+        selectedJobLogFilter = selected == null ? "" : shortJobId(selected.getJobId());
+        if (logsLinkSelectedJobBox != null && logsLinkSelectedJobBox.isSelected()) {
+            refreshFilteredLogs();
+        } else if (logsJobFilterLabel != null) {
+            if (trimToEmpty(selectedJobLogFilter).isBlank()) {
+                logsJobFilterLabel.setText("Log scope: all jobs");
+            } else {
+                logsJobFilterLabel.setText("Log scope: selected job [" + selectedJobLogFilter + "]");
+            }
+        }
+
         if (selected == null || backendClient == null) {
+            if (jobDetailArea != null && selected == null) {
+                jobDetailArea.setText("");
+            }
             return;
         }
 
@@ -4412,7 +5455,8 @@ public class MainController {
         refreshJobsButton.setDisable(true);
         ModuleUiSchema schema = resolveModuleUiSchema(activeModule);
         ObjectNode params = mapper.createObjectNode();
-        if (schema.jobsFilterModule()) {
+        boolean activeModuleOnly = jobsActiveModuleOnlyBox == null || jobsActiveModuleOnlyBox.isSelected();
+        if (schema.jobsFilterModule() && activeModuleOnly) {
             params.put("module_id", activeModule);
         }
         if (!trimToEmpty(activeProjectId).isBlank()) {
@@ -4473,6 +5517,59 @@ public class MainController {
         List<JobRow> sorted = new ArrayList<>(jobsById.values());
         sorted.sort(Comparator.comparing(JobRow::getCreated).reversed());
         jobRows.setAll(sorted);
+        refreshJobFilters();
+    }
+
+    private void refreshJobFilters() {
+        String query = jobsSearchField == null
+                ? ""
+                : trimToEmpty(jobsSearchField.getText()).toLowerCase(Locale.ROOT);
+        String statusFilter = jobsStatusFilterBox == null
+                ? "ALL"
+                : trimToEmpty(jobsStatusFilterBox.getValue()).toLowerCase(Locale.ROOT);
+        boolean activeOnly = jobsActiveModuleOnlyBox != null && jobsActiveModuleOnlyBox.isSelected();
+        String activeModuleLabel = moduleLabel(activeModule).toLowerCase(Locale.ROOT);
+
+        filteredJobRows.setPredicate(row -> {
+            if (row == null) {
+                return false;
+            }
+
+            if (activeOnly) {
+                String rowModule = trimToEmpty(row.getMode()).toLowerCase(Locale.ROOT);
+                if (!rowModule.equals(activeModuleLabel)) {
+                    return false;
+                }
+            }
+
+            if (!statusFilter.isBlank() && !"all".equals(statusFilter)) {
+                String rowStatus = trimToEmpty(row.getStatus()).toLowerCase(Locale.ROOT);
+                if (!rowStatus.equals(statusFilter)) {
+                    return false;
+                }
+            }
+
+            if (!query.isBlank()) {
+                String haystack = String.join(
+                                " ",
+                                trimToEmpty(row.getJobId()),
+                                trimToEmpty(row.getStatus()),
+                                trimToEmpty(row.getMode()),
+                                trimToEmpty(row.getSource()),
+                                trimToEmpty(row.getCreated())
+                        )
+                        .toLowerCase(Locale.ROOT);
+                if (!haystack.contains(query)) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+
+        if (jobsInfoLabel != null) {
+            jobsInfoLabel.setText("Showing " + filteredJobRows.size() + " of " + jobRows.size() + " jobs.");
+        }
     }
 
     private void upsertJobRow(String jobId, String status, String mode, String source, String created) {
@@ -4770,6 +5867,7 @@ public class MainController {
         playlistBox.setDisable(local);
         qualityBox.setDisable(local);
         keepOriginalsBox.setDisable(local);
+        updateWizardState();
     }
 
     private void updateTargetsFromCapabilities(JsonNode targetsNode) {
@@ -4834,188 +5932,27 @@ public class MainController {
         if (backendSchema != null) {
             return backendSchema;
         }
-        return defaultModuleUiSchema(normalized);
-    }
-
-    private ModuleUiSchema defaultModuleUiSchema(String moduleId) {
-        if (MODULE_OFFLINE.equals(moduleId)) {
-            return new ModuleUiSchema(
-                    Set.of("run", "logs", "jobs", "settings"),
-                    Set.of(
-                            "run_source_card",
-                            "run_output_card",
-                            "simple_hint_card",
-                            "settings_appearance_card",
-                            "settings_runtime_card",
-                            "settings_core_card",
-                            "settings_module_flow_card",
-                            "settings_module_scope_row",
-                            "settings_preset_row"
-                    ),
-                    Set.of(
-                            "run.local_path",
-                            "run.output_dir",
-                            "run.output_prefix",
-                            "settings.model",
-                            "settings.model_options",
-                            "settings.source_lang",
-                            "settings.summary_lang",
-                            "settings.batch_size",
-                            "settings.text_options",
-                            "settings.split_minutes"
-                    ),
-                    true
-            );
-        }
-        if (MODULE_YOUTUBE.equals(moduleId)) {
-            return new ModuleUiSchema(
-                    Set.of("run", "logs", "jobs", "settings"),
-                    Set.of(
-                            "run_source_card",
-                            "run_output_card",
-                            "simple_hint_card",
-                            "settings_appearance_card",
-                            "settings_runtime_card",
-                            "settings_core_card",
-                            "settings_module_flow_card",
-                            "settings_module_scope_row",
-                            "settings_preset_row"
-                    ),
-                    Set.of(
-                            "run.youtube_url",
-                            "run.playlist",
-                            "run.quality",
-                            "run.output_dir",
-                            "run.output_prefix",
-                            "run.keep_originals",
-                            "settings.model",
-                            "settings.model_options",
-                            "settings.source_lang",
-                            "settings.summary_lang",
-                            "settings.batch_size",
-                            "settings.text_options",
-                            "settings.split_minutes"
-                    ),
-                    true
-            );
-        }
-        if (MODULE_SPEAKER.equals(moduleId)) {
-            return new ModuleUiSchema(
-                    Set.of("run", "diarization", "logs", "jobs", "settings"),
-                    Set.of(
-                            "run_source_card",
-                            "run_output_card",
-                            "simple_hint_card",
-                            "settings_appearance_card",
-                            "settings_runtime_card",
-                            "settings_core_card",
-                            "settings_module_flow_card",
-                            "settings_module_scope_row",
-                            "settings_preset_row"
-                    ),
-                    Set.of(
-                            "run.local_path",
-                            "run.output_dir",
-                            "run.output_prefix",
-                            "settings.model",
-                            "settings.model_options",
-                            "settings.source_lang",
-                            "settings.batch_size",
-                            "settings.speaker_hint"
-                    ),
-                    true
-            );
-        }
-        if (MODULE_CONFERENCE.equals(moduleId)) {
-            return new ModuleUiSchema(
-                    Set.of("run", "advanced", "logs", "jobs", "settings"),
-                    Set.of(
-                            "run_source_card",
-                            "run_output_card",
-                            "simple_hint_card",
-                            "advanced_conference_card",
-                            "settings_appearance_card",
-                            "settings_runtime_card",
-                            "settings_core_card",
-                            "settings_module_flow_card",
-                            "settings_module_scope_row",
-                            "settings_preset_row"
-                    ),
-                    Set.of(
-                            "run.local_path",
-                            "run.output_dir",
-                            "run.output_prefix",
-                            "settings.model",
-                            "settings.model_options",
-                            "settings.source_lang",
-                            "settings.summary_lang",
-                            "settings.batch_size",
-                            "settings.text_options",
-                            "settings.split_minutes"
-                    ),
-                    true
-            );
-        }
-        if (MODULE_YOUTUBE_SUBS.equals(moduleId)) {
-            return new ModuleUiSchema(
-                    Set.of("run", "advanced", "logs", "jobs", "settings"),
-                    Set.of(
-                            "run_source_card",
-                            "run_output_card",
-                            "simple_hint_card",
-                            "advanced_subtitles_card",
-                            "settings_appearance_card",
-                            "settings_runtime_card",
-                            "settings_core_card",
-                            "settings_module_flow_card",
-                            "settings_module_scope_row",
-                            "settings_preset_row"
-                    ),
-                    Set.of(
-                            "run.youtube_url",
-                            "run.playlist",
-                            "run.quality",
-                            "run.output_dir",
-                            "run.output_prefix",
-                            "settings.model",
-                            "settings.model_options",
-                            "settings.source_lang",
-                            "settings.target_lang",
-                            "settings.batch_size"
-                    ),
-                    true
-            );
-        }
-        if (MODULE_YOUTUBE_DUB.equals(moduleId)) {
-            return new ModuleUiSchema(
-                    Set.of("run", "logs", "jobs", "settings"),
-                    Set.of(
-                            "run_source_card",
-                            "run_output_card",
-                            "simple_hint_card",
-                            "settings_appearance_card",
-                            "settings_runtime_card",
-                            "settings_core_card",
-                            "settings_module_flow_card",
-                            "settings_module_scope_row",
-                            "settings_preset_row"
-                    ),
-                    Set.of(
-                            "run.youtube_url",
-                            "run.playlist",
-                            "run.quality",
-                            "run.output_dir",
-                            "run.output_prefix",
-                            "settings.model",
-                            "settings.model_options",
-                            "settings.source_lang",
-                            "settings.target_lang",
-                            "settings.batch_size"
-                    ),
-                    true
-            );
+        ModuleComponent localComponent = moduleComponents.get(normalized);
+        if (localComponent != null) {
+            return toModuleUiSchema(localComponent.uiSchema());
         }
         return new ModuleUiSchema(Set.of(), Set.of(), Set.of(), true);
+    }
+
+    private ModuleUiSchema toModuleUiSchema(ModuleUiSchemaSpec spec) {
+        if (spec == null) {
+            return new ModuleUiSchema(Set.of(), Set.of(), Set.of(), true);
+        }
+        Set<String> tabs = new LinkedHashSet<>(spec.showTabs() == null ? Set.of() : spec.showTabs());
+        tabs.retainAll(UI_SCHEMA_TABS);
+        Set<String> sections = new LinkedHashSet<>(spec.showSections() == null ? Set.of() : spec.showSections());
+        Set<String> fields = new LinkedHashSet<>(spec.showFields() == null ? Set.of() : spec.showFields());
+        return new ModuleUiSchema(
+                Collections.unmodifiableSet(tabs),
+                Collections.unmodifiableSet(sections),
+                Collections.unmodifiableSet(fields),
+                spec.jobsFilterModule()
+        );
     }
 
     private static Set<String> parseSchemaSet(JsonNode node) {
@@ -5110,6 +6047,22 @@ public class MainController {
         jobsModuleButton.setDisable(running);
         youtubeDubModuleButton.setDisable(running);
         settingsModuleButton.setDisable(running);
+        if (wizardSourceButton != null) {
+            wizardSourceButton.setDisable(running);
+        }
+        if (wizardOutputButton != null) {
+            wizardOutputButton.setDisable(running);
+        }
+        if (wizardPreflightButton != null) {
+            wizardPreflightButton.setDisable(running);
+        }
+        if (wizardRunButton != null) {
+            wizardRunButton.setDisable(running);
+        }
+        if (moduleSwitcherBox != null) {
+            moduleSwitcherBox.setDisable(running);
+        }
+        updateModulePreviousButtonState();
         if (installRuntimeButton != null) {
             installRuntimeButton.setDisable(running || runtimeBootstrapRunning);
         }
@@ -5127,6 +6080,33 @@ public class MainController {
         }
         if (settingsPresetBox != null) {
             settingsPresetBox.setDisable(running);
+        }
+        if (settingsSearchField != null) {
+            settingsSearchField.setDisable(running);
+        }
+        if (jobsSearchField != null) {
+            jobsSearchField.setDisable(running);
+        }
+        if (jobsStatusFilterBox != null) {
+            jobsStatusFilterBox.setDisable(running);
+        }
+        if (jobsActiveModuleOnlyBox != null) {
+            jobsActiveModuleOnlyBox.setDisable(running);
+        }
+        if (filesSearchField != null) {
+            filesSearchField.setDisable(running);
+        }
+        if (filesSearchContentBox != null) {
+            filesSearchContentBox.setDisable(running);
+        }
+        if (logsErrorsOnlyBox != null) {
+            logsErrorsOnlyBox.setDisable(running);
+        }
+        if (logsPauseAutoscrollBox != null) {
+            logsPauseAutoscrollBox.setDisable(running);
+        }
+        if (logsLinkSelectedJobBox != null) {
+            logsLinkSelectedJobBox.setDisable(running);
         }
         if (settingsSavePresetButton != null) {
             settingsSavePresetButton.setDisable(running);
@@ -5170,11 +6150,23 @@ public class MainController {
         if (filesOpenProjectFolderButton != null) {
             filesOpenProjectFolderButton.setDisable(running || activeProjectRoot == null);
         }
-        if (filesSaveEditorButton != null) {
-            filesSaveEditorButton.setDisable(running || activeEditedFilePath == null || projectFileEditorArea == null || !projectFileEditorArea.isEditable());
+        if (filesHistoryButton != null) {
+            filesHistoryButton.setDisable(running || activeEditedFilePath == null || activeProjectRoot == null);
         }
         if (projectFilesTable != null) {
             projectFilesTable.setDisable(running);
+        }
+        if (preflightChecksTable != null) {
+            preflightChecksTable.setDisable(running);
+        }
+        if (operationsRefreshDiagnosticsButton != null) {
+            operationsRefreshDiagnosticsButton.setDisable(running);
+        }
+        if (operationsOpenMonitorButton != null) {
+            operationsOpenMonitorButton.setDisable(running);
+        }
+        if (operationsJobsTable != null) {
+            operationsJobsTable.setDisable(running);
         }
         if (dashboardRefreshButton != null) {
             dashboardRefreshButton.setDisable(running);
@@ -5203,7 +6195,9 @@ public class MainController {
         if (dashboardRecentFilesTable != null) {
             dashboardRecentFilesTable.setDisable(running);
         }
+        updateEditorButtonsState();
         updateSpeakerMappingButtonState(running);
+        updateWizardState();
     }
 
     private void updateSpeakerMappingButtonState(boolean running) {
@@ -5408,11 +6402,15 @@ public class MainController {
 
     private void appendToStream(LogEntry entry) {
         if (entry.category() == LogCategory.USER) {
-            userLogArea.appendText(entry.format() + "\n");
-            userLogArea.setScrollTop(Double.MAX_VALUE);
+            if (userLogArea != null) {
+                userLogArea.appendText(entry.format() + "\n");
+                userLogArea.setScrollTop(Double.MAX_VALUE);
+            }
         } else {
-            technicalLogArea.appendText(entry.format() + "\n");
-            technicalLogArea.setScrollTop(Double.MAX_VALUE);
+            if (technicalLogArea != null) {
+                technicalLogArea.appendText(entry.format() + "\n");
+                technicalLogArea.setScrollTop(Double.MAX_VALUE);
+            }
         }
     }
 
@@ -5426,10 +6424,14 @@ public class MainController {
                 techSb.append(entry.format()).append("\n");
             }
         }
-        userLogArea.setText(userSb.toString());
-        technicalLogArea.setText(techSb.toString());
-        userLogArea.setScrollTop(Double.MAX_VALUE);
-        technicalLogArea.setScrollTop(Double.MAX_VALUE);
+        if (userLogArea != null) {
+            userLogArea.setText(userSb.toString());
+            userLogArea.setScrollTop(Double.MAX_VALUE);
+        }
+        if (technicalLogArea != null) {
+            technicalLogArea.setText(techSb.toString());
+            technicalLogArea.setScrollTop(Double.MAX_VALUE);
+        }
     }
 
     private void refreshFilteredLogs() {
@@ -5437,13 +6439,23 @@ public class MainController {
         String selectedLevel = normalizeLevel(logLevelFilterBox.getValue());
         boolean includeUser = showUserLogsBox.isSelected();
         boolean includeTechnical = showTechnicalLogsBox.isSelected();
+        boolean errorsOnly = logsErrorsOnlyBox != null && logsErrorsOnlyBox.isSelected();
+        boolean followSelectedJob = logsLinkSelectedJobBox != null && logsLinkSelectedJobBox.isSelected();
+        boolean pauseAutoscroll = logsPauseAutoscrollBox != null && logsPauseAutoscrollBox.isSelected();
+        String jobFilterNeedle = followSelectedJob && !trimToEmpty(selectedJobLogFilter).isBlank()
+                ? "[" + selectedJobLogFilter + "]"
+                : "";
 
         StringBuilder sb = new StringBuilder();
+        int shown = 0;
         for (LogEntry entry : allLogs) {
             if (entry.category() == LogCategory.USER && !includeUser) {
                 continue;
             }
             if (entry.category() == LogCategory.TECHNICAL && !includeTechnical) {
+                continue;
+            }
+            if (errorsOnly && !"ERROR".equals(entry.level()) && !"WARN".equals(entry.level())) {
                 continue;
             }
             if (!"ALL".equals(selectedLevel) && !entry.level().equals(selectedLevel)) {
@@ -5452,11 +6464,31 @@ public class MainController {
             if (!query.isBlank() && !entry.message().toLowerCase(Locale.ROOT).contains(query)) {
                 continue;
             }
+            if (!jobFilterNeedle.isBlank() && !entry.message().contains(jobFilterNeedle)) {
+                continue;
+            }
             sb.append(entry.format()).append("\n");
+            shown += 1;
         }
 
         filteredLogArea.setText(sb.toString());
-        filteredLogArea.setScrollTop(Double.MAX_VALUE);
+        if (!pauseAutoscroll) {
+            filteredLogArea.setScrollTop(Double.MAX_VALUE);
+        }
+        if (operationsLogsArea != null) {
+            operationsLogsArea.setText(sb.toString());
+            operationsLogsArea.setScrollTop(Double.MAX_VALUE);
+        }
+        if (logsStreamInfoLabel != null) {
+            logsStreamInfoLabel.setText("Showing " + shown + " of " + allLogs.size() + " entries.");
+        }
+        if (logsJobFilterLabel != null) {
+            if (jobFilterNeedle.isBlank()) {
+                logsJobFilterLabel.setText("Log scope: all jobs");
+            } else {
+                logsJobFilterLabel.setText("Log scope: selected job [" + selectedJobLogFilter + "]");
+            }
+        }
     }
 
     private RuntimeBootstrapTarget resolveRuntimeBootstrapTarget() {
@@ -6040,6 +7072,18 @@ public class MainController {
         }
         String cleaned = jobId.trim();
         return cleaned.length() <= 8 ? cleaned : cleaned.substring(0, 8);
+    }
+
+    private static boolean containsAny(String query, String... keywords) {
+        if (query == null || query.isBlank() || keywords == null) {
+            return false;
+        }
+        for (String keyword : keywords) {
+            if (keyword != null && query.contains(keyword.toLowerCase(Locale.ROOT))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String nowStamp() {

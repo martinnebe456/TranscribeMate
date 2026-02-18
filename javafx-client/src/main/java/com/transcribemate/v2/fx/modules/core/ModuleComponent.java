@@ -9,6 +9,10 @@ public interface ModuleComponent {
 
     ModuleFlowSpec flowSpec();
 
+    default ModuleUiSchemaSpec uiSchema() {
+        return ModuleUiSchemaSpec.all();
+    }
+
     void applyDefaults(ModuleUiContext ui);
 
     void enforceConstraints(ModuleUiContext ui, boolean keepCurrentTab);
