@@ -165,6 +165,27 @@
     -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.20), 12, 0.18, 0, 3);
 }
 
+.project-gallery-scroll {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
+}
+
+.project-gallery-scroll > .viewport {
+    -fx-background-color: transparent;
+}
+
+.project-gallery-card {
+    -fx-background-color: -tm-bg-soft;
+    -fx-background-radius: 10;
+    -fx-border-color: -tm-border;
+    -fx-border-radius: 10;
+}
+
+.project-gallery-card-active {
+    -fx-border-color: -tm-accent-c;
+    -fx-border-width: 1.5;
+}
+
 .module-menu {
     -fx-min-width: 210;
 }
