@@ -3,6 +3,7 @@ package com.transcribemate.v2.fx;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.transcribemate.v2.fx.modules.core.ModuleComponent;
 import com.transcribemate.v2.fx.modules.core.ModuleFlowSpec;
@@ -57,6 +58,7 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -72,6 +74,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
+import java.util.stream.Stream;
 
 public class MainController {
     private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
@@ -87,6 +90,7 @@ public class MainController {
     private static final String PREF_MODULE_PREFIX = "ui.module.";
     private static final String PREF_MODULE_PRESETS_JSON = "presets_json";
     private static final String PREF_MODULE_SELECTED_PRESET = "selected_preset";
+    private static final String PREF_PROJECT_AUTO_OUTPUT = "ui.projects.auto_output";
     private static final String PREF_SOURCE_MODE = "ui.source_mode";
     private static final String PREF_OUTPUT_MODE = "ui.output_mode";
     private static final String PREF_MODEL = "ui.model";
@@ -113,6 +117,10 @@ public class MainController {
     private static final String SECTION_PROJECTS = "projects";
     private static final String SECTION_FILES = "files";
     private static final String SECTION_MODULES = "modules";
+    private static final String WORKSPACE_DIR_NAME = "workspace";
+    private static final String WORKSPACE_META_FILE = "workspace.json";
+    private static final String WORKSPACE_PROJECTS_DIR = "projects";
+    private static final long EDITOR_MAX_BYTES = 2L * 1024L * 1024L;
     private static final Set<String> UI_SCHEMA_TABS = Set.of("run", "advanced", "diarization", "logs", "jobs", "settings");
     private static final Set<String> SUPPORTED_MODULES = ModuleRegistry.supportedModuleIds();
     private static final List<String> WHISPER_MODELS = List.of(
@@ -174,6 +182,27 @@ public class MainController {
         }
     }
 
+    private record ProjectWorkspace(
+            String projectId,
+            String name,
+            String rootDir,
+            String createdAt,
+            String updatedAt,
+            String lastOpenedAt
+    ) {
+        Path rootPath() {
+            String candidate = trimToEmpty(rootDir);
+            if (candidate.isBlank()) {
+                return null;
+            }
+            try {
+                return Path.of(candidate).toAbsolutePath().normalize();
+            } catch (Exception ignored) {
+                return null;
+            }
+        }
+    }
+
     @FXML
     private BorderPane rootPane;
 
@@ -209,6 +238,78 @@ public class MainController {
 
     @FXML
     private HBox modulesPane;
+
+    @FXML
+    private Button projectCreateButton;
+
+    @FXML
+    private Button projectSelectButton;
+
+    @FXML
+    private Button projectDeleteButton;
+
+    @FXML
+    private Button projectOpenFolderButton;
+
+    @FXML
+    private Button projectRefreshButton;
+
+    @FXML
+    private Label activeProjectLabel;
+
+    @FXML
+    private TableView<ProjectRow> projectTable;
+
+    @FXML
+    private TableColumn<ProjectRow, String> projectNameColumn;
+
+    @FXML
+    private TableColumn<ProjectRow, String> projectStatusColumn;
+
+    @FXML
+    private TableColumn<ProjectRow, String> projectUpdatedColumn;
+
+    @FXML
+    private TableColumn<ProjectRow, String> projectPathColumn;
+
+    @FXML
+    private Label filesActiveProjectLabel;
+
+    @FXML
+    private Button filesImportButton;
+
+    @FXML
+    private Button filesRefreshButton;
+
+    @FXML
+    private Button filesOpenSelectedButton;
+
+    @FXML
+    private Button filesOpenProjectFolderButton;
+
+    @FXML
+    private Button filesSaveEditorButton;
+
+    @FXML
+    private TableView<WorkspaceFileRow> projectFilesTable;
+
+    @FXML
+    private TableColumn<WorkspaceFileRow, String> projectFileRelativePathColumn;
+
+    @FXML
+    private TableColumn<WorkspaceFileRow, String> projectFileTypeColumn;
+
+    @FXML
+    private TableColumn<WorkspaceFileRow, String> projectFileSizeColumn;
+
+    @FXML
+    private TableColumn<WorkspaceFileRow, String> projectFileModifiedColumn;
+
+    @FXML
+    private Label fileEditorStatusLabel;
+
+    @FXML
+    private TextArea projectFileEditorArea;
 
     @FXML
     private CheckBox simpleModeBox;
@@ -634,6 +735,9 @@ public class MainController {
     private final JsonPreferences preferences = new JsonPreferences(mapper, resolveRuntimeAppDataDir().resolve("config.json"));
     private final ObservableList<JobRow> jobRows = FXCollections.observableArrayList();
     private final Map<String, JobRow> jobsById = new LinkedHashMap<>();
+    private final ObservableList<ProjectRow> projectRows = FXCollections.observableArrayList();
+    private final Map<String, ProjectWorkspace> projectsById = new LinkedHashMap<>();
+    private final ObservableList<WorkspaceFileRow> workspaceFileRows = FXCollections.observableArrayList();
     private final ObservableList<SpeakerProfileRow> speakerProfiles = FXCollections.observableArrayList();
     private final ObservableList<ConferenceFileRow> conferenceFiles = FXCollections.observableArrayList();
     private final List<LogEntry> allLogs = new ArrayList<>();
@@ -648,6 +752,9 @@ public class MainController {
     private String appDataDir;
     private String appVersion;
     private String currentTheme = "";
+    private String activeProjectId = "";
+    private Path activeProjectRoot;
+    private Path activeEditedFilePath;
     private Path lastDiarizationSidecarPath;
     private boolean themeInitializing;
     private boolean restoringPreferences;
@@ -674,6 +781,7 @@ public class MainController {
         setupShellNavigation();
         setupThemeSelector();
         setupSettingsModuleSelector();
+        initializeWorkspace();
 
         sourceModeBox.valueProperty().addListener((obs, oldVal, newVal) -> updateSourceModeUi());
         translateSubtitlesBox.selectedProperty().addListener((obs, oldVal, newVal) -> updateTranslationUi());
@@ -749,6 +857,7 @@ public class MainController {
                             // Keep default config path fallback.
                         }
                     }
+                    reloadWorkspaceFromCurrentAppDataDir();
                     addUserLog("INFO", "App data: " + appDataDir);
                 }))
                 .exceptionally(ex -> {
@@ -909,11 +1018,13 @@ public class MainController {
     @FXML
     private void onNavProjects() {
         showShellSection(SECTION_PROJECTS);
+        refreshProjectsView();
     }
 
     @FXML
     private void onNavFiles() {
         showShellSection(SECTION_FILES);
+        refreshProjectFiles();
     }
 
     @FXML
@@ -937,6 +1048,691 @@ public class MainController {
     private void onNavSettings() {
         showShellSection(SECTION_MODULES);
         selectModule(settingsTab);
+    }
+
+    @FXML
+    private void onCreateProject() {
+        TextInputDialog dialog = new TextInputDialog("");
+        dialog.setTitle("Create Project");
+        dialog.setHeaderText("Create new workspace project");
+        dialog.setContentText("Project name:");
+        Optional<String> result = dialog.showAndWait();
+        if (result.isEmpty()) {
+            return;
+        }
+
+        String projectName = sanitizeProjectName(result.get());
+        if (projectName.isBlank()) {
+            addUserLog("WARN", "Project name cannot be empty.");
+            return;
+        }
+
+        String projectId = buildProjectId(projectName);
+        Path projectRoot = workspaceProjectsRootPath().resolve(projectId);
+
+        try {
+            ensureProjectStructure(projectRoot);
+            String now = nowStamp();
+            ProjectWorkspace project = new ProjectWorkspace(
+                    projectId,
+                    projectName,
+                    projectRoot.toString(),
+                    now,
+                    now,
+                    now
+            );
+            projectsById.put(projectId, project);
+            setActiveProject(projectId, true, false);
+            refreshProjectsView();
+            refreshProjectFiles();
+            addUserLog("SUCCESS", "Project created: " + projectName);
+        } catch (Exception ex) {
+            addTechnicalLog("ERROR", "Failed to create project: " + ex.getMessage());
+            addUserLog("ERROR", "Project creation failed.");
+        }
+    }
+
+    @FXML
+    private void onSelectProject() {
+        ProjectRow selected = projectTable == null ? null : projectTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            addUserLog("WARN", "Select project first.");
+            return;
+        }
+        setActiveProject(selected.getProjectId(), true, true);
+        refreshProjectsView();
+        refreshProjectFiles();
+    }
+
+    @FXML
+    private void onDeleteProject() {
+        ProjectRow selected = projectTable == null ? null : projectTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            addUserLog("WARN", "Select project first.");
+            return;
+        }
+
+        ProjectWorkspace workspace = projectsById.get(selected.getProjectId());
+        if (workspace == null) {
+            addUserLog("WARN", "Project does not exist anymore.");
+            reloadWorkspaceFromCurrentAppDataDir();
+            return;
+        }
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Delete Project");
+        confirm.setHeaderText("Delete project '" + workspace.name() + "'?");
+        confirm.setContentText("This will remove project metadata and delete the project folder from disk.");
+        Optional<ButtonType> answer = confirm.showAndWait();
+        if (answer.isEmpty() || answer.get() != ButtonType.OK) {
+            return;
+        }
+
+        try {
+            Path root = workspace.rootPath();
+            if (root != null && Files.exists(root)) {
+                deleteRecursively(root);
+            }
+            projectsById.remove(workspace.projectId());
+            if (Objects.equals(activeProjectId, workspace.projectId())) {
+                String replacement = projectsById.keySet().stream().findFirst().orElse("");
+                setActiveProject(replacement, false, false);
+            }
+            saveWorkspaceState();
+            refreshProjectsView();
+            refreshProjectFiles();
+            addUserLog("INFO", "Project deleted: " + workspace.name());
+        } catch (Exception ex) {
+            addTechnicalLog("ERROR", "Failed to delete project: " + ex.getMessage());
+            addUserLog("ERROR", "Project delete failed.");
+        }
+    }
+
+    @FXML
+    private void onOpenProjectFolder() {
+        Path target = activeProjectRoot;
+        ProjectRow selected = projectTable == null ? null : projectTable.getSelectionModel().getSelectedItem();
+        if (selected != null) {
+            ProjectWorkspace selectedWorkspace = projectsById.get(selected.getProjectId());
+            if (selectedWorkspace != null && selectedWorkspace.rootPath() != null) {
+                target = selectedWorkspace.rootPath();
+            }
+        }
+        if (target == null) {
+            addUserLog("WARN", "No project selected.");
+            return;
+        }
+        openPath(target.toString());
+    }
+
+    @FXML
+    private void onRefreshProjects() {
+        reloadWorkspaceFromCurrentAppDataDir();
+        addUserLog("INFO", "Projects refreshed.");
+    }
+
+    @FXML
+    private void onImportFilesToProject() {
+        if (activeProjectRoot == null) {
+            addUserLog("WARN", "Select an active project first.");
+            return;
+        }
+        Stage stage = getStage();
+        if (stage == null) {
+            return;
+        }
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Import files to project input");
+        List<File> selected = chooser.showOpenMultipleDialog(stage);
+        if (selected == null || selected.isEmpty()) {
+            return;
+        }
+
+        Path targetDir = activeProjectRoot.resolve("input");
+        int copied = 0;
+        for (File file : selected) {
+            if (file == null || !file.isFile()) {
+                continue;
+            }
+            try {
+                Files.createDirectories(targetDir);
+                Path destination = resolveUniqueTargetPath(targetDir, Path.of(file.getName()));
+                Files.copy(file.toPath(), destination, StandardCopyOption.REPLACE_EXISTING);
+                copied += 1;
+            } catch (Exception ex) {
+                addTechnicalLog("WARN", "Failed to import '" + file.getAbsolutePath() + "': " + ex.getMessage());
+            }
+        }
+        refreshProjectFiles();
+        addUserLog("INFO", "Imported files: " + copied);
+    }
+
+    @FXML
+    private void onRefreshProjectFiles() {
+        refreshProjectFiles();
+    }
+
+    @FXML
+    private void onOpenSelectedProjectFile() {
+        WorkspaceFileRow selected = projectFilesTable == null ? null : projectFilesTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            addUserLog("WARN", "Select file first.");
+            return;
+        }
+        openPath(selected.getAbsolutePath());
+    }
+
+    @FXML
+    private void onSaveProjectFileEditor() {
+        if (activeEditedFilePath == null) {
+            addUserLog("WARN", "No editable file selected.");
+            return;
+        }
+        if (projectFileEditorArea == null || !projectFileEditorArea.isEditable()) {
+            addUserLog("WARN", "Selected file is not editable in the built-in editor.");
+            return;
+        }
+        try {
+            Files.writeString(activeEditedFilePath, projectFileEditorArea.getText(), StandardCharsets.UTF_8);
+            if (fileEditorStatusLabel != null) {
+                fileEditorStatusLabel.setText("Saved: " + activeEditedFilePath.getFileName());
+            }
+            refreshProjectFiles();
+            addUserLog("SUCCESS", "File saved: " + activeEditedFilePath.getFileName());
+        } catch (Exception ex) {
+            addTechnicalLog("ERROR", "Failed to save file: " + ex.getMessage());
+            addUserLog("ERROR", "Save failed.");
+        }
+    }
+
+    private void initializeWorkspace() {
+        loadWorkspaceState();
+        refreshProjectsView();
+        refreshProjectFiles();
+    }
+
+    private void reloadWorkspaceFromCurrentAppDataDir() {
+        loadWorkspaceState();
+        refreshProjectsView();
+        refreshProjectFiles();
+    }
+
+    private void loadWorkspaceState() {
+        projectsById.clear();
+        activeProjectId = "";
+        activeProjectRoot = null;
+        activeEditedFilePath = null;
+
+        Path workspaceMeta = workspaceMetaPath();
+        try {
+            Files.createDirectories(workspaceProjectsRootPath());
+            if (!Files.isRegularFile(workspaceMeta)) {
+                saveWorkspaceState();
+                return;
+            }
+            JsonNode root = mapper.readTree(Files.readString(workspaceMeta, StandardCharsets.UTF_8));
+            JsonNode projectsNode = root.path("projects");
+            if (projectsNode.isArray()) {
+                for (JsonNode node : projectsNode) {
+                    String id = trimToEmpty(node.path("project_id").asText(""));
+                    String name = trimToEmpty(node.path("name").asText(""));
+                    if (id.isBlank() || name.isBlank()) {
+                        continue;
+                    }
+                    String rootDir = trimToEmpty(node.path("root_dir").asText(""));
+                    if (rootDir.isBlank()) {
+                        rootDir = workspaceProjectsRootPath().resolve(id).toString();
+                    }
+                    ProjectWorkspace workspace = new ProjectWorkspace(
+                            id,
+                            name,
+                            rootDir,
+                            trimToEmpty(node.path("created_at").asText(nowStamp())),
+                            trimToEmpty(node.path("updated_at").asText(nowStamp())),
+                            trimToEmpty(node.path("last_opened_at").asText(""))
+                    );
+                    projectsById.put(id, workspace);
+                }
+            }
+            activeProjectId = trimToEmpty(root.path("active_project_id").asText(""));
+            if (activeProjectId.isBlank() || !projectsById.containsKey(activeProjectId)) {
+                activeProjectId = projectsById.keySet().stream().findFirst().orElse("");
+            }
+            setActiveProject(activeProjectId, false, false);
+        } catch (Exception ex) {
+            addTechnicalLog("WARN", "Workspace metadata load failed: " + ex.getMessage());
+            projectsById.clear();
+            activeProjectId = "";
+            activeProjectRoot = null;
+            activeEditedFilePath = null;
+        }
+    }
+
+    private void saveWorkspaceState() {
+        Path workspaceMeta = workspaceMetaPath();
+        try {
+            Files.createDirectories(workspaceMeta.getParent());
+            ObjectNode root = mapper.createObjectNode();
+            root.put("version", 1);
+            root.put("active_project_id", trimToEmpty(activeProjectId));
+            ArrayNode projects = mapper.createArrayNode();
+            for (ProjectWorkspace workspace : projectsById.values()) {
+                ObjectNode item = projects.addObject();
+                item.put("project_id", workspace.projectId());
+                item.put("name", workspace.name());
+                item.put("root_dir", workspace.rootDir());
+                item.put("created_at", workspace.createdAt());
+                item.put("updated_at", workspace.updatedAt());
+                item.put("last_opened_at", workspace.lastOpenedAt());
+            }
+            root.set("projects", projects);
+            Files.writeString(workspaceMeta, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(root), StandardCharsets.UTF_8);
+        } catch (Exception ex) {
+            addTechnicalLog("WARN", "Workspace metadata save failed: " + ex.getMessage());
+        }
+    }
+
+    private void refreshProjectsView() {
+        projectRows.clear();
+        for (ProjectWorkspace workspace : projectsById.values()) {
+            String status = Objects.equals(workspace.projectId(), activeProjectId) ? "Active" : "-";
+            projectRows.add(new ProjectRow(
+                    workspace.projectId(),
+                    workspace.name(),
+                    status,
+                    trimTimestamp(workspace.updatedAt()),
+                    workspace.rootDir()
+            ));
+        }
+        if (projectTable != null) {
+            ProjectRow toSelect = null;
+            for (ProjectRow row : projectRows) {
+                if (Objects.equals(row.getProjectId(), activeProjectId)) {
+                    toSelect = row;
+                    break;
+                }
+            }
+            if (toSelect != null) {
+                projectTable.getSelectionModel().select(toSelect);
+            } else {
+                projectTable.getSelectionModel().clearSelection();
+            }
+        }
+        refreshActiveProjectLabels();
+        onProjectSelectionChanged(projectTable == null ? null : projectTable.getSelectionModel().getSelectedItem());
+        setRunning(startButton != null && startButton.isDisabled());
+    }
+
+    private void refreshActiveProjectLabels() {
+        ProjectWorkspace active = projectsById.get(activeProjectId);
+        String label = active == null
+                ? "Active project: none"
+                : "Active project: " + active.name() + " (" + active.projectId() + ")";
+        if (activeProjectLabel != null) {
+            activeProjectLabel.setText(label);
+        }
+        if (filesActiveProjectLabel != null) {
+            filesActiveProjectLabel.setText(active == null ? "Project: none" : "Project: " + active.name());
+        }
+    }
+
+    private void refreshProjectFiles() {
+        workspaceFileRows.clear();
+        activeEditedFilePath = null;
+        if (projectFileEditorArea != null) {
+            projectFileEditorArea.setText("");
+            projectFileEditorArea.setEditable(false);
+        }
+
+        if (activeProjectRoot == null) {
+            if (fileEditorStatusLabel != null) {
+                fileEditorStatusLabel.setText("Preview/editor: no active project selected.");
+            }
+            return;
+        }
+
+        try (Stream<Path> stream = Files.walk(activeProjectRoot)) {
+            stream.filter(Files::isRegularFile)
+                    .sorted(Comparator.comparing(path -> activeProjectRoot.relativize(path).toString().toLowerCase(Locale.ROOT)))
+                    .forEach(path -> workspaceFileRows.add(new WorkspaceFileRow(
+                            activeProjectRoot.relativize(path).toString().replace('\\', '/'),
+                            fileType(path),
+                            formatBytes(safeSize(path)),
+                            formatFileTime(path),
+                            path.toAbsolutePath().normalize().toString()
+                    )));
+        } catch (Exception ex) {
+            addTechnicalLog("WARN", "Project file refresh failed: " + ex.getMessage());
+        }
+
+        if (fileEditorStatusLabel != null) {
+            fileEditorStatusLabel.setText("Preview/editor: select a text file (.txt/.srt/.json/.md) from the table.");
+        }
+        if (projectFilesTable != null) {
+            projectFilesTable.getSelectionModel().clearSelection();
+        }
+        onWorkspaceFileSelectionChanged(null);
+        setRunning(startButton != null && startButton.isDisabled());
+    }
+
+    private void setActiveProject(String projectId, boolean persist, boolean logChange) {
+        String normalized = trimToEmpty(projectId);
+        if (normalized.isBlank() || !projectsById.containsKey(normalized)) {
+            activeProjectId = "";
+            activeProjectRoot = null;
+            activeEditedFilePath = null;
+            refreshActiveProjectLabels();
+            return;
+        }
+
+        ProjectWorkspace existing = projectsById.get(normalized);
+        Path root = existing.rootPath();
+        if (root == null) {
+            activeProjectId = "";
+            activeProjectRoot = null;
+            activeEditedFilePath = null;
+            refreshActiveProjectLabels();
+            return;
+        }
+
+        try {
+            ensureProjectStructure(root);
+        } catch (Exception ex) {
+            addTechnicalLog("ERROR", "Cannot prepare project directories: " + ex.getMessage());
+            return;
+        }
+
+        ProjectWorkspace effective = existing;
+        if (persist) {
+            String now = nowStamp();
+            effective = new ProjectWorkspace(
+                    existing.projectId(),
+                    existing.name(),
+                    root.toString(),
+                    existing.createdAt(),
+                    now,
+                    now
+            );
+            projectsById.put(effective.projectId(), effective);
+        }
+        activeProjectId = effective.projectId();
+        activeProjectRoot = root;
+        activeEditedFilePath = null;
+        applyActiveProjectToRunFields();
+        refreshActiveProjectLabels();
+        if (persist) {
+            saveWorkspaceState();
+        }
+        if (logChange) {
+            addUserLog("INFO", "Active project: " + effective.name());
+        }
+    }
+
+    private void applyActiveProjectToRunFields() {
+        if (activeProjectRoot == null) {
+            return;
+        }
+        boolean autoProjectOutput = preferences.getBoolean(PREF_PROJECT_AUTO_OUTPUT, true);
+        if (autoProjectOutput && outputDirField != null) {
+            outputDirField.setText(activeProjectRoot.resolve("output").toString());
+        }
+        if (localPathField != null && trimToEmpty(localPathField.getText()).isBlank()) {
+            localPathField.setText(activeProjectRoot.resolve("input").toString());
+        }
+    }
+
+    private void onProjectSelectionChanged(ProjectRow selected) {
+        boolean hasSelection = selected != null;
+        boolean running = startButton != null && startButton.isDisabled();
+        if (projectSelectButton != null) {
+            projectSelectButton.setDisable(running || !hasSelection);
+        }
+        if (projectDeleteButton != null) {
+            projectDeleteButton.setDisable(running || !hasSelection);
+        }
+        if (projectOpenFolderButton != null) {
+            projectOpenFolderButton.setDisable(running || (!hasSelection && activeProjectRoot == null));
+        }
+    }
+
+    private void onWorkspaceFileSelectionChanged(WorkspaceFileRow selected) {
+        boolean running = startButton != null && startButton.isDisabled();
+        if (filesOpenSelectedButton != null) {
+            filesOpenSelectedButton.setDisable(running || selected == null);
+        }
+        if (filesSaveEditorButton != null) {
+            filesSaveEditorButton.setDisable(true);
+        }
+
+        if (selected == null) {
+            activeEditedFilePath = null;
+            if (projectFileEditorArea != null) {
+                projectFileEditorArea.setText("");
+                projectFileEditorArea.setEditable(false);
+            }
+            if (fileEditorStatusLabel != null) {
+                fileEditorStatusLabel.setText("Preview/editor: select a text file (.txt/.srt/.json/.md) from the table.");
+            }
+            return;
+        }
+
+        Path path;
+        try {
+            path = Path.of(selected.getAbsolutePath()).toAbsolutePath().normalize();
+        } catch (Exception ex) {
+            activeEditedFilePath = null;
+            if (fileEditorStatusLabel != null) {
+                fileEditorStatusLabel.setText("Invalid file path: " + selected.getAbsolutePath());
+            }
+            return;
+        }
+
+        activeEditedFilePath = null;
+        if (!isEditableTextFile(path)) {
+            if (projectFileEditorArea != null) {
+                projectFileEditorArea.setText("Binary/unsupported preview in built-in editor.\nUse 'Open selected' to open externally.");
+                projectFileEditorArea.setEditable(false);
+            }
+            if (fileEditorStatusLabel != null) {
+                fileEditorStatusLabel.setText("Not editable here: " + path.getFileName());
+            }
+            return;
+        }
+
+        long size = safeSize(path);
+        if (size > EDITOR_MAX_BYTES) {
+            if (projectFileEditorArea != null) {
+                projectFileEditorArea.setText("File is too large for in-app editor (" + formatBytes(size) + ").");
+                projectFileEditorArea.setEditable(false);
+            }
+            if (fileEditorStatusLabel != null) {
+                fileEditorStatusLabel.setText("Large file, preview blocked: " + path.getFileName());
+            }
+            return;
+        }
+
+        try {
+            String text = Files.readString(path, StandardCharsets.UTF_8);
+            if (projectFileEditorArea != null) {
+                projectFileEditorArea.setText(text);
+                projectFileEditorArea.positionCaret(0);
+                projectFileEditorArea.setEditable(true);
+            }
+            if (fileEditorStatusLabel != null) {
+                fileEditorStatusLabel.setText("Editing: " + path.getFileName());
+            }
+            activeEditedFilePath = path;
+            if (filesSaveEditorButton != null) {
+                filesSaveEditorButton.setDisable(false);
+            }
+        } catch (Exception ex) {
+            addTechnicalLog("WARN", "Unable to read project file: " + ex.getMessage());
+            if (projectFileEditorArea != null) {
+                projectFileEditorArea.setText("Failed to load file.");
+                projectFileEditorArea.setEditable(false);
+            }
+            if (fileEditorStatusLabel != null) {
+                fileEditorStatusLabel.setText("Read failed: " + path.getFileName());
+            }
+            activeEditedFilePath = null;
+        }
+    }
+
+    private void ensureProjectStructure(Path projectRoot) throws Exception {
+        Files.createDirectories(projectRoot);
+        Files.createDirectories(projectRoot.resolve("input"));
+        Files.createDirectories(projectRoot.resolve("output"));
+        Files.createDirectories(projectRoot.resolve("transcripts"));
+        Files.createDirectories(projectRoot.resolve("jobs"));
+        Files.createDirectories(projectRoot.resolve("assets"));
+        Files.createDirectories(projectRoot.resolve("temp"));
+        Path projectMeta = projectRoot.resolve("project.json");
+        if (!Files.exists(projectMeta)) {
+            ObjectNode projectNode = mapper.createObjectNode();
+            projectNode.put("project_id", projectRoot.getFileName().toString());
+            projectNode.put("name", projectRoot.getFileName().toString());
+            projectNode.put("created_at", nowStamp());
+            Files.writeString(
+                    projectMeta,
+                    mapper.writerWithDefaultPrettyPrinter().writeValueAsString(projectNode),
+                    StandardCharsets.UTF_8
+            );
+        }
+    }
+
+    private Path workspaceRootPath() {
+        Path appDataPath = currentAppDataPath();
+        return appDataPath.resolve(WORKSPACE_DIR_NAME);
+    }
+
+    private Path workspaceMetaPath() {
+        return workspaceRootPath().resolve(WORKSPACE_META_FILE);
+    }
+
+    private Path workspaceProjectsRootPath() {
+        return workspaceRootPath().resolve(WORKSPACE_PROJECTS_DIR);
+    }
+
+    private Path currentAppDataPath() {
+        String fromBackend = trimToEmpty(appDataDir);
+        if (!fromBackend.isBlank()) {
+            try {
+                return Path.of(fromBackend).toAbsolutePath().normalize();
+            } catch (Exception ignored) {
+                // fallback to local resolution
+            }
+        }
+        return resolveRuntimeAppDataDir().toAbsolutePath().normalize();
+    }
+
+    private String sanitizeProjectName(String value) {
+        String normalized = trimToEmpty(value).replaceAll("[\\r\\n]+", " ");
+        normalized = normalized.replaceAll("\\s{2,}", " ");
+        return normalized;
+    }
+
+    private String buildProjectId(String projectName) {
+        String base = sanitizeProjectName(projectName)
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", "-")
+                .replaceAll("(^-+|-+$)", "");
+        if (base.isBlank()) {
+            base = "project";
+        }
+        String candidate = base;
+        int suffix = 2;
+        while (projectsById.containsKey(candidate) || Files.exists(workspaceProjectsRootPath().resolve(candidate))) {
+            candidate = base + "-" + suffix;
+            suffix += 1;
+        }
+        return candidate;
+    }
+
+    private static String fileType(Path path) {
+        String fileName = path == null ? "" : trimToEmpty(path.getFileName().toString());
+        int dot = fileName.lastIndexOf('.');
+        if (dot < 0 || dot == fileName.length() - 1) {
+            return "file";
+        }
+        return fileName.substring(dot + 1).toLowerCase(Locale.ROOT);
+    }
+
+    private static long safeSize(Path path) {
+        try {
+            return Files.size(path);
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    private static String formatBytes(long bytes) {
+        if (bytes < 1024L) {
+            return bytes + " B";
+        }
+        double kb = bytes / 1024.0;
+        if (kb < 1024.0) {
+            return String.format(Locale.ROOT, "%.1f KB", kb);
+        }
+        double mb = kb / 1024.0;
+        if (mb < 1024.0) {
+            return String.format(Locale.ROOT, "%.1f MB", mb);
+        }
+        return String.format(Locale.ROOT, "%.2f GB", mb / 1024.0);
+    }
+
+    private static String formatFileTime(Path path) {
+        try {
+            LocalDateTime dt = LocalDateTime.ofInstant(Files.getLastModifiedTime(path).toInstant(), java.time.ZoneId.systemDefault());
+            return dt.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        } catch (Exception ignored) {
+            return "-";
+        }
+    }
+
+    private static boolean isEditableTextFile(Path path) {
+        String ext = fileType(path);
+        return Set.of("txt", "srt", "vtt", "md", "json", "csv", "log", "yaml", "yml", "ass").contains(ext);
+    }
+
+    private static Path resolveUniqueTargetPath(Path directory, Path fileName) {
+        Path candidate = directory.resolve(fileName.getFileName().toString());
+        if (!Files.exists(candidate)) {
+            return candidate;
+        }
+
+        String name = trimToEmpty(fileName.getFileName().toString());
+        int dot = name.lastIndexOf('.');
+        String stem = dot > 0 ? name.substring(0, dot) : name;
+        String ext = dot > 0 ? name.substring(dot) : "";
+        int idx = 2;
+        while (true) {
+            Path next = directory.resolve(stem + "-" + idx + ext);
+            if (!Files.exists(next)) {
+                return next;
+            }
+            idx += 1;
+        }
+    }
+
+    private static void deleteRecursively(Path root) throws Exception {
+        if (root == null || !Files.exists(root)) {
+            return;
+        }
+        try (Stream<Path> walk = Files.walk(root)) {
+            walk.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try {
+                    Files.deleteIfExists(path);
+                } catch (Exception ex) {
+                    throw new RuntimeException(ex);
+                }
+            });
+        } catch (RuntimeException ex) {
+            Throwable cause = ex.getCause();
+            if (cause instanceof Exception checked) {
+                throw checked;
+            }
+            throw ex;
+        }
     }
 
     @FXML
@@ -1827,6 +2623,26 @@ public class MainController {
         jobModeColumn.setCellValueFactory(new PropertyValueFactory<>("mode"));
         jobSourceColumn.setCellValueFactory(new PropertyValueFactory<>("source"));
         jobCreatedColumn.setCellValueFactory(new PropertyValueFactory<>("created"));
+
+        if (projectTable != null) {
+            projectTable.setItems(projectRows);
+            projectNameColumn.setCellValueFactory(new PropertyValueFactory<>("projectName"));
+            projectStatusColumn.setCellValueFactory(new PropertyValueFactory<>("status"));
+            projectUpdatedColumn.setCellValueFactory(new PropertyValueFactory<>("updated"));
+            projectPathColumn.setCellValueFactory(new PropertyValueFactory<>("path"));
+            projectTable.getSelectionModel().selectedItemProperty()
+                    .addListener((obs, oldItem, newItem) -> onProjectSelectionChanged(newItem));
+        }
+
+        if (projectFilesTable != null) {
+            projectFilesTable.setItems(workspaceFileRows);
+            projectFileRelativePathColumn.setCellValueFactory(new PropertyValueFactory<>("relativePath"));
+            projectFileTypeColumn.setCellValueFactory(new PropertyValueFactory<>("type"));
+            projectFileSizeColumn.setCellValueFactory(new PropertyValueFactory<>("size"));
+            projectFileModifiedColumn.setCellValueFactory(new PropertyValueFactory<>("modified"));
+            projectFilesTable.getSelectionModel().selectedItemProperty()
+                    .addListener((obs, oldItem, newItem) -> onWorkspaceFileSelectionChanged(newItem));
+        }
     }
 
     private void setupFilters() {
@@ -1844,7 +2660,7 @@ public class MainController {
     }
 
     private void setupShellNavigation() {
-        showShellSection(SECTION_MODULES);
+        showShellSection(SECTION_DASHBOARD);
     }
 
     private void setupThemeSelector() {
@@ -2225,6 +3041,7 @@ public class MainController {
         syncSettingsModuleSelector();
         refreshModulePresetList(trimToEmpty(preferences.get(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, "")));
         updateModuleSpecificUiVisibility();
+        applyActiveProjectToRunFields();
         refreshJobsSilently();
 
         if (logChange) {
@@ -3970,6 +4787,42 @@ public class MainController {
         }
         if (replayJobButton != null) {
             replayJobButton.setDisable(running || jobHistoryTable == null || jobHistoryTable.getSelectionModel().getSelectedItem() == null);
+        }
+        if (projectCreateButton != null) {
+            projectCreateButton.setDisable(running);
+        }
+        if (projectSelectButton != null) {
+            projectSelectButton.setDisable(running || projectTable == null || projectTable.getSelectionModel().getSelectedItem() == null);
+        }
+        if (projectDeleteButton != null) {
+            projectDeleteButton.setDisable(running || projectTable == null || projectTable.getSelectionModel().getSelectedItem() == null);
+        }
+        if (projectOpenFolderButton != null) {
+            projectOpenFolderButton.setDisable(running || (activeProjectRoot == null && (projectTable == null || projectTable.getSelectionModel().getSelectedItem() == null)));
+        }
+        if (projectRefreshButton != null) {
+            projectRefreshButton.setDisable(running);
+        }
+        if (projectTable != null) {
+            projectTable.setDisable(running);
+        }
+        if (filesImportButton != null) {
+            filesImportButton.setDisable(running || activeProjectRoot == null);
+        }
+        if (filesRefreshButton != null) {
+            filesRefreshButton.setDisable(running || activeProjectRoot == null);
+        }
+        if (filesOpenSelectedButton != null) {
+            filesOpenSelectedButton.setDisable(running || projectFilesTable == null || projectFilesTable.getSelectionModel().getSelectedItem() == null);
+        }
+        if (filesOpenProjectFolderButton != null) {
+            filesOpenProjectFolderButton.setDisable(running || activeProjectRoot == null);
+        }
+        if (filesSaveEditorButton != null) {
+            filesSaveEditorButton.setDisable(running || activeEditedFilePath == null || projectFileEditorArea == null || !projectFileEditorArea.isEditable());
+        }
+        if (projectFilesTable != null) {
+            projectFilesTable.setDisable(running);
         }
         updateSpeakerMappingButtonState(running);
     }
