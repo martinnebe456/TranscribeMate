@@ -19,6 +19,11 @@ def _base_payload():
             "min_speakers": 0,
             "max_speakers": 0,
         },
+        "project": {
+            "project_id": "project-default",
+            "name": "Project Default",
+            "root_dir": ".",
+        },
     }
 
 
@@ -148,6 +153,14 @@ def test_pipeline_request_parses_project_context():
 def test_pipeline_request_rejects_invalid_project_type():
     payload = _base_payload()
     payload["project"] = "invalid"
+
+    with pytest.raises(RequestValidationError):
+        PipelineRequest.from_payload(payload)
+
+
+def test_pipeline_request_rejects_missing_project_context():
+    payload = _base_payload()
+    payload.pop("project", None)
 
     with pytest.raises(RequestValidationError):
         PipelineRequest.from_payload(payload)
