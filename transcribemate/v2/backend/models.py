@@ -348,6 +348,7 @@ class ProjectContextSpec:
     input_dir: str = ""
     output_dir: str = ""
     jobs_dir: str = ""
+    logs_dir: str = ""
     timeline_path: str = ""
 
     @property
@@ -362,16 +363,31 @@ class ProjectContextSpec:
         input_dir = _normalized_str(payload.get("input_dir"))
         output_dir = _normalized_str(payload.get("output_dir"))
         jobs_dir = _normalized_str(payload.get("jobs_dir"))
+        logs_dir = _normalized_str(payload.get("logs_dir"))
         timeline_path = _normalized_str(payload.get("timeline_path"))
 
+        if not project_id:
+            raise RequestValidationError(
+                "project.project_id is required.",
+                details={"project.project_id": project_id},
+            )
+        if not root_dir:
+            raise RequestValidationError(
+                "project.root_dir is required.",
+                details={"project.root_dir": root_dir},
+            )
+
         if root_dir:
-            root_path = Path(root_dir).expanduser()
+            root_path = Path(root_dir).expanduser().resolve()
+            root_dir = str(root_path)
             if not input_dir:
                 input_dir = str(root_path / "input")
             if not output_dir:
                 output_dir = str(root_path / "output")
             if not jobs_dir:
                 jobs_dir = str(root_path / "jobs")
+            if not logs_dir:
+                logs_dir = str(root_path / "logs")
 
         if jobs_dir and not timeline_path:
             timeline_path = str(Path(jobs_dir).expanduser() / "timeline.jsonl")
@@ -383,6 +399,7 @@ class ProjectContextSpec:
             input_dir=input_dir,
             output_dir=output_dir,
             jobs_dir=jobs_dir,
+            logs_dir=logs_dir,
             timeline_path=timeline_path,
         )
 
@@ -610,6 +627,7 @@ class PipelineRequest:
                 "input_dir": self.project.input_dir,
                 "output_dir": self.project.output_dir,
                 "jobs_dir": self.project.jobs_dir,
+                "logs_dir": self.project.logs_dir,
                 "timeline_path": self.project.timeline_path,
             },
             "conference_defaults": {

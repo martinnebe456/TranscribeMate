@@ -597,11 +597,28 @@ class BackendService:
         record.thread = thread
 
         with self._lock:
+            active = self._first_active_job_locked()
+            if active is not None:
+                raise RequestValidationError(
+                    "Only one pipeline job can run at a time. Wait for the active job to finish.",
+                    code="job_limit_reached",
+                    details={
+                        "active_job_id": active.job_id,
+                        "active_job_status": active.status,
+                        "active_project_id": str(active.request.project.project_id or "").strip(),
+                    },
+                )
             self._jobs[job_id] = record
 
         self._persist_project_job_state(record, event="job.queued", payload={"status": record.status})
         thread.start()
         return {"job_id": job_id, "status": record.status}
+
+    def _first_active_job_locked(self) -> JobRecord | None:
+        for record in self._jobs.values():
+            if record.status in {"queued", "running"}:
+                return record
+        return None
 
     def _cancel_job(self, params: dict) -> dict:
         job_id = str((params or {}).get("job_id") or "").strip()
@@ -766,6 +783,7 @@ class BackendService:
         if not cleaned:
             return
         record.logs.append(cleaned)
+        self._persist_project_log_line(record, cleaned)
         self._emit_job_event("job.log", record.job_id, {"line": cleaned})
 
     def _on_job_progress(self, record: JobRecord, payload: dict):
@@ -873,6 +891,42 @@ class BackendService:
         if timeline_path:
             return Path(timeline_path).expanduser()
         return jobs_dir / "timeline.jsonl"
+
+    def _persist_project_log_line(self, record: JobRecord, line: str) -> None:
+        project = record.request.project
+        if not project.enabled:
+            return
+
+        try:
+            logs_dir = self._resolve_project_logs_dir(record)
+            if logs_dir is None:
+                return
+            logs_dir.mkdir(parents=True, exist_ok=True)
+            timestamp = _utc_now()
+            message = str(line or "").strip()
+            if not message:
+                return
+
+            job_log_path = logs_dir / f"{record.job_id}.log"
+            project_log_path = logs_dir / "project.log"
+            with job_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"[{timestamp}] {message}\n")
+            with project_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(f"[{timestamp}] [{record.job_id}] {message}\n")
+        except Exception:
+            # Log persistence must never fail the active job.
+            return
+
+    @staticmethod
+    def _resolve_project_logs_dir(record: JobRecord) -> Path | None:
+        project = record.request.project
+        logs_dir = str(project.logs_dir or "").strip()
+        if logs_dir:
+            return Path(logs_dir).expanduser()
+        root_dir = str(project.root_dir or "").strip()
+        if root_dir:
+            return Path(root_dir).expanduser() / "logs"
+        return None
 
 
 def _utc_now() -> str:

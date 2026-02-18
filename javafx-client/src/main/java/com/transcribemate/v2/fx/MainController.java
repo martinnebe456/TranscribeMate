@@ -2657,6 +2657,7 @@ public class MainController {
         Files.createDirectories(projectRoot.resolve("output"));
         Files.createDirectories(projectRoot.resolve("transcripts"));
         Files.createDirectories(projectRoot.resolve("jobs"));
+        Files.createDirectories(projectRoot.resolve("logs"));
         Files.createDirectories(projectRoot.resolve("assets"));
         Files.createDirectories(projectRoot.resolve("temp"));
         Path projectMeta = projectRoot.resolve("project.json");
@@ -5076,6 +5077,10 @@ public class MainController {
         String youtubeUrl = trimToEmpty(youtubeUrlField.getText());
         String outputDir = trimToEmpty(outputDirField.getText());
 
+        if (trimToEmpty(activeProjectId).isBlank() || activeProjectRoot == null) {
+            return "Project is required. Select or create a project first.";
+        }
+
         if (MODULE_OFFLINE.equals(activeModule) || MODULE_SPEAKER.equals(activeModule) || MODULE_CONFERENCE.equals(activeModule)) {
             if (localPath.isBlank()) {
                 return "Please select local file/folder.";
@@ -5109,6 +5114,7 @@ public class MainController {
             project.put("input_dir", projectRoot.resolve("input").toString());
             project.put("output_dir", projectRoot.resolve("output").toString());
             project.put("jobs_dir", projectRoot.resolve("jobs").toString());
+            project.put("logs_dir", projectRoot.resolve("logs").toString());
             project.put("timeline_path", projectRoot.resolve("jobs").resolve("timeline.jsonl").toString());
         }
 
