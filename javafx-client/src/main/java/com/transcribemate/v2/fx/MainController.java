@@ -231,6 +231,48 @@ public class MainController {
     private VBox dashboardPane;
 
     @FXML
+    private Label dashboardActiveProjectLabel;
+
+    @FXML
+    private Label dashboardProjectStatsLabel;
+
+    @FXML
+    private Button dashboardRefreshButton;
+
+    @FXML
+    private Button dashboardOpenProjectButton;
+
+    @FXML
+    private Button dashboardImportFilesButton;
+
+    @FXML
+    private Button dashboardOpenOutputFolderButton;
+
+    @FXML
+    private TableView<WorkspaceFileRow> dashboardRecentFilesTable;
+
+    @FXML
+    private TableColumn<WorkspaceFileRow, String> dashboardRecentPathColumn;
+
+    @FXML
+    private TableColumn<WorkspaceFileRow, String> dashboardRecentTypeColumn;
+
+    @FXML
+    private TableColumn<WorkspaceFileRow, String> dashboardRecentModifiedColumn;
+
+    @FXML
+    private Button dashboardOpenSelectedRecentButton;
+
+    @FXML
+    private Button dashboardOpenTimelineButton;
+
+    @FXML
+    private Label dashboardTimelineInfoLabel;
+
+    @FXML
+    private TextArea dashboardTimelineArea;
+
+    @FXML
     private VBox projectsPane;
 
     @FXML
@@ -360,6 +402,12 @@ public class MainController {
     private VBox runSourceCard;
 
     @FXML
+    private VBox runModuleContextCard;
+
+    @FXML
+    private Label runModuleContextLabel;
+
+    @FXML
     private VBox runOutputCard;
 
     @FXML
@@ -400,6 +448,9 @@ public class MainController {
 
     @FXML
     private VBox settingsCoreCard;
+
+    @FXML
+    private Label settingsScopeLabel;
 
     @FXML
     private VBox settingsModuleFlowCard;
@@ -737,6 +788,7 @@ public class MainController {
     private final Map<String, JobRow> jobsById = new LinkedHashMap<>();
     private final ObservableList<ProjectRow> projectRows = FXCollections.observableArrayList();
     private final Map<String, ProjectWorkspace> projectsById = new LinkedHashMap<>();
+    private final ObservableList<WorkspaceFileRow> dashboardRecentFileRows = FXCollections.observableArrayList();
     private final ObservableList<WorkspaceFileRow> workspaceFileRows = FXCollections.observableArrayList();
     private final ObservableList<SpeakerProfileRow> speakerProfiles = FXCollections.observableArrayList();
     private final ObservableList<ConferenceFileRow> conferenceFiles = FXCollections.observableArrayList();
@@ -1051,6 +1103,57 @@ public class MainController {
     }
 
     @FXML
+    private void onRefreshDashboard() {
+        refreshDashboardData();
+        addUserLog("INFO", "Dashboard refreshed.");
+    }
+
+    @FXML
+    private void onDashboardOpenProjectFolder() {
+        onOpenProjectFolder();
+    }
+
+    @FXML
+    private void onDashboardImportFiles() {
+        onImportFilesToProject();
+    }
+
+    @FXML
+    private void onDashboardOpenOutputFolder() {
+        if (activeProjectRoot == null) {
+            addUserLog("WARN", "No active project selected.");
+            return;
+        }
+        openPath(activeProjectRoot.resolve("output").toString());
+    }
+
+    @FXML
+    private void onDashboardOpenTimeline() {
+        if (activeProjectRoot == null) {
+            addUserLog("WARN", "No active project selected.");
+            return;
+        }
+        Path timelinePath = activeProjectRoot.resolve("jobs").resolve("timeline.jsonl");
+        if (!Files.isRegularFile(timelinePath)) {
+            addUserLog("WARN", "Timeline file does not exist yet.");
+            return;
+        }
+        openPath(timelinePath.toString());
+    }
+
+    @FXML
+    private void onDashboardOpenSelectedRecentFile() {
+        WorkspaceFileRow selected = dashboardRecentFilesTable == null
+                ? null
+                : dashboardRecentFilesTable.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            addUserLog("WARN", "Select recent output file first.");
+            return;
+        }
+        openPath(selected.getAbsolutePath());
+    }
+
+    @FXML
     private void onCreateProject() {
         TextInputDialog dialog = new TextInputDialog("");
         dialog.setTitle("Create Project");
@@ -1249,12 +1352,14 @@ public class MainController {
         loadWorkspaceState();
         refreshProjectsView();
         refreshProjectFiles();
+        refreshDashboardData();
     }
 
     private void reloadWorkspaceFromCurrentAppDataDir() {
         loadWorkspaceState();
         refreshProjectsView();
         refreshProjectFiles();
+        refreshDashboardData();
     }
 
     private void loadWorkspaceState() {
@@ -1412,7 +1517,196 @@ public class MainController {
             projectFilesTable.getSelectionModel().clearSelection();
         }
         onWorkspaceFileSelectionChanged(null);
+        refreshDashboardData();
         setRunning(startButton != null && startButton.isDisabled());
+    }
+
+    private void refreshDashboardData() {
+        if (dashboardActiveProjectLabel == null) {
+            return;
+        }
+
+        if (activeProjectRoot == null) {
+            dashboardActiveProjectLabel.setText("Active project: none");
+            if (dashboardProjectStatsLabel != null) {
+                dashboardProjectStatsLabel.setText("Input: 0 | Output: 0 | Transcripts: 0 | Job snapshots: 0");
+            }
+            dashboardRecentFileRows.clear();
+            if (dashboardRecentFilesTable != null) {
+                dashboardRecentFilesTable.getSelectionModel().clearSelection();
+            }
+            if (dashboardTimelineInfoLabel != null) {
+                dashboardTimelineInfoLabel.setText("Timeline: no data yet.");
+            }
+            if (dashboardTimelineArea != null) {
+                dashboardTimelineArea.setText("No active project selected.");
+            }
+            onDashboardRecentSelectionChanged(null);
+            return;
+        }
+
+        ProjectWorkspace active = projectsById.get(activeProjectId);
+        String activeName = active == null ? activeProjectId : active.name();
+        dashboardActiveProjectLabel.setText("Active project: " + activeName + " (" + trimToEmpty(activeProjectId) + ")");
+
+        long inputCount = countRegularFiles(activeProjectRoot.resolve("input"));
+        long outputCount = countRegularFiles(activeProjectRoot.resolve("output"));
+        long transcriptCount = countRegularFiles(activeProjectRoot.resolve("transcripts"));
+        long jobCount = countRegularFiles(activeProjectRoot.resolve("jobs"));
+        if (dashboardProjectStatsLabel != null) {
+            dashboardProjectStatsLabel.setText(
+                    "Input: " + inputCount
+                            + " | Output: " + outputCount
+                            + " | Transcripts: " + transcriptCount
+                            + " | Job snapshots: " + jobCount
+            );
+        }
+
+        dashboardRecentFileRows.clear();
+        for (Path path : collectRecentProjectArtifacts(activeProjectRoot, 40)) {
+            String relative = activeProjectRoot.relativize(path).toString().replace('\\', '/');
+            dashboardRecentFileRows.add(new WorkspaceFileRow(
+                    relative,
+                    fileType(path),
+                    formatBytes(safeSize(path)),
+                    formatFileTime(path),
+                    path.toAbsolutePath().normalize().toString()
+            ));
+        }
+
+        Path timelinePath = activeProjectRoot.resolve("jobs").resolve("timeline.jsonl");
+        refreshDashboardTimeline(timelinePath, 120);
+        onDashboardRecentSelectionChanged(
+                dashboardRecentFilesTable == null
+                        ? null
+                        : dashboardRecentFilesTable.getSelectionModel().getSelectedItem()
+        );
+    }
+
+    private void refreshDashboardTimeline(Path timelinePath, int maxLines) {
+        if (dashboardTimelineArea == null) {
+            return;
+        }
+
+        if (timelinePath == null || !Files.isRegularFile(timelinePath)) {
+            dashboardTimelineArea.setText("No timeline data yet. Timeline is created after the first job event.");
+            if (dashboardTimelineInfoLabel != null) {
+                dashboardTimelineInfoLabel.setText("Timeline: no data yet.");
+            }
+            return;
+        }
+
+        try {
+            List<String> lines = Files.readAllLines(timelinePath, StandardCharsets.UTF_8);
+            int total = lines.size();
+            int start = Math.max(0, total - Math.max(1, maxLines));
+            List<String> tail = lines.subList(start, total);
+            StringBuilder sb = new StringBuilder();
+            for (String raw : tail) {
+                String line = trimToEmpty(raw);
+                if (line.isBlank()) {
+                    continue;
+                }
+                String formatted = formatTimelineLine(line);
+                sb.append(formatted).append("\n");
+            }
+            if (sb.length() == 0) {
+                sb.append("Timeline file exists, but no readable entries were found.");
+            }
+            dashboardTimelineArea.setText(sb.toString().trim());
+            dashboardTimelineArea.positionCaret(0);
+            if (dashboardTimelineInfoLabel != null) {
+                dashboardTimelineInfoLabel.setText(
+                        "Timeline: " + total + " entries (showing last " + (total - start) + ")."
+                );
+            }
+        } catch (Exception ex) {
+            dashboardTimelineArea.setText("Failed to load timeline: " + ex.getMessage());
+            if (dashboardTimelineInfoLabel != null) {
+                dashboardTimelineInfoLabel.setText("Timeline: read error.");
+            }
+            addTechnicalLog("WARN", "Dashboard timeline load failed: " + ex.getMessage());
+        }
+    }
+
+    private String formatTimelineLine(String line) {
+        try {
+            JsonNode row = mapper.readTree(line);
+            String ts = trimTimestamp(row.path("ts").asText(""));
+            String event = trimToEmpty(row.path("event").asText(""));
+            String status = trimToEmpty(row.path("status").asText(""));
+            String step = trimToEmpty(row.path("step").asText(""));
+            String overall = row.has("overall_pct")
+                    ? String.format(Locale.ROOT, "%.0f%%", row.path("overall_pct").asDouble(0.0))
+                    : "";
+            String textLine = trimToEmpty(row.path("line").asText(""));
+
+            StringBuilder sb = new StringBuilder();
+            sb.append("[").append(ts.isBlank() ? "-" : ts).append("] ");
+            sb.append(event.isBlank() ? "event" : event);
+            if (!status.isBlank()) {
+                sb.append(" | ").append(status);
+            }
+            if (!step.isBlank()) {
+                sb.append(" | ").append(step);
+            }
+            if (!overall.isBlank()) {
+                sb.append(" | ").append(overall);
+            }
+            if (!textLine.isBlank()) {
+                sb.append(" | ").append(textLine);
+            }
+            return sb.toString();
+        } catch (Exception ignored) {
+            return line;
+        }
+    }
+
+    private List<Path> collectRecentProjectArtifacts(Path projectRoot, int limit) {
+        if (projectRoot == null) {
+            return List.of();
+        }
+
+        List<Path> candidates = new ArrayList<>();
+        List<Path> roots = List.of(
+                projectRoot.resolve("output"),
+                projectRoot.resolve("transcripts")
+        );
+
+        for (Path root : roots) {
+            if (!Files.isDirectory(root)) {
+                continue;
+            }
+            try (Stream<Path> stream = Files.walk(root)) {
+                stream.filter(Files::isRegularFile).forEach(candidates::add);
+            } catch (Exception ignored) {
+                // Ignore one subtree and keep the rest.
+            }
+        }
+
+        candidates.sort((left, right) -> {
+            try {
+                return Files.getLastModifiedTime(right).compareTo(Files.getLastModifiedTime(left));
+            } catch (Exception ignored) {
+                return right.toString().compareToIgnoreCase(left.toString());
+            }
+        });
+
+        if (limit <= 0 || candidates.size() <= limit) {
+            return candidates;
+        }
+        return new ArrayList<>(candidates.subList(0, limit));
+    }
+
+    private long countRegularFiles(Path root) {
+        if (root == null || !Files.exists(root)) {
+            return 0L;
+        }
+        try (Stream<Path> stream = Files.walk(root)) {
+            return stream.filter(Files::isRegularFile).count();
+        } catch (Exception ignored) {
+            return 0L;
+        }
     }
 
     private void setActiveProject(String projectId, boolean persist, boolean logChange) {
@@ -1461,6 +1755,7 @@ public class MainController {
         activeEditedFilePath = null;
         applyActiveProjectToRunFields();
         refreshActiveProjectLabels();
+        refreshDashboardData();
         refreshJobsSilently();
         if (persist) {
             saveWorkspaceState();
@@ -1494,6 +1789,13 @@ public class MainController {
         }
         if (projectOpenFolderButton != null) {
             projectOpenFolderButton.setDisable(running || (!hasSelection && activeProjectRoot == null));
+        }
+    }
+
+    private void onDashboardRecentSelectionChanged(WorkspaceFileRow selected) {
+        boolean running = startButton != null && startButton.isDisabled();
+        if (dashboardOpenSelectedRecentButton != null) {
+            dashboardOpenSelectedRecentButton.setDisable(running || selected == null);
         }
     }
 
@@ -2645,6 +2947,15 @@ public class MainController {
             projectFilesTable.getSelectionModel().selectedItemProperty()
                     .addListener((obs, oldItem, newItem) -> onWorkspaceFileSelectionChanged(newItem));
         }
+
+        if (dashboardRecentFilesTable != null) {
+            dashboardRecentFilesTable.setItems(dashboardRecentFileRows);
+            dashboardRecentPathColumn.setCellValueFactory(new PropertyValueFactory<>("relativePath"));
+            dashboardRecentTypeColumn.setCellValueFactory(new PropertyValueFactory<>("type"));
+            dashboardRecentModifiedColumn.setCellValueFactory(new PropertyValueFactory<>("modified"));
+            dashboardRecentFilesTable.getSelectionModel().selectedItemProperty()
+                    .addListener((obs, oldItem, newItem) -> onDashboardRecentSelectionChanged(newItem));
+        }
     }
 
     private void setupFilters() {
@@ -3009,6 +3320,19 @@ public class MainController {
         );
     }
 
+    private void updateModuleContextLabels() {
+        String label = moduleLabel(activeModule);
+        if (runModuleContextLabel != null) {
+            runModuleContextLabel.setText(
+                    "Active module: " + label
+                            + ". Run only shows source/output controls relevant for this module."
+            );
+        }
+        if (settingsScopeLabel != null) {
+            settingsScopeLabel.setText("Module settings - " + label);
+        }
+    }
+
     private void configureModuleFlow(String title, String details, String actionKey, String actionText) {
         moduleFlowTitleLabel.setText(title);
         moduleFlowLabel.setText(details);
@@ -3043,6 +3367,7 @@ public class MainController {
         syncSettingsModuleSelector();
         refreshModulePresetList(trimToEmpty(preferences.get(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, "")));
         updateModuleSpecificUiVisibility();
+        updateModuleContextLabels();
         applyActiveProjectToRunFields();
         refreshJobsSilently();
 
@@ -3118,6 +3443,7 @@ public class MainController {
         setTabVisible(jobsTab, schema.allowsTab("jobs"));
         setTabVisible(settingsTab, schema.allowsTab("settings"));
 
+        setNodeVisibleManaged(runModuleContextCard, schema.allowsTab("run"));
         setNodeVisibleManaged(runSourceCard, schema.allowsSection("run_source_card"));
         setNodeVisibleManaged(runOutputCard, schema.allowsSection("run_output_card"));
         setNodeVisibleManaged(advancedSubtitlesCard, schema.allowsSection("advanced_subtitles_card"));
@@ -3126,7 +3452,7 @@ public class MainController {
         setNodeVisibleManaged(settingsRuntimeCard, schema.allowsSection("settings_runtime_card"));
         setNodeVisibleManaged(settingsCoreCard, schema.allowsSection("settings_core_card"));
         setNodeVisibleManaged(settingsModuleFlowCard, schema.allowsSection("settings_module_flow_card"));
-        setNodeVisibleManaged(settingsModuleScopeRow, schema.allowsSection("settings_module_scope_row"));
+        setNodeVisibleManaged(settingsModuleScopeRow, false);
         setNodeVisibleManaged(settingsPresetRow, schema.allowsSection("settings_preset_row"));
 
         boolean showSimpleHint = simpleModeBox.isSelected() && schema.allowsSection("simple_hint_card");
@@ -3974,6 +4300,7 @@ public class MainController {
                         resetEtaDisplay();
                     }
                     addUserLog("INFO", withJobPrefix(jobId, "Job running..."));
+                    refreshDashboardData();
                     refreshJobsSilently();
                 }
                 case "job.completed" -> {
@@ -4002,6 +4329,7 @@ public class MainController {
                         addUserLog("INFO", withJobPrefix(jobId, "Speaker sidecar ready: " + sidecarPath));
                         promptSpeakerMapping(sidecarPath);
                     }
+                    refreshDashboardData();
                     refreshJobsSilently();
                 }
                 case "job.failed" -> {
@@ -4020,6 +4348,7 @@ public class MainController {
                         progressBar.setProgress(0.0);
                         resetEtaDisplay();
                     }
+                    refreshDashboardData();
                     refreshJobsSilently();
                 }
                 case "job.cancelled" -> {
@@ -4032,6 +4361,7 @@ public class MainController {
                         progressBar.setProgress(0.0);
                         resetEtaDisplay();
                     }
+                    refreshDashboardData();
                     refreshJobsSilently();
                 }
                 case "job.cancel_requested" -> addUserLog("INFO", withJobPrefix(jobId, "Cancel request accepted."));
@@ -4845,6 +5175,33 @@ public class MainController {
         }
         if (projectFilesTable != null) {
             projectFilesTable.setDisable(running);
+        }
+        if (dashboardRefreshButton != null) {
+            dashboardRefreshButton.setDisable(running);
+        }
+        if (dashboardOpenProjectButton != null) {
+            dashboardOpenProjectButton.setDisable(running || activeProjectRoot == null);
+        }
+        if (dashboardImportFilesButton != null) {
+            dashboardImportFilesButton.setDisable(running || activeProjectRoot == null);
+        }
+        if (dashboardOpenOutputFolderButton != null) {
+            dashboardOpenOutputFolderButton.setDisable(running || activeProjectRoot == null);
+        }
+        if (dashboardOpenTimelineButton != null) {
+            boolean hasTimeline = activeProjectRoot != null
+                    && Files.isRegularFile(activeProjectRoot.resolve("jobs").resolve("timeline.jsonl"));
+            dashboardOpenTimelineButton.setDisable(running || !hasTimeline);
+        }
+        if (dashboardOpenSelectedRecentButton != null) {
+            dashboardOpenSelectedRecentButton.setDisable(
+                    running
+                            || dashboardRecentFilesTable == null
+                            || dashboardRecentFilesTable.getSelectionModel().getSelectedItem() == null
+            );
+        }
+        if (dashboardRecentFilesTable != null) {
+            dashboardRecentFilesTable.setDisable(running);
         }
         updateSpeakerMappingButtonState(running);
     }
