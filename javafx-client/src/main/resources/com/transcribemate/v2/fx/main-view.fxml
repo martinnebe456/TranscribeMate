@@ -126,8 +126,26 @@
                       <Button fx:id="dashboardOpenProjectButton" text="Open project folder" onAction="#onDashboardOpenProjectFolder"/>
                       <Button fx:id="dashboardImportFilesButton" text="Import files" onAction="#onDashboardImportFiles"/>
                       <Button fx:id="dashboardOpenOutputFolderButton" text="Open output folder" onAction="#onDashboardOpenOutputFolder"/>
+                      <Button fx:id="dashboardOpenWizardButton" text="Open wizard" onAction="#onDashboardOpenWizardForActive"/>
                     </children>
                   </HBox>
+                </VBox>
+
+                <VBox spacing="8.0" styleClass="card-pane">
+                  <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
+                  <HBox spacing="8.0" alignment="CENTER_LEFT">
+                    <children>
+                      <Label text="Projects gallery" styleClass="section-title"/>
+                      <Region HBox.hgrow="ALWAYS"/>
+                      <Button text="Create project" onAction="#onCreateProject"/>
+                    </children>
+                  </HBox>
+                  <Label fx:id="dashboardGalleryInfoLabel" text="No projects yet. Create one to start." styleClass="small-label"/>
+                  <ScrollPane fitToWidth="true" prefViewportHeight="210.0" styleClass="project-gallery-scroll">
+                    <content>
+                      <VBox fx:id="dashboardProjectGalleryBox" spacing="8.0"/>
+                    </content>
+                  </ScrollPane>
                 </VBox>
 
                 <HBox spacing="10.0" VBox.vgrow="ALWAYS">
