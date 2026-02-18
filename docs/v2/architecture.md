@@ -10,6 +10,15 @@
 - `transcribemate/v2/backend/` (Python 3.12): JSON-line backend worker process.
 - Transport: newline-delimited JSON over `stdin/stdout`.
 
+## Frontend Shell (Phase 4)
+- Main shell is split into independent sections:
+  - `Dashboard`: active project status, recent outputs/transcripts, timeline tail.
+  - `Projects`: workspace project lifecycle (create/select/delete/open).
+  - `Files`: project file browser + in-app text preview/editor.
+  - `Module`: module execution and module-scoped settings.
+- Active module controls visibility of tabs/fields via backend-provided `ui_schema`.
+- Module settings and presets are scoped per module and persisted in `config.json`.
+
 ## Runtime Flow
 1. JavaFX app starts Python backend process:
    - preferred interpreter: managed runtime (`%LOCALAPPDATA%/TranscribeMate/runtime/python/python.exe`) when present
@@ -22,6 +31,19 @@
    - `job.progress`
    - `job.completed` / `job.failed` / `job.cancelled`
 5. Frontend renders progress/logs and allows `cancel_job`.
+
+## Workspace Persistence
+- Workspace root:
+  - `%LOCALAPPDATA%/TranscribeMate/workspace/`
+- Metadata:
+  - `workspace/workspace.json` (project registry + active project pointer)
+- Per-project root:
+  - `workspace/projects/<project_id>/`
+- Project structure:
+  - `input/`, `output/`, `transcripts/`, `jobs/`, `assets/`, `temp/`
+  - `project.json` (project metadata)
+- Timeline:
+  - `jobs/timeline.jsonl` is used by Dashboard to render recent run activity.
 
 ## Backend Layers
 - `protocol.py`: message envelope parsing/serialization.
