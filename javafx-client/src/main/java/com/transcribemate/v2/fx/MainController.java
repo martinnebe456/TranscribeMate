@@ -62,7 +62,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -81,6 +83,8 @@ import java.util.stream.Stream;
 
 public class MainController {
     private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
+    private static final DateTimeFormatter STAMP_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter DASHBOARD_ACTIVITY_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
     private static final int MAX_LOG_ENTRIES = 5000;
     private static final int BOOTSTRAP_LOG_MAX_CHARS = 200000;
     private static final String APP_NAME = "TranscribeMate";
@@ -207,6 +211,23 @@ public class MainController {
         }
     }
 
+    private record ActivitySnapshot(String label, LocalDateTime at) {
+    }
+
+    private record ProjectDashboardCard(
+            String projectId,
+            String projectName,
+            Path rootPath,
+            long inputCount,
+            long outputCount,
+            long transcriptCount,
+            long diskBytes,
+            String lastActivity,
+            String lastActivityAt,
+            long sortEpoch
+    ) {
+    }
+
     @FXML
     private BorderPane rootPane;
 
@@ -254,6 +275,15 @@ public class MainController {
 
     @FXML
     private Button dashboardOpenOutputFolderButton;
+
+    @FXML
+    private Button dashboardOpenWizardButton;
+
+    @FXML
+    private Label dashboardGalleryInfoLabel;
+
+    @FXML
+    private VBox dashboardProjectGalleryBox;
 
     @FXML
     private TableView<WorkspaceFileRow> dashboardRecentFilesTable;
@@ -1318,6 +1348,14 @@ public class MainController {
     }
 
     @FXML
+    private void onDashboardOpenWizardForActive() {
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
+        openProjectWizard(activeProjectId);
+    }
+
+    @FXML
     private void onDashboardOpenTimeline() {
         if (activeProjectRoot == null) {
             addUserLog("WARN", "No active project selected.");
@@ -1395,6 +1433,37 @@ public class MainController {
         setActiveProject(selected.getProjectId(), true, true);
         refreshProjectsView();
         refreshProjectFiles();
+    }
+
+    private boolean ensureWorkflowProjectReady() {
+        if (activeProjectRoot != null && !trimToEmpty(activeProjectId).isBlank()) {
+            return true;
+        }
+        addUserLog("WARN", "Project is required. Select or create a project first.");
+        showShellSection(SECTION_DASHBOARD);
+        return false;
+    }
+
+    private void openProjectWizard(String projectId) {
+        String normalized = trimToEmpty(projectId);
+        if (normalized.isBlank() || !projectsById.containsKey(normalized)) {
+            addUserLog("WARN", "Project does not exist anymore.");
+            reloadWorkspaceFromCurrentAppDataDir();
+            return;
+        }
+
+        setActiveProject(normalized, true, !Objects.equals(activeProjectId, normalized));
+        refreshProjectsView();
+        refreshProjectFiles();
+        showShellSection(SECTION_MODULES);
+        if (runTab != null) {
+            selectModule(runTab);
+        }
+        requestFocusIfVisible(sourceModeBox, localPathField, youtubeUrlField);
+
+        ProjectWorkspace project = projectsById.get(normalized);
+        String projectName = project == null ? normalized : project.name();
+        addUserLog("INFO", "Workflow wizard opened for project: " + projectName);
     }
 
     @FXML
@@ -1550,23 +1619,35 @@ public class MainController {
 
     @FXML
     private void onWizardSource() {
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
         selectModule(runTab);
         requestFocusIfVisible(sourceModeBox, localPathField, youtubeUrlField);
     }
 
     @FXML
     private void onWizardOutput() {
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
         selectModule(runTab);
         requestFocusIfVisible(outputDirField);
     }
 
     @FXML
     private void onWizardPreflight() {
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
         onRunPreflight();
     }
 
     @FXML
     private void onWizardRun() {
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
         onStart();
     }
 
@@ -1951,6 +2032,7 @@ public class MainController {
     }
 
     private void updateWizardState() {
+        boolean projectReady = activeProjectRoot != null && !trimToEmpty(activeProjectId).isBlank();
         boolean sourceReady;
         if ("youtube".equalsIgnoreCase(safeValue(sourceModeBox))) {
             sourceReady = !trimToEmpty(youtubeUrlField == null ? "" : youtubeUrlField.getText()).isBlank();
@@ -1963,7 +2045,8 @@ public class MainController {
                 : (lastPreflightOk ? "passed" : "has issues");
         if (wizardStateLabel != null) {
             wizardStateLabel.setText(
-                    "Source: " + (sourceReady ? "ready" : "missing")
+                    "Project: " + (projectReady ? "selected" : "required")
+                            + " | Source: " + (sourceReady ? "ready" : "missing")
                             + " | Output: " + (outputReady ? "ready" : "missing")
                             + " | Preflight: " + preflightState
             );
@@ -2267,6 +2350,8 @@ public class MainController {
             return;
         }
 
+        refreshDashboardProjectGallery();
+
         if (activeProjectRoot == null) {
             dashboardActiveProjectLabel.setText("Active project: none");
             if (dashboardProjectStatsLabel != null) {
@@ -2283,6 +2368,10 @@ public class MainController {
                 dashboardTimelineArea.setText("No active project selected.");
             }
             onDashboardRecentSelectionChanged(null);
+            if (dashboardOpenWizardButton != null) {
+                boolean running = startButton != null && startButton.isDisabled();
+                dashboardOpenWizardButton.setDisable(running || activeProjectRoot == null);
+            }
             return;
         }
 
@@ -2322,6 +2411,270 @@ public class MainController {
                         ? null
                         : dashboardRecentFilesTable.getSelectionModel().getSelectedItem()
         );
+        if (dashboardOpenWizardButton != null) {
+            boolean running = startButton != null && startButton.isDisabled();
+            dashboardOpenWizardButton.setDisable(running || activeProjectRoot == null);
+        }
+    }
+
+    private void refreshDashboardProjectGallery() {
+        if (dashboardProjectGalleryBox == null) {
+            return;
+        }
+
+        boolean running = startButton != null && startButton.isDisabled();
+        List<ProjectDashboardCard> cards = new ArrayList<>();
+        for (ProjectWorkspace workspace : projectsById.values()) {
+            cards.add(buildProjectDashboardCard(workspace));
+        }
+        cards.sort(
+                Comparator.comparingLong(ProjectDashboardCard::sortEpoch).reversed()
+                        .thenComparing(card -> trimToEmpty(card.projectName()).toLowerCase(Locale.ROOT))
+                        .thenComparing(card -> trimToEmpty(card.projectId()).toLowerCase(Locale.ROOT))
+        );
+
+        dashboardProjectGalleryBox.getChildren().clear();
+        for (ProjectDashboardCard card : cards) {
+            dashboardProjectGalleryBox.getChildren().add(buildProjectGalleryCard(card, running));
+        }
+
+        if (dashboardGalleryInfoLabel != null) {
+            if (cards.isEmpty()) {
+                dashboardGalleryInfoLabel.setText("No projects yet. Create one to start.");
+            } else {
+                dashboardGalleryInfoLabel.setText("Projects: " + cards.size() + " (sorted by last activity)");
+            }
+        }
+    }
+
+    private Node buildProjectGalleryCard(ProjectDashboardCard card, boolean running) {
+        boolean active = Objects.equals(activeProjectId, card.projectId());
+
+        VBox box = new VBox(6);
+        box.getStyleClass().add("project-gallery-card");
+        if (active) {
+            box.getStyleClass().add("project-gallery-card-active");
+        }
+        box.setPadding(new Insets(10, 10, 10, 10));
+
+        Label title = new Label(trimToEmpty(card.projectName()) + " (" + trimToEmpty(card.projectId()) + ")");
+        title.getStyleClass().add("section-title");
+
+        Label activityLabel = new Label("Last activity: " + trimToEmpty(card.lastActivity()));
+        activityLabel.getStyleClass().add("small-label");
+
+        Label activityDateLabel = new Label("Date: " + trimToEmpty(card.lastActivityAt()));
+        activityDateLabel.getStyleClass().add("small-label");
+
+        Label statsLabel = new Label(
+                "Input: " + card.inputCount()
+                        + " | Output: " + card.outputCount()
+                        + " | Transcripts: " + card.transcriptCount()
+                        + " | Size: " + formatBytes(card.diskBytes())
+        );
+        statsLabel.getStyleClass().add("small-label");
+
+        HBox actions = new HBox(8);
+        Button selectButton = new Button(active ? "Active" : "Select");
+        selectButton.setDisable(running || active);
+        selectButton.setOnAction(event -> {
+            setActiveProject(card.projectId(), true, true);
+            refreshProjectsView();
+            refreshProjectFiles();
+        });
+
+        Button wizardButton = new Button("Open wizard");
+        wizardButton.getStyleClass().add("accent-btn");
+        wizardButton.setDisable(running);
+        wizardButton.setOnAction(event -> openProjectWizard(card.projectId()));
+
+        Button folderButton = new Button("Open folder");
+        folderButton.setDisable(running || card.rootPath() == null);
+        folderButton.setOnAction(event -> {
+            if (card.rootPath() != null) {
+                openPath(card.rootPath().toString());
+            }
+        });
+
+        actions.getChildren().addAll(selectButton, wizardButton, folderButton);
+        box.getChildren().addAll(title, activityLabel, activityDateLabel, statsLabel, actions);
+        return box;
+    }
+
+    private ProjectDashboardCard buildProjectDashboardCard(ProjectWorkspace workspace) {
+        Path root = workspace == null ? null : workspace.rootPath();
+        long inputCount = countRegularFiles(root == null ? null : root.resolve("input"));
+        long outputCount = countRegularFiles(root == null ? null : root.resolve("output"));
+        long transcriptCount = countRegularFiles(root == null ? null : root.resolve("transcripts"));
+        long diskBytes = directorySizeBytes(root);
+
+        ActivitySnapshot best = new ActivitySnapshot("No activity yet", null);
+        best = newerActivity(best, new ActivitySnapshot("Project created", parseStamp(workspace == null ? "" : workspace.createdAt())));
+        best = newerActivity(best, new ActivitySnapshot("Project updated", parseStamp(workspace == null ? "" : workspace.updatedAt())));
+        best = newerActivity(best, new ActivitySnapshot("Project opened", parseStamp(workspace == null ? "" : workspace.lastOpenedAt())));
+        best = newerActivity(best, readLastTimelineActivity(root == null ? null : root.resolve("jobs").resolve("timeline.jsonl")));
+
+        LocalDateTime filesUpdatedAt = latestFileUpdate(root);
+        best = newerActivity(best, new ActivitySnapshot("Files updated", filesUpdatedAt));
+
+        LocalDateTime bestAt = best.at();
+        String lastAt = bestAt == null ? "-" : DASHBOARD_ACTIVITY_FMT.format(bestAt);
+        long sortEpoch = bestAt == null
+                ? 0L
+                : bestAt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+        return new ProjectDashboardCard(
+                workspace == null ? "" : workspace.projectId(),
+                workspace == null ? "" : workspace.name(),
+                root,
+                inputCount,
+                outputCount,
+                transcriptCount,
+                diskBytes,
+                trimToEmpty(best.label()),
+                lastAt,
+                sortEpoch
+        );
+    }
+
+    private ActivitySnapshot newerActivity(ActivitySnapshot current, ActivitySnapshot candidate) {
+        if (candidate == null || candidate.at() == null) {
+            return current;
+        }
+        if (current == null || current.at() == null || candidate.at().isAfter(current.at())) {
+            return candidate;
+        }
+        return current;
+    }
+
+    private ActivitySnapshot readLastTimelineActivity(Path timelinePath) {
+        if (timelinePath == null || !Files.isRegularFile(timelinePath)) {
+            return null;
+        }
+        try {
+            List<String> lines = Files.readAllLines(timelinePath, StandardCharsets.UTF_8);
+            for (int idx = lines.size() - 1; idx >= 0; idx -= 1) {
+                String line = trimToEmpty(lines.get(idx));
+                if (line.isBlank()) {
+                    continue;
+                }
+                try {
+                    JsonNode row = mapper.readTree(line);
+                    LocalDateTime ts = parseStamp(row.path("ts").asText(""));
+                    String message = trimToEmpty(row.path("line").asText(""));
+                    if (message.isBlank()) {
+                        String event = trimToEmpty(row.path("event").asText(""));
+                        String status = trimToEmpty(row.path("status").asText(""));
+                        String step = trimToEmpty(row.path("step").asText(""));
+                        message = buildTimelineActivityLabel(event, status, step);
+                    }
+                    if (message.isBlank()) {
+                        message = "Job event";
+                    }
+                    return new ActivitySnapshot(trimForDashboard(message, 90), ts);
+                } catch (Exception ignored) {
+                    // Continue scanning previous line.
+                }
+            }
+        } catch (Exception ignored) {
+            // Timeline read errors are non-blocking for dashboard rendering.
+        }
+        return null;
+    }
+
+    private static String buildTimelineActivityLabel(String event, String status, String step) {
+        String eventText = trimToEmpty(event);
+        String statusText = trimToEmpty(status);
+        String stepText = trimToEmpty(step);
+        StringBuilder sb = new StringBuilder();
+        if (!eventText.isBlank()) {
+            sb.append(eventText);
+        }
+        if (!statusText.isBlank()) {
+            if (sb.length() > 0) {
+                sb.append(" | ");
+            }
+            sb.append(statusText);
+        }
+        if (!stepText.isBlank()) {
+            if (sb.length() > 0) {
+                sb.append(" | ");
+            }
+            sb.append(stepText);
+        }
+        return sb.toString();
+    }
+
+    private static String trimForDashboard(String text, int maxLen) {
+        String safe = trimToEmpty(text);
+        if (safe.length() <= maxLen) {
+            return safe;
+        }
+        return safe.substring(0, Math.max(0, maxLen - 3)) + "...";
+    }
+
+    private LocalDateTime latestFileUpdate(Path projectRoot) {
+        if (projectRoot == null || !Files.isDirectory(projectRoot)) {
+            return null;
+        }
+        long newestEpochMillis = -1L;
+        for (Path root : List.of(
+                projectRoot.resolve("input"),
+                projectRoot.resolve("output"),
+                projectRoot.resolve("transcripts"),
+                projectRoot.resolve("jobs")
+        )) {
+            if (!Files.isDirectory(root)) {
+                continue;
+            }
+            try (Stream<Path> stream = Files.walk(root)) {
+                long localMax = stream
+                        .filter(Files::isRegularFile)
+                        .mapToLong(path -> {
+                            try {
+                                return Files.getLastModifiedTime(path).toMillis();
+                            } catch (Exception ignored) {
+                                return -1L;
+                            }
+                        })
+                        .max()
+                        .orElse(-1L);
+                if (localMax > newestEpochMillis) {
+                    newestEpochMillis = localMax;
+                }
+            } catch (Exception ignored) {
+                // Ignore one subtree and keep scanning.
+            }
+        }
+        if (newestEpochMillis < 0L) {
+            return null;
+        }
+        return LocalDateTime.ofInstant(Instant.ofEpochMilli(newestEpochMillis), ZoneId.systemDefault());
+    }
+
+    private long directorySizeBytes(Path root) {
+        if (root == null || !Files.isDirectory(root)) {
+            return 0L;
+        }
+        try (Stream<Path> stream = Files.walk(root)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .mapToLong(MainController::safeSize)
+                    .sum();
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
+    private static LocalDateTime parseStamp(String value) {
+        String safe = trimTimestamp(value);
+        if (safe.isBlank()) {
+            return null;
+        }
+        try {
+            return LocalDateTime.parse(safe, STAMP_FMT);
+        } catch (Exception ignored) {
+            return null;
+        }
     }
 
     private void refreshDashboardTimeline(Path timelinePath, int maxLines) {
@@ -2958,6 +3311,9 @@ public class MainController {
             addUserLog("WARN", "Online runtime setup is in progress. Wait until it completes.");
             return;
         }
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
         if (backendClient == null) {
             addTechnicalLog("ERROR", "Backend is not initialized.");
             return;
@@ -3033,6 +3389,9 @@ public class MainController {
 
     @FXML
     private void onRunPreflight() {
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
         if (backendClient == null) {
             addTechnicalLog("ERROR", "Backend is not initialized.");
             return;
@@ -4240,7 +4599,9 @@ public class MainController {
         moduleFlowLabel.setText(details);
         moduleFlowActionKey = actionKey == null ? "" : actionKey;
         moduleFlowActionButton.setText(actionText == null ? "Action" : actionText);
-        moduleFlowActionButton.setDisable(startButton.isDisabled());
+        boolean running = startButton != null && startButton.isDisabled();
+        boolean hasActiveProject = activeProjectRoot != null && !trimToEmpty(activeProjectId).isBlank();
+        moduleFlowActionButton.setDisable(running || !hasActiveProject);
     }
 
     private void activateModule(String moduleId, boolean logChange) {
@@ -6041,11 +6402,12 @@ public class MainController {
     }
 
     private void setRunning(boolean running) {
-        startButton.setDisable(running);
+        boolean hasActiveProject = activeProjectRoot != null && !trimToEmpty(activeProjectId).isBlank();
+        startButton.setDisable(running || !hasActiveProject);
         cancelButton.setDisable(!running);
-        preflightButton.setDisable(running);
+        preflightButton.setDisable(running || !hasActiveProject);
         simpleModeBox.setDisable(running);
-        moduleFlowActionButton.setDisable(running);
+        moduleFlowActionButton.setDisable(running || !hasActiveProject);
         runModuleButton.setDisable(running);
         advancedModuleButton.setDisable(running);
         diarizationModuleButton.setDisable(running);
@@ -6054,16 +6416,16 @@ public class MainController {
         youtubeDubModuleButton.setDisable(running);
         settingsModuleButton.setDisable(running);
         if (wizardSourceButton != null) {
-            wizardSourceButton.setDisable(running);
+            wizardSourceButton.setDisable(running || !hasActiveProject);
         }
         if (wizardOutputButton != null) {
-            wizardOutputButton.setDisable(running);
+            wizardOutputButton.setDisable(running || !hasActiveProject);
         }
         if (wizardPreflightButton != null) {
-            wizardPreflightButton.setDisable(running);
+            wizardPreflightButton.setDisable(running || !hasActiveProject);
         }
         if (wizardRunButton != null) {
-            wizardRunButton.setDisable(running);
+            wizardRunButton.setDisable(running || !hasActiveProject);
         }
         if (moduleSwitcherBox != null) {
             moduleSwitcherBox.setDisable(running);
@@ -6186,6 +6548,9 @@ public class MainController {
         if (dashboardOpenOutputFolderButton != null) {
             dashboardOpenOutputFolderButton.setDisable(running || activeProjectRoot == null);
         }
+        if (dashboardOpenWizardButton != null) {
+            dashboardOpenWizardButton.setDisable(running || activeProjectRoot == null);
+        }
         if (dashboardOpenTimelineButton != null) {
             boolean hasTimeline = activeProjectRoot != null
                     && Files.isRegularFile(activeProjectRoot.resolve("jobs").resolve("timeline.jsonl"));
@@ -6201,6 +6566,7 @@ public class MainController {
         if (dashboardRecentFilesTable != null) {
             dashboardRecentFilesTable.setDisable(running);
         }
+        refreshDashboardProjectGallery();
         updateEditorButtonsState();
         updateSpeakerMappingButtonState(running);
         updateWizardState();
@@ -7093,7 +7459,7 @@ public class MainController {
     }
 
     private static String nowStamp() {
-        return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        return LocalDateTime.now().format(STAMP_FMT);
     }
 
     private static String trimTimestamp(String value) {
