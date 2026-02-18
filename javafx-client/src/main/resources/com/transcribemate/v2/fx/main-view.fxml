@@ -132,20 +132,57 @@
 
             <VBox fx:id="projectsPane" spacing="10.0" styleClass="workspace-pane" visible="false" managed="false">
               <children>
-                <VBox spacing="10.0" styleClass="card-pane">
+                <VBox spacing="10.0" styleClass="card-pane" VBox.vgrow="ALWAYS">
                   <padding><Insets top="16.0" right="16.0" bottom="16.0" left="16.0"/></padding>
                   <Label text="Projects" styleClass="section-title"/>
-                  <Label text="Project workspace (create/open/manage) is planned for Phase 2." wrapText="true" styleClass="small-label"/>
+                  <HBox spacing="8.0" alignment="CENTER_LEFT">
+                    <children>
+                      <Button fx:id="projectCreateButton" text="Create project" onAction="#onCreateProject" styleClass="accent-btn"/>
+                      <Button fx:id="projectSelectButton" text="Select project" onAction="#onSelectProject"/>
+                      <Button fx:id="projectDeleteButton" text="Delete project" onAction="#onDeleteProject"/>
+                      <Button fx:id="projectOpenFolderButton" text="Open folder" onAction="#onOpenProjectFolder"/>
+                      <Button fx:id="projectRefreshButton" text="Refresh" onAction="#onRefreshProjects"/>
+                    </children>
+                  </HBox>
+                  <Label fx:id="activeProjectLabel" text="Active project: none" styleClass="small-label"/>
+                  <TableView fx:id="projectTable" VBox.vgrow="ALWAYS">
+                    <columns>
+                      <TableColumn fx:id="projectNameColumn" text="Project" prefWidth="220.0"/>
+                      <TableColumn fx:id="projectStatusColumn" text="Status" prefWidth="110.0"/>
+                      <TableColumn fx:id="projectUpdatedColumn" text="Updated" prefWidth="170.0"/>
+                      <TableColumn fx:id="projectPathColumn" text="Folder" prefWidth="500.0"/>
+                    </columns>
+                  </TableView>
+                  <Label text="Each project has its own folder structure: input, output, transcripts, jobs, assets and temp." wrapText="true" styleClass="small-label"/>
                 </VBox>
               </children>
             </VBox>
 
             <VBox fx:id="filesPane" spacing="10.0" styleClass="workspace-pane" visible="false" managed="false">
               <children>
-                <VBox spacing="10.0" styleClass="card-pane">
+                <VBox spacing="10.0" styleClass="card-pane" VBox.vgrow="ALWAYS">
                   <padding><Insets top="16.0" right="16.0" bottom="16.0" left="16.0"/></padding>
                   <Label text="Files" styleClass="section-title"/>
-                  <Label text="Integrated file manager and transcript editor are planned for Phase 2." wrapText="true" styleClass="small-label"/>
+                  <Label fx:id="filesActiveProjectLabel" text="Project: none" styleClass="small-label"/>
+                  <HBox spacing="8.0" alignment="CENTER_LEFT">
+                    <children>
+                      <Button fx:id="filesImportButton" text="Import to input" onAction="#onImportFilesToProject" styleClass="accent-btn"/>
+                      <Button fx:id="filesRefreshButton" text="Refresh" onAction="#onRefreshProjectFiles"/>
+                      <Button fx:id="filesOpenSelectedButton" text="Open selected" onAction="#onOpenSelectedProjectFile"/>
+                      <Button fx:id="filesOpenProjectFolderButton" text="Open project folder" onAction="#onOpenProjectFolder"/>
+                      <Button fx:id="filesSaveEditorButton" text="Save editor" onAction="#onSaveProjectFileEditor"/>
+                    </children>
+                  </HBox>
+                  <TableView fx:id="projectFilesTable" prefHeight="250.0">
+                    <columns>
+                      <TableColumn fx:id="projectFileRelativePathColumn" text="Path" prefWidth="520.0"/>
+                      <TableColumn fx:id="projectFileTypeColumn" text="Type" prefWidth="90.0"/>
+                      <TableColumn fx:id="projectFileSizeColumn" text="Size" prefWidth="120.0"/>
+                      <TableColumn fx:id="projectFileModifiedColumn" text="Modified" prefWidth="170.0"/>
+                    </columns>
+                  </TableView>
+                  <Label fx:id="fileEditorStatusLabel" text="Preview/editor: select a text file (.txt/.srt/.json/.md) from the table." styleClass="small-label"/>
+                  <TextArea fx:id="projectFileEditorArea" prefRowCount="14" wrapText="false" VBox.vgrow="ALWAYS"/>
                 </VBox>
               </children>
             </VBox>
