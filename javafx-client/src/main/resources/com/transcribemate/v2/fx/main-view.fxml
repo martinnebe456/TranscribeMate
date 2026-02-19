@@ -28,17 +28,26 @@
 <?import javafx.scene.layout.StackPane?>
 <?import javafx.scene.layout.VBox?>
 
+<!-- 
+This FXML file defines the main view of the TranscribeMate application. 
+It uses a BorderPane as the root layout, with a top section containing the header and action buttons, and a center section containing the workspace with multiple panes for dashboard, projects, files, and modules. 
+The view is styled using CSS classes and includes various controls such as labels, buttons, tables, and input fields to interact with the application's features. 
+The controller for this view is specified as MainController, which will handle the user interactions defined in this FXML. 
+-->
+
 <BorderPane fx:id="rootPane" xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.transcribemate.v2.fx.MainController">
   <styleClass>
     <String fx:value="app-shell"/>
     <String fx:value="theme-light"/>
   </styleClass>
+  <!-- Top section with header, status, and action buttons -->
   <top>
-    <VBox spacing="10.0" styleClass="app-header-shell">
+    <VBox spacing="20.0" styleClass="app-header-shell">
       <padding>
         <Insets top="12.0" right="16.0" bottom="10.0" left="16.0"/>
       </padding>
 
+      <!-- Title bar with app name, status, step and system monitor button -->
       <HBox spacing="12.0" alignment="CENTER_LEFT" styleClass="app-titlebar card-pane">
         <children>
           <VBox spacing="2.0">
@@ -48,16 +57,18 @@
             </children>
           </VBox>
           <Region HBox.hgrow="ALWAYS"/>
-          <Label text="Status" styleClass="small-label"/>
-          <Label fx:id="statusLabel" text="Ready" styleClass="status-value"/>
-          <Separator orientation="VERTICAL" prefHeight="20.0"/>
-          <Label text="Step" styleClass="small-label"/>
-          <Label fx:id="stepLabel" text="-" styleClass="status-value"/>
+          <Label text="Status" styleClass="small-label" visible="false" managed="false"/>
+          <Label fx:id="statusLabel" text="Ready" styleClass="status-value" visible="false" managed="false"/>
+          <Separator orientation="VERTICAL" prefHeight="20.0" visible="false" managed="false"/>
+          <Label text="Step" styleClass="small-label" visible="false" managed="false"/>
+          <Label fx:id="stepLabel" text="-" styleClass="status-value" visible="false" managed="false"/>
+          <Button text="App settings" onAction="#onOpenAppSettings"/>
           <Button fx:id="monitorButton" text="System monitor" onAction="#onOpenMonitor" styleClass="accent-btn"/>
         </children>
       </HBox>
 
-      <HBox spacing="10.0" alignment="CENTER_LEFT" styleClass="status-strip card-pane">
+      <!-- Status strip with progress, ETA, simple mode toggle and preflight toggle -->
+      <HBox spacing="10.0" alignment="CENTER_LEFT" styleClass="status-strip card-pane" visible="false" managed="false">
         <children>
           <Label text="Progress" styleClass="small-label"/>
           <ProgressBar fx:id="progressBar" HBox.hgrow="ALWAYS"/>
@@ -70,7 +81,8 @@
         </children>
       </HBox>
 
-      <FlowPane hgap="8.0" vgap="6.0" alignment="CENTER_LEFT" styleClass="action-row card-pane">
+      <!-- Action row with main workflow buttons and utility actions -->
+      <FlowPane hgap="8.0" vgap="6.0" alignment="CENTER_LEFT" styleClass="action-row card-pane" visible="false" managed="false">
         <children>
           <Button fx:id="startButton" text="Start" onAction="#onStart" styleClass="primary-btn"/>
           <Button fx:id="cancelButton" text="Cancel" onAction="#onCancel"/>
@@ -78,44 +90,41 @@
           <Separator orientation="VERTICAL" prefHeight="20.0"/>
           <Button fx:id="refreshModelsButton" text="Refresh model cache" onAction="#onRefreshModels"/>
           <Button fx:id="installRuntimeButton" text="Repair runtime" onAction="#onRepairRuntime"/>
-          <Button fx:id="openOutputButton" text="Open output" onAction="#onOpenOutput"/>
-          <Button fx:id="openDataButton" text="Open app data" onAction="#onOpenData"/>
-          <Button fx:id="healthButton" text="Health" onAction="#onHealth"/>
+        </children>
+      </FlowPane>
+
+      <!-- Navigation row for switching between workspace panes -->
+      <FlowPane hgap="8.0" vgap="6.0" alignment="CENTER_LEFT" styleClass="workspace-nav-row card-pane" visible="false" managed="false">
+        <children>
+          <Label text="Workspace" styleClass="small-label"/>
+          <Button fx:id="navDashboardButton" text="Dashboard" onAction="#onNavDashboard" styleClass="button main-nav-btn"/>
+          <Button fx:id="navProjectsButton" text="Projects" onAction="#onNavProjects" styleClass="button main-nav-btn"/>
+          <Button fx:id="navFilesButton" text="Project Files" onAction="#onNavFiles" styleClass="button main-nav-btn"/>
+          <Button fx:id="navModulesButton" text="Project Workflow" onAction="#onNavModules" styleClass="button main-nav-btn"/>
+          <Button fx:id="navOperationsButton" text="Operations" onAction="#onNavOperations" styleClass="button main-nav-btn"/>
+          <Button fx:id="navSettingsButton" text="Settings" onAction="#onNavSettings" styleClass="button main-nav-btn"/>
         </children>
       </FlowPane>
     </VBox>
   </top>
 
+  <!-- Center section with workspace panes -->
   <center>
     <HBox spacing="12.0" styleClass="workspace-shell">
       <padding>
         <Insets top="10.0" right="16.0" bottom="10.0" left="16.0"/>
       </padding>
 
+      <!-- StackPane to hold different workspace panes (dashboard, projects, files, modules) -->
       <children>
-        <VBox spacing="8.0" styleClass="main-nav card-pane" prefWidth="220.0">
-          <padding>
-            <Insets top="12.0" right="10.0" bottom="12.0" left="10.0"/>
-          </padding>
-          <children>
-            <Label text="Main menu" styleClass="section-title"/>
-            <Button fx:id="navDashboardButton" text="Dashboard" onAction="#onNavDashboard" styleClass="button main-nav-btn"/>
-            <Button fx:id="navProjectsButton" text="Projects" onAction="#onNavProjects" styleClass="button main-nav-btn"/>
-            <Button fx:id="navFilesButton" text="Files" onAction="#onNavFiles" styleClass="button main-nav-btn"/>
-            <Button fx:id="navModulesButton" text="Modules" onAction="#onNavModules" styleClass="button main-nav-btn"/>
-            <Button fx:id="navOperationsButton" text="Operations" onAction="#onNavOperations" styleClass="button main-nav-btn"/>
-            <Button fx:id="navSettingsButton" text="Settings" onAction="#onNavSettings" styleClass="button main-nav-btn"/>
-            <Separator/>
-            <Label text="Workspace shortcut" styleClass="section-title"/>
-            <Label text="Use Dashboard for project overview, Projects for selection, Files for in-app editing, Modules for workflow setup and Operations for job control + diagnostics." wrapText="true" styleClass="small-label"/>
-          </children>
-        </VBox>
-
         <StackPane fx:id="workspaceStack" HBox.hgrow="ALWAYS">
           <children>
+
+            <!-- Dashboard pane with project overview, gallery and recent activity -->
             <VBox fx:id="dashboardPane" spacing="10.0" styleClass="workspace-pane">
               <children>
-                <VBox spacing="10.0" styleClass="card-pane">
+                <!-- Dashboard overview card with active project, stats and quick actions -->
+                <VBox spacing="10.0" styleClass="card-pane" visible="false" managed="false">
                   <padding><Insets top="16.0" right="16.0" bottom="16.0" left="16.0"/></padding>
                   <Label text="Project Dashboard" styleClass="section-title"/>
                   <Label fx:id="dashboardActiveProjectLabel" text="Active project: none" wrapText="true" styleClass="small-label"/>
@@ -131,24 +140,25 @@
                   </HBox>
                 </VBox>
 
-                <VBox spacing="8.0" styleClass="card-pane">
+                <!-- Projects gallery card showing project thumbnails and quick access -->
+                <VBox spacing="8.0" styleClass="card-pane" VBox.vgrow="ALWAYS">
                   <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
                   <HBox spacing="8.0" alignment="CENTER_LEFT">
                     <children>
                       <Label text="Projects gallery" styleClass="section-title"/>
                       <Region HBox.hgrow="ALWAYS"/>
-                      <Button text="Create project" onAction="#onCreateProject"/>
                     </children>
                   </HBox>
-                  <Label fx:id="dashboardGalleryInfoLabel" text="No projects yet. Create one to start." styleClass="small-label"/>
-                  <ScrollPane fitToWidth="true" prefViewportHeight="210.0" styleClass="project-gallery-scroll">
+                  <Label fx:id="dashboardGalleryInfoLabel" text="No projects yet. Use the Create Project card to start." styleClass="small-label"/>
+                  <ScrollPane fitToWidth="true" prefViewportHeight="500.0" styleClass="project-gallery-scroll"> <!-- Scrollable area for project thumbnails -->
                     <content>
-                      <VBox fx:id="dashboardProjectGalleryBox" spacing="8.0"/>
+                      <FlowPane fx:id="dashboardProjectGalleryBox" hgap="10.0" vgap="10.0"/>
                     </content>
                   </ScrollPane>
                 </VBox>
 
-                <HBox spacing="10.0" VBox.vgrow="ALWAYS">
+                <!-- Recent activity card with recently edited files and timeline preview -->
+                <HBox spacing="10.0" VBox.vgrow="ALWAYS" visible="false" managed="false">
                   <children>
                     <VBox spacing="8.0" styleClass="card-pane" HBox.hgrow="ALWAYS" VBox.vgrow="ALWAYS">
                       <padding><Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/></padding>
@@ -205,10 +215,11 @@
                       <TableColumn fx:id="projectNameColumn" text="Project" prefWidth="220.0"/>
                       <TableColumn fx:id="projectStatusColumn" text="Status" prefWidth="110.0"/>
                       <TableColumn fx:id="projectUpdatedColumn" text="Updated" prefWidth="170.0"/>
-                      <TableColumn fx:id="projectPathColumn" text="Folder" prefWidth="500.0"/>
+                      <TableColumn fx:id="projectSizeColumn" text="Size" prefWidth="120.0"/>
+                      <TableColumn fx:id="projectPathColumn" text="Folder" prefWidth="380.0"/>
                     </columns>
                   </TableView>
-                  <Label text="Each project has its own folder structure: input, output, transcripts, jobs, assets and temp." wrapText="true" styleClass="small-label"/>
+                  <Label text="Each project has its own folder structure: input, output, jobs, logs, assets and temp." wrapText="true" styleClass="small-label"/>
                 </VBox>
               </children>
             </VBox>
@@ -258,22 +269,22 @@
 
             <VBox fx:id="modulesPane" spacing="10.0" visible="false" managed="false">
               <children>
-                <VBox spacing="8.0" styleClass="card-pane">
+                <VBox fx:id="legacyModuleFlowCard" spacing="8.0" styleClass="card-pane">
                   <padding>
                     <Insets top="12.0" right="12.0" bottom="12.0" left="12.0"/>
                   </padding>
                   <children>
-                    <HBox spacing="8.0" alignment="CENTER_LEFT">
+                    <HBox fx:id="moduleSelectionRow" spacing="8.0" alignment="CENTER_LEFT">
                       <children>
-                        <Label text="Module workspace" styleClass="section-title"/>
+                        <Label text="Project workflow workspace" styleClass="section-title"/>
                         <Region HBox.hgrow="ALWAYS"/>
-                        <Label text="Active module" styleClass="small-label"/>
+                        <Label text="Active activity" styleClass="small-label"/>
                         <ComboBox fx:id="moduleSwitcherBox" prefWidth="260.0" onAction="#onModuleSwitcherChanged"/>
                         <Button fx:id="modulePreviousButton" text="Last used" onAction="#onModulePrevious"/>
                         <Button fx:id="settingsModuleButton" text="Settings tab" onAction="#onModuleSettings" styleClass="button"/>
                       </children>
                     </HBox>
-                    <FlowPane hgap="8.0" vgap="8.0">
+                    <FlowPane fx:id="moduleQuickActionsPane" hgap="8.0" vgap="8.0">
                       <children>
                         <Button fx:id="runModuleButton" text="Offline A/V" onAction="#onModuleOffline" styleClass="button module-btn"/>
                         <Button fx:id="advancedModuleButton" text="YouTube Transcript" onAction="#onModuleYoutube" styleClass="button module-btn"/>
@@ -283,7 +294,7 @@
                         <Button fx:id="youtubeDubModuleButton" text="YouTube Dub" onAction="#onModuleYoutubeDub" styleClass="button module-btn"/>
                       </children>
                     </FlowPane>
-                    <Label fx:id="moduleFlowTitleLabel" text="Module: Offline A/V" styleClass="section-title"/>
+                    <Label fx:id="moduleFlowTitleLabel" text="Activity: Offline A/V" styleClass="section-title"/>
                     <Label fx:id="moduleFlowLabel" text="1) Select local source.&#10;2) Configure model in Settings.&#10;3) Run Preflight and Start." wrapText="true" styleClass="small-label"/>
                     <Button fx:id="moduleFlowActionButton" text="Run Preflight" onAction="#onModuleFlowAction" styleClass="button accent-btn"/>
                   </children>
@@ -299,24 +310,21 @@
                         <Insets top="6.0" right="6.0" bottom="6.0" left="6.0"/>
                       </padding>
 
+                      <VBox fx:id="runWizardCard" spacing="8.0" styleClass="card-pane">
+                        <padding><Insets top="10.0" right="12.0" bottom="10.0" left="12.0"/></padding>
+                        <Label text="Guided project wizard" styleClass="section-title"/>
+                        <HBox spacing="8.0" alignment="CENTER_LEFT">
+                          <children>
+                            <Button fx:id="wizardNextButton" text="Run wizard" onAction="#onRunProjectWizard" styleClass="accent-btn"/>
+                          </children>
+                        </HBox>
+                        <Label fx:id="wizardStateLabel" text="Wizard guides activity selection, import, preflight and run in one assisted flow." styleClass="small-label" wrapText="true"/>
+                      </VBox>
+
                       <VBox fx:id="runModuleContextCard" spacing="6.0" styleClass="card-pane">
                         <padding><Insets top="10.0" right="12.0" bottom="10.0" left="12.0"/></padding>
                         <Label text="Module context" styleClass="section-title"/>
-                        <Label fx:id="runModuleContextLabel" text="Active module: Offline A/V Transcript" wrapText="true" styleClass="small-label"/>
-                      </VBox>
-
-                      <VBox fx:id="runWizardCard" spacing="8.0" styleClass="card-pane">
-                        <padding><Insets top="10.0" right="12.0" bottom="10.0" left="12.0"/></padding>
-                        <Label text="Guided run" styleClass="section-title"/>
-                        <HBox spacing="8.0" alignment="CENTER_LEFT">
-                          <children>
-                            <Button fx:id="wizardSourceButton" text="1. Source" onAction="#onWizardSource"/>
-                            <Button fx:id="wizardOutputButton" text="2. Output" onAction="#onWizardOutput"/>
-                            <Button fx:id="wizardPreflightButton" text="3. Preflight" onAction="#onWizardPreflight"/>
-                            <Button fx:id="wizardRunButton" text="4. Start" onAction="#onWizardRun" styleClass="accent-btn"/>
-                          </children>
-                        </HBox>
-                        <Label fx:id="wizardStateLabel" text="Fill source and output, then run preflight." styleClass="small-label" wrapText="true"/>
+                        <Label fx:id="runModuleContextLabel" text="Active module: Offline A/V Transcript. Values below are read-only and managed by wizard." wrapText="true" styleClass="small-label"/>
                       </VBox>
 
                       <VBox fx:id="runSourceCard" spacing="8.0" styleClass="card-pane">
@@ -333,11 +341,11 @@
                           <ComboBox fx:id="sourceModeBox" GridPane.rowIndex="0" GridPane.columnIndex="1" prefWidth="240.0"/>
 
                           <Label fx:id="localPathLabel" text="Local file/folder" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
-                          <TextField fx:id="localPathField" promptText="C:\\path\\to\\file_or_folder" GridPane.rowIndex="1" GridPane.columnIndex="1"/>
+                          <TextField fx:id="localPathField" editable="false" promptText="C:\\path\\to\\file_or_folder" GridPane.rowIndex="1" GridPane.columnIndex="1"/>
                           <Button fx:id="localPathBrowseButton" text="Browse" onAction="#onBrowseLocalPath" GridPane.rowIndex="1" GridPane.columnIndex="2"/>
 
                           <Label fx:id="youtubeUrlLabel" text="YouTube URL" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
-                          <TextField fx:id="youtubeUrlField" promptText="https://www.youtube.com/watch?v=..." GridPane.rowIndex="2" GridPane.columnIndex="1"/>
+                          <TextField fx:id="youtubeUrlField" editable="false" promptText="https://www.youtube.com/watch?v=..." GridPane.rowIndex="2" GridPane.columnIndex="1"/>
                           <CheckBox fx:id="playlistBox" text="Playlist" GridPane.rowIndex="2" GridPane.columnIndex="2"/>
 
                           <Label fx:id="qualityLabel" text="YouTube quality" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
@@ -356,22 +364,16 @@
                           </columnConstraints>
 
                           <Label fx:id="outputDirLabel" text="Output directory" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
-                          <TextField fx:id="outputDirField" GridPane.rowIndex="0" GridPane.columnIndex="1"/>
+                          <TextField fx:id="outputDirField" editable="false" GridPane.rowIndex="0" GridPane.columnIndex="1"/>
                           <Button fx:id="outputDirBrowseButton" text="Browse" onAction="#onBrowseOutputDir" GridPane.rowIndex="0" GridPane.columnIndex="2"/>
 
                           <Label fx:id="outputModeLabel" text="Output mode" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
                           <ComboBox fx:id="outputModeBox" GridPane.rowIndex="1" GridPane.columnIndex="1" prefWidth="220.0"/>
 
                           <Label fx:id="outputPrefixLabel" text="Output prefix" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
-                          <TextField fx:id="outputPrefixField" promptText="optional" GridPane.rowIndex="2" GridPane.columnIndex="1"/>
+                          <TextField fx:id="outputPrefixField" editable="false" promptText="optional" GridPane.rowIndex="2" GridPane.columnIndex="1"/>
                           <CheckBox fx:id="keepOriginalsBox" text="Keep originals" GridPane.rowIndex="2" GridPane.columnIndex="2"/>
                         </GridPane>
-                      </VBox>
-
-                      <VBox spacing="8.0" styleClass="card-pane" fx:id="simpleHintCard">
-                        <padding><Insets top="10.0" right="12.0" bottom="10.0" left="12.0"/></padding>
-                        <Label text="Tip" styleClass="section-title"/>
-                        <Label text="Use the module toolbar above to switch workflow. Each module keeps its own model and processing settings." wrapText="true" styleClass="small-label"/>
                       </VBox>
 
                       <VBox fx:id="runPreflightCard" spacing="8.0" styleClass="card-pane">
@@ -381,7 +383,6 @@
                           <children>
                             <Label fx:id="preflightSummaryLabel" text="Preflight not executed yet." styleClass="small-label"/>
                             <Region HBox.hgrow="ALWAYS"/>
-                            <Button fx:id="applyPreflightFixButton" text="Apply selected fix" onAction="#onApplySelectedPreflightFix"/>
                           </children>
                         </HBox>
                         <TableView fx:id="preflightChecksTable" prefHeight="180.0">
@@ -719,10 +720,12 @@
                             <ColumnConstraints minWidth="170.0" prefWidth="180.0"/>
                             <ColumnConstraints hgrow="ALWAYS"/>
                           </columnConstraints>
-                          <Label text="Theme" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
-                          <ComboBox fx:id="themeBox" prefWidth="220.0" onAction="#onThemeChanged" GridPane.rowIndex="0" GridPane.columnIndex="1"/>
+                          <Label text="UI language" GridPane.rowIndex="0" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="uiLanguageBox" prefWidth="220.0" onAction="#onUiLanguageChanged" GridPane.rowIndex="0" GridPane.columnIndex="1"/>
+                          <Label text="Theme" GridPane.rowIndex="1" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="themeBox" prefWidth="220.0" onAction="#onThemeChanged" GridPane.rowIndex="1" GridPane.columnIndex="1"/>
                         </GridPane>
-                        <Label text="Theme applies instantly and is remembered for next app start." wrapText="true" styleClass="small-label"/>
+                        <Label text="Theme and UI language are global app settings remembered for next app start." wrapText="true" styleClass="small-label"/>
                       </VBox>
 
                       <VBox fx:id="settingsRuntimeCard" spacing="8.0" styleClass="card-pane">
@@ -736,6 +739,14 @@
                             <Button text="Open output" onAction="#onOpenOutput"/>
                           </children>
                         </HBox>
+                        <HBox spacing="8.0" alignment="CENTER_LEFT">
+                          <children>
+                            <Label text="Workspace root"/>
+                            <TextField fx:id="settingsWorkspaceRootField" editable="false" prefWidth="520.0"/>
+                            <Button fx:id="settingsChangeWorkspaceRootButton" text="Change..." onAction="#onChangeWorkspaceRoot"/>
+                          </children>
+                        </HBox>
+                        <Label fx:id="settingsWorkspaceRootInfoLabel" text="Changing workspace root moves project folders to a new location." wrapText="true" styleClass="small-label"/>
                       </VBox>
 
                       <VBox fx:id="settingsCoreCard" spacing="8.0" styleClass="card-pane">
@@ -743,8 +754,10 @@
                         <Label fx:id="settingsScopeLabel" text="Module settings - active module" styleClass="section-title"/>
                         <HBox fx:id="settingsModuleScopeRow" spacing="8.0" alignment="CENTER_LEFT" visible="true" managed="true">
                           <children>
-                            <Label text="Settings module"/>
-                            <Label text="Controlled by scope panel above." styleClass="small-label"/>
+                            <Label text="Scope"/>
+                            <Label fx:id="settingsScopeValueLabel" text="Global defaults" styleClass="small-label"/>
+                            <Button fx:id="settingsResetProjectModuleButton" text="Reset project module from defaults" onAction="#onResetProjectModuleFromDefaults"/>
+                            <Button fx:id="settingsSaveGlobalDefaultsButton" text="Save as global defaults" onAction="#onSaveModuleAsGlobalDefaults"/>
                           </children>
                         </HBox>
                         <HBox fx:id="settingsPresetRow" spacing="8.0" alignment="CENTER_LEFT">

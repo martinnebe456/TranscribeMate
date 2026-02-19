@@ -3,6 +3,12 @@ package com.transcribemate.v2.fx;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 
+/**
+ * JavaFX table row model for backend job history entries.
+ *
+ * The row keeps job metadata in StringProperty form so job tables can bind and
+ * refresh incrementally without extra conversion layers.
+ */
 public final class JobRow {
     private final StringProperty jobId = new SimpleStringProperty("");
     private final StringProperty status = new SimpleStringProperty("");
@@ -10,6 +16,9 @@ public final class JobRow {
     private final StringProperty source = new SimpleStringProperty("");
     private final StringProperty created = new SimpleStringProperty("");
 
+    /**
+     * Creates one job row and normalizes null values to empty strings.
+     */
     public JobRow(String jobId, String status, String mode, String source, String created) {
         this.jobId.set(jobId == null ? "" : jobId);
         this.status.set(status == null ? "" : status);

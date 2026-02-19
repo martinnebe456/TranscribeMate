@@ -3,11 +3,81 @@ param(
     [string]$AppVersion,
     [string]$CodeSignThumbprint,
     [string]$CodeSignTimestampUrl = "http://timestamp.digicert.com",
-    [switch]$RequireCodeSigning
+    [switch]$RequireCodeSigning,
+    [switch]$SkipZipCreation,
+    [switch]$Help
 )
 
 $ErrorActionPreference = "Stop"
 
+# ============================================================================
+# TranscribeMate v2 release workflow (high level):
+# 1) Resolve prerequisites (JDK with jpackage, Maven, output paths).
+# 2) Resolve/set application version (manual value or daily auto-increment).
+# 3) Build JavaFX frontend artifacts (unless skipped).
+# 4) Build app-image with jpackage.
+# 5) Optionally sign executable with signtool and an Authenticode certificate.
+# 6) Bundle Python backend sources/scripts into app image.
+# 7) Optionally produce ZIP + SHA256 checksum in dist_release/.
+# ============================================================================
+
+# ============================================================================
+# Helper functions
+# ============================================================================
+# Prints command usage for interactive/manual runs.
+function Show-Help {
+    $helpText = @"
+
+==================================================================
+TranscribeMate v2 release build script.
+==================================================================
+
+Usage:
+
+  .\build_v2_release.ps1 [-SkipFrontendBuild] [-AppVersion <version>] [-CodeSignThumbprint <thumbprint>] [-CodeSignTimestampUrl <url>] [-RequireCodeSigning] [-SkipZipCreation] [-Help]
+
+Parameters:
+
+    -SkipFrontendBuild:
+        Skip building the Java frontend. Use this if you have already built the frontend JAR and dependencies.
+    
+    -AppVersion:
+        Specify the app version to embed in the build. If not provided, an auto-incrementing version based on the current date will be used.
+    
+    -CodeSignThumbprint:
+        Thumbprint of the code signing certificate to use. If not provided, the script will attempt to auto-detect a suitable certificate from the Windows certificate store.
+    
+    -CodeSignTimestampUrl:
+        URL of the timestamp server to use for code signing. Default is http://timestamp.digicert.com.
+    
+    -RequireCodeSigning:
+        If specified, the script will fail if a valid code signing certificate is not found or if signing fails.
+    
+    -SkipZipCreation:
+        Skip creating the ZIP release package. The app image will still be created in dist/TranscribeMate.
+    
+    -Help:
+        Show this help message and exit.
+
+Example:
+    
+    .\build_v2_release.ps1 -AppVersion "26.02.18.005"
+    
+    .\build_v2_release.ps1
+    
+    .\build_v2_release.ps1 -SkipZipCreation
+
+==================================================================
+"@
+    Write-Host $helpText
+}
+if ($Help) {
+    Show-Help
+    exit 0
+}
+
+
+# Validates that a directory looks like a full JDK installation required by this script.
 function Test-JavaHome([string]$HomePath) {
     if ([string]::IsNullOrWhiteSpace($HomePath)) {
         return $false
@@ -18,11 +88,17 @@ function Test-JavaHome([string]$HomePath) {
     return (Test-Path $javaExe) -and (Test-Path $javacExe) -and (Test-Path $jpackageExe)
 }
 
+
+# Resolves JAVA_HOME with fallback order:
+# 1) Existing $env:JAVA_HOME if valid.
+# 2) java.home reported by `java -XshowSettings`.
+# 3) Parent directory from java.exe location in PATH.
 function Resolve-JavaHome {
     if (Test-JavaHome $env:JAVA_HOME) {
         return $env:JAVA_HOME
     }
 
+    # java.exe is required for runtime discovery even when JAVA_HOME is unset.
     $javaCmd = Get-Command java -ErrorAction SilentlyContinue
     if (-not $javaCmd) {
         return $null
@@ -30,6 +106,7 @@ function Resolve-JavaHome {
 
     $javaHome = $null
     try {
+        # `java.home` can point either to JDK root or nested runtime folder.
         $settings = & $javaCmd.Source -XshowSettings:properties -version 2>&1
         $line = $settings | Where-Object { $_ -match '^\s*java\.home\s*=' } | Select-Object -First 1
         if ($line) {
@@ -51,6 +128,7 @@ function Resolve-JavaHome {
         }
     }
 
+    # Final fallback: infer JDK root from ...\bin\java.exe.
     $candidate = Split-Path -Parent (Split-Path -Parent $javaCmd.Source)
     if (Test-JavaHome $candidate) {
         return $candidate
@@ -59,6 +137,9 @@ function Resolve-JavaHome {
     return $null
 }
 
+# Canonicalizes certificate thumbprint input:
+# - strips spaces/separators accidentally copied from cert manager
+# - normalizes to uppercase hex for reliable comparisons/logging
 function Normalize-Thumbprint([string]$Thumbprint) {
     if ([string]::IsNullOrWhiteSpace($Thumbprint)) {
         return ""
@@ -66,6 +147,7 @@ function Normalize-Thumbprint([string]$Thumbprint) {
     return ($Thumbprint -replace "[^0-9A-Fa-f]", "").ToUpperInvariant()
 }
 
+# Locates signtool.exe via PATH first, then common Windows SDK installation paths.
 function Resolve-SignTool {
     $cmd = Get-Command signtool -ErrorAction SilentlyContinue
     if ($cmd) {
@@ -78,6 +160,7 @@ function Resolve-SignTool {
     ) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) -and (Test-Path $_) }
 
     foreach ($root in $kitRoots) {
+        # Prefer newest SDK folder (sorted descending by version-like name).
         $candidates = Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue |
             Sort-Object Name -Descending
         foreach ($dir in $candidates) {
@@ -95,6 +178,7 @@ function Resolve-SignTool {
     return $null
 }
 
+# Tries to auto-select a valid code-signing cert from standard user/machine stores.
 function Resolve-DefaultCodeSignThumbprint {
     $stores = @(
         "Cert:\CurrentUser\My",
@@ -110,6 +194,7 @@ function Resolve-DefaultCodeSignThumbprint {
             Where-Object {
                 $_.HasPrivateKey -and
                 $_.NotAfter -gt (Get-Date) -and
+                # OID 1.3.6.1.5.5.7.3.3 = Code Signing EKU.
                 ($_.EnhancedKeyUsageList | Where-Object { $_.ObjectId -eq "1.3.6.1.5.5.7.3.3" })
             } |
             Sort-Object NotAfter -Descending |
@@ -123,6 +208,7 @@ function Resolve-DefaultCodeSignThumbprint {
     return ""
 }
 
+# Signs one file and throws on any signing failure.
 function Sign-File([string]$SignTool, [string]$Thumbprint, [string]$TimestampUrl, [string]$FilePath) {
     if (-not (Test-Path $FilePath)) {
         throw "[TM] Cannot sign missing file: $FilePath"
@@ -136,6 +222,7 @@ function Sign-File([string]$SignTool, [string]$Thumbprint, [string]$TimestampUrl
         "/sha1", $Thumbprint,
         "/v"
     )
+    # Timestamp keeps signature valid even after certificate expiry.
     if (-not [string]::IsNullOrWhiteSpace($TimestampUrl)) {
         $args += @("/tr", $TimestampUrl)
     }
@@ -147,6 +234,8 @@ function Sign-File([string]$SignTool, [string]$Thumbprint, [string]$TimestampUrl
     }
 }
 
+# Best-effort MOTW cleanup for files copied from downloaded sources.
+# This avoids unnecessary "downloaded from internet" friction on end-user machines.
 function Unblock-PathRecursive([string]$TargetPath, [string]$Description) {
     if (-not (Test-Path $TargetPath)) {
         return
@@ -175,6 +264,8 @@ function Unblock-PathRecursive([string]$TargetPath, [string]$Description) {
     }
 }
 
+# Windows file locks can hold directories for a short time (Explorer, AV, indexers),
+# so deletion is retried before failing with a user-action hint.
 function Remove-PathWithRetry(
     [string]$TargetPath,
     [string]$Description,
@@ -211,6 +302,7 @@ Then run build_v2_release.ps1 again.
     throw $hint
 }
 
+# Compresses app-image into ZIP with retry/backoff, which helps with transient locks.
 function New-ReleaseZipWithRetry(
     [string]$SourcePath,
     [string]$DestinationPath,
@@ -263,6 +355,9 @@ If antivirus is scanning files, wait a moment and run build_v2_release.ps1 again
     throw $hint
 }
 
+# Resolves build version:
+# - explicit -AppVersion wins and is persisted to version.txt
+# - otherwise auto-increments YY.MM.DD.NNN based on previous version.txt value
 function Resolve-AppVersion([string]$Requested, [string]$RootPath) {
     $versionFile = Join-Path $RootPath "version.txt"
     $previous = ""
@@ -285,6 +380,7 @@ function Resolve-AppVersion([string]$Requested, [string]$RootPath) {
     $nextCounter = 1
 
     if ($previous -match "^(?<date>\d{2}\.\d{2}\.\d{2})\.(?<build>\d+)$") {
+        # Preserve existing counter width (at least 3 digits) for stable filename sorting.
         $counterWidth = [Math]::Max(3, $matches["build"].Length)
         if ($matches["date"] -eq $todayPrefix) {
             try {
@@ -313,12 +409,15 @@ function Resolve-AppVersion([string]$Requested, [string]$RootPath) {
     return $resolved
 }
 
+# Shared guard for required files/directories in later build stages.
 function Assert-PathExists([string]$Path, [string]$Description) {
     if (-not (Test-Path $Path)) {
         throw ("[TM] Missing {0}: {1}" -f $Description, $Path)
     }
 }
 
+# Verifies that the minimal backend runtime payload exists inside app image.
+# This fails fast if packaging accidentally omitted critical runtime files.
 function Validate-BundledBackend([string]$BundledBackendDir) {
     Assert-PathExists -Path $BundledBackendDir -Description "bundled backend directory"
 
@@ -336,6 +435,11 @@ function Validate-BundledBackend([string]$BundledBackendDir) {
     }
 }
 
+# ============================================================================
+# Main build pipeline
+# ============================================================================
+# Resolve key repository/output paths relative to this script location so the
+# script can be launched from any working directory.
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $frontendDir = Join-Path $root "javafx-client"
 $distDir = Join-Path $root "dist"
@@ -343,10 +447,12 @@ $appImageDir = Join-Path $distDir "TranscribeMate"
 $releaseDir = Join-Path $root "dist_release"
 $zipPath = ""
 
+# Fail fast on missing required project layout.
 if (-not (Test-Path $frontendDir)) {
     throw "[TM] Missing javafx-client directory."
 }
 
+# Prerequisite toolchain discovery.
 $resolvedJavaHome = Resolve-JavaHome
 if (-not $resolvedJavaHome) {
     throw @"
@@ -365,12 +471,14 @@ if (-not $mvnCmd) {
     throw "[TM] Maven (mvn) not found in PATH."
 }
 
+# Version drives app metadata and final ZIP filename.
 $appVersion = Resolve-AppVersion -Requested $AppVersion -RootPath $root
 Write-Host "[TM] JAVA_HOME=$($env:JAVA_HOME)"
 Write-Host "[TM] Version=$appVersion"
 $zipName = "TranscribeMate-$appVersion-win-x64.zip"
 $zipPath = Join-Path $releaseDir $zipName
 
+# Frontend build can be skipped for local iteration when target artifacts already exist.
 if (-not $SkipFrontendBuild) {
     Write-Host "[TM] Building frontend JAR and runtime dependencies..."
     Push-Location $frontendDir
@@ -385,6 +493,7 @@ if (-not $SkipFrontendBuild) {
     }
 }
 
+# Select the newest runnable JAR (exclude sources/javadocs/original artifacts).
 $targetDir = Join-Path $frontendDir "target"
 $jar = Get-ChildItem -Path $targetDir -Filter "*.jar" -File |
     Where-Object { $_.Name -notmatch "(sources|javadoc|original)" } |
@@ -399,6 +508,7 @@ if (-not (Test-Path $depDir)) {
     throw "[TM] Dependency folder missing: $depDir (run without -SkipFrontendBuild first)."
 }
 
+# jpackage expects one input folder containing app JAR + dependency JARs.
 $inputDir = Join-Path $targetDir "jpackage-input"
 if (Test-Path $inputDir) {
     Remove-PathWithRetry -TargetPath $inputDir -Description "jpackage input directory"
@@ -415,6 +525,7 @@ if (Test-Path $appImageDir) {
     Remove-PathWithRetry -TargetPath $appImageDir -Description "existing app image directory"
 }
 
+# Build Windows app-image (portable folder containing EXE + runtime files).
 Write-Host "[TM] Creating app image via jpackage..."
 $jpackageArgs = @(
     "--type", "app-image",
@@ -422,6 +533,7 @@ $jpackageArgs = @(
     "--dest", $distDir,
     "--input", $inputDir,
     "--main-jar", $jar.Name,
+    # Launcher class owns JavaFX startup and runtime init.
     "--main-class", "com.transcribemate.v2.fx.Launcher",
     "--app-version", $appVersion,
     "--vendor", "Martin Nebehay"
@@ -441,6 +553,10 @@ if (-not (Test-Path $appImageDir)) {
     throw "[TM] jpackage finished but app image not found: $appImageDir"
 }
 
+# Code signing thumbprint resolution order:
+# 1) -CodeSignThumbprint argument
+# 2) TM_CODESIGN_THUMBPRINT environment variable
+# 3) auto-detected certificate from Windows stores
 $normalizedThumbprint = Normalize-Thumbprint $CodeSignThumbprint
 $envThumbprint = Normalize-Thumbprint $env:TM_CODESIGN_THUMBPRINT
 if ([string]::IsNullOrWhiteSpace($normalizedThumbprint) -and -not [string]::IsNullOrWhiteSpace($envThumbprint)) {
@@ -474,7 +590,8 @@ if (-not $codeSigningEnabled) {
     Write-Warning "[TM] Build is unsigned. Windows SmartScreen/Smart App Control may block app launch."
 }
 
-# Bundle Python backend source inside the Java app image.
+# Bundle Python backend source inside the Java app image so first-run bootstrap
+# can create a managed runtime and execute backend locally.
 $bundledBackendDir = Join-Path $appImageDir "app\backend"
 if (Test-Path $bundledBackendDir) {
     Remove-PathWithRetry -TargetPath $bundledBackendDir -Description "bundled backend directory"
@@ -496,41 +613,53 @@ if (Test-Path $runtimeBootstrapScript) {
     throw "[TM] Runtime bootstrap script not found: $runtimeBootstrapScript"
 }
 
+# Remove Python bytecode caches from packaged payload to reduce size/noise.
 Get-ChildItem -Path $bundledBackendDir -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 Get-ChildItem -Path $bundledBackendDir -Recurse -File -Include "*.pyc", "*.pyo" | Remove-Item -Force -ErrorAction SilentlyContinue
 
+# Verify bundle structure before we continue with release output steps.
 Validate-BundledBackend -BundledBackendDir $bundledBackendDir
 
 Write-Host "[TM] App image ready: $appImageDir"
 
+# Sign final executable after all app-image modifications are completed.
 if ($codeSigningEnabled) {
     $appImageExe = Join-Path $appImageDir "TranscribeMate.exe"
     Sign-File -SignTool $signtool -Thumbprint $normalizedThumbprint -TimestampUrl $CodeSignTimestampUrl -FilePath $appImageExe
 }
 Unblock-PathRecursive -TargetPath $appImageDir -Description "app image files"
 
-if (-not (Test-Path $releaseDir)) {
-    New-Item -Path $releaseDir -ItemType Directory | Out-Null
+# ============================================================================
+# Optional release ZIP creation
+# ============================================================================
+if (-not $SkipZipCreation) {
+    if (-not (Test-Path $releaseDir)) {
+        New-Item -Path $releaseDir -ItemType Directory | Out-Null
+    }
+
+    if (Test-Path $zipPath) {
+        Remove-PathWithRetry -TargetPath $zipPath -Description "existing release zip"
+    }
+
+    Write-Host "[TM] Creating ZIP release package..."
+    New-ReleaseZipWithRetry -SourcePath $appImageDir -DestinationPath $zipPath
+    Unblock-PathRecursive -TargetPath $zipPath -Description "release zip"
+
+    if (-not (Test-Path -LiteralPath $zipPath)) {
+        throw ("[TM] ZIP release package was not created: {0}" -f $zipPath)
+    }
+
+    # checksums.txt currently contains one line for the newest ZIP artifact.
+    $checksumPath = Join-Path $releaseDir "checksums.txt"
+    $zipHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $checksumLine = "$zipHash *$zipName"
+    Set-Content -Path $checksumPath -Value $checksumLine -Encoding ASCII
+    Unblock-PathRecursive -TargetPath $checksumPath -Description "release checksums"
+
+    Write-Host "[TM] ZIP release ready: $zipPath"
+    Write-Host "[TM] SHA256 checksums written to: $checksumPath"
+    Write-Host "[TM] Done."
+} else {
+    Write-Warning "[TM] ZIP creation skipped due to -SkipZipCreation. App image is available at: $appImageDir"
 }
 
-if (Test-Path $zipPath) {
-    Remove-PathWithRetry -TargetPath $zipPath -Description "existing release zip"
-}
-
-Write-Host "[TM] Creating ZIP release package..."
-New-ReleaseZipWithRetry -SourcePath $appImageDir -DestinationPath $zipPath
-Unblock-PathRecursive -TargetPath $zipPath -Description "release zip"
-
-if (-not (Test-Path -LiteralPath $zipPath)) {
-    throw ("[TM] ZIP release package was not created: {0}" -f $zipPath)
-}
-
-$checksumPath = Join-Path $releaseDir "checksums.txt"
-$zipHash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
-$checksumLine = "$zipHash *$zipName"
-Set-Content -Path $checksumPath -Value $checksumLine -Encoding ASCII
-Unblock-PathRecursive -TargetPath $checksumPath -Description "release checksums"
-
-Write-Host "[TM] ZIP release ready: $zipPath"
-Write-Host "[TM] SHA256 checksums written to: $checksumPath"
-Write-Host "[TM] Done."

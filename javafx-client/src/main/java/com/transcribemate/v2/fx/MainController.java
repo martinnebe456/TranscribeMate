@@ -9,6 +9,10 @@ import com.transcribemate.v2.fx.modules.core.ModuleComponent;
 import com.transcribemate.v2.fx.modules.core.ModuleFlowSpec;
 import com.transcribemate.v2.fx.modules.core.ModuleUiSchemaSpec;
 import com.transcribemate.v2.fx.modules.registry.ModuleRegistry;
+import com.transcribemate.v2.fx.wizard.ModuleWizardSpec;
+import com.transcribemate.v2.fx.wizard.ModuleWizardStepSpec;
+import com.transcribemate.v2.fx.wizard.ProjectWizardWindow;
+import com.transcribemate.v2.fx.wizard.WizardValueStore;
 import javafx.animation.KeyFrame;
 import javafx.animation.PauseTransition;
 import javafx.animation.Timeline;
@@ -16,16 +20,23 @@ import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.collections.transformation.FilteredList;
+import javafx.concurrent.Task;
 import javafx.fxml.FXML;
+import javafx.fxml.FXMLLoader;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.ColorPicker;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Alert;
+import javafx.scene.control.Dialog;
+import javafx.scene.control.DialogPane;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ProgressBar;
@@ -45,12 +56,19 @@ import javafx.scene.input.KeyCodeCombination;
 import javafx.scene.input.KeyCombination;
 import javafx.scene.Node;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.FlowPane;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.Pane;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
+import javafx.stage.WindowEvent;
 import javafx.util.Duration;
 import javafx.util.StringConverter;
 
@@ -77,24 +95,40 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
+/**
+ * Main JavaFX controller coordinating the full desktop workflow:
+ * - shell/navigation state
+ * - project workspace lifecycle
+ * - module-specific UI defaults/constraints
+ * - backend request/response/event bridge
+ * - runtime bootstrap and diagnostics surfaces
+ *
+ * This class intentionally centralizes orchestration logic; module-specific behavior
+ * is delegated through {@link ModuleComponent}.
+ */
 public class MainController {
+    // Shared formatters, limits and preference keys used across UI + backend orchestration.
     private static final DateTimeFormatter TS_FMT = DateTimeFormatter.ofPattern("HH:mm:ss");
     private static final DateTimeFormatter STAMP_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
     private static final DateTimeFormatter DASHBOARD_ACTIVITY_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
-    private static final int MAX_LOG_ENTRIES = 5000;
+    private static final int MAX_LOG_ENTRIES = 50000;
     private static final int BOOTSTRAP_LOG_MAX_CHARS = 200000;
     private static final String APP_NAME = "TranscribeMate";
     private static final String RUNTIME_READY_MARKER_NAME = "runtime-ready.json";
     private static final String WINDOW_TITLE_SUFFIX = "JavaFX + Python Backend";
     private static final String PREF_THEME = "ui.theme";
-    private static final String PREF_SIMPLE_MODE = "ui.simple_mode";
+    private static final String PREF_UI_LANGUAGE = "ui.language";
+    private static final String PREF_WORKSPACE_ROOT = "ui.workspace_root";
     private static final String PREF_AUTO_PREFLIGHT = "ui.auto_preflight";
     private static final String PREF_ACTIVE_MODULE = "ui.active_module";
     private static final String PREF_MODULE_PREFIX = "ui.module.";
+    private static final String PREF_PROJECT_PREFIX = "ui.project.";
     private static final String PREF_MODULE_PRESETS_JSON = "presets_json";
     private static final String PREF_MODULE_SELECTED_PRESET = "selected_preset";
     private static final String PREF_PROJECT_AUTO_OUTPUT = "ui.projects.auto_output";
@@ -114,6 +148,8 @@ public class MainController {
     private static final String THEME_LIGHT = "Light";
     private static final String THEME_DARK = "Dark";
     private static final String THEME_DRACULA = "Dracula";
+    private static final String UI_LANG_EN = "en";
+    private static final String UI_LANG_CS = "cs";
     private static final String MODULE_OFFLINE = "offline_transcribe";
     private static final String MODULE_YOUTUBE = "youtube_transcribe";
     private static final String MODULE_SPEAKER = "speaker_transcribe";
@@ -124,6 +160,14 @@ public class MainController {
     private static final String SECTION_PROJECTS = "projects";
     private static final String SECTION_FILES = "files";
     private static final String SECTION_MODULES = "modules";
+    private static final String PROJECT_SECTION_OVERVIEW = "overview";
+    private static final String PROJECT_SECTION_WORKFLOW = "workflow";
+    private static final String PROJECT_SECTION_FILES = "files";
+    private static final String PROJECT_SECTION_JOBS = "jobs";
+    private static final String PROJECT_SECTION_LOGS = "logs";
+    private static final String PROJECT_SECTION_SETTINGS = "settings";
+    private static final boolean ENFORCE_GUIDED_WIZARD = true;
+    private static final boolean RUN_SOURCE_OUTPUT_READONLY_PREVIEW = true;
     private static final String WORKSPACE_DIR_NAME = "workspace";
     private static final String WORKSPACE_META_FILE = "workspace.json";
     private static final String WORKSPACE_PROJECTS_DIR = "projects";
@@ -146,12 +190,30 @@ public class MainController {
             "distil-large-v3",
             "turbo"
     );
+    private static final List<WizardActivityDefinition> WIZARD_ACTIVITIES = List.of(
+            new WizardActivityDefinition("offline_transcribe", "Offline A/V Transcript", MODULE_OFFLINE, "local"),
+            new WizardActivityDefinition("youtube_transcribe", "YouTube Transcript", MODULE_YOUTUBE, "youtube"),
+            new WizardActivityDefinition("speaker_transcribe", "Speaker Transcript", MODULE_SPEAKER, "local"),
+            new WizardActivityDefinition("conference_mode", "Conference Mode", MODULE_CONFERENCE, "local"),
+            new WizardActivityDefinition("youtube_subtitles", "YouTube Subtitles", MODULE_YOUTUBE_SUBS, "youtube"),
+            new WizardActivityDefinition("youtube_dub", "YouTube Dub", MODULE_YOUTUBE_DUB, "youtube")
+    );
+    // Global coordinator prevents multiple workspace windows/controllers from starting jobs concurrently.
+    private static final Object GLOBAL_JOB_COORDINATOR_LOCK = new Object();
+    private static final Set<MainController> REGISTERED_CONTROLLERS = ConcurrentHashMap.newKeySet();
+    private static String globalJobOwnerControllerId = "";
 
+    /**
+     * Distinguishes user-facing logs from low-level diagnostics in split log views.
+     */
     private enum LogCategory {
         USER,
         TECHNICAL
     }
 
+    /**
+     * Immutable in-memory log line used for filtering and multi-pane rendering.
+     */
     private record LogEntry(LocalDateTime timestamp, String level, LogCategory category, String message) {
         String format() {
             String categoryLabel = category == LogCategory.USER ? "USER" : "TECH";
@@ -159,6 +221,9 @@ public class MainController {
         }
     }
 
+    /**
+     * Resolved bootstrap script location and related runtime paths.
+     */
     private record RuntimeBootstrapTarget(
             Path scriptPath,
             Path backendRoot,
@@ -168,9 +233,15 @@ public class MainController {
     ) {
     }
 
+    /**
+     * Parsed progress token emitted by bootstrap script (TM_PROGRESS|...).
+     */
     private record RuntimeBootstrapProgress(int percent, String message) {
     }
 
+    /**
+     * Effective per-module UI visibility schema used by tab/field toggles.
+     */
     private record ModuleUiSchema(
             Set<String> showTabs,
             Set<String> showSections,
@@ -190,6 +261,9 @@ public class MainController {
         }
     }
 
+    /**
+     * Persistent workspace project descriptor stored in workspace metadata.
+     */
     private record ProjectWorkspace(
             String projectId,
             String name,
@@ -214,6 +288,9 @@ public class MainController {
     private record ActivitySnapshot(String label, LocalDateTime at) {
     }
 
+    /**
+     * Precomputed dashboard card payload built from project filesystem metadata.
+     */
     private record ProjectDashboardCard(
             String projectId,
             String projectName,
@@ -228,6 +305,43 @@ public class MainController {
     ) {
     }
 
+    /**
+     * Wizard activity catalog entry mapped to module + source mode.
+     */
+    private record WizardActivityDefinition(String id, String title, String moduleId, String sourceMode) {
+    }
+
+    private record WizardYoutubeInput(String url, String quality, boolean playlist) {
+    }
+
+    private record WorkspaceMigrationFailure(String projectId, String message) {
+    }
+
+    private record WorkspaceMigrationResult(
+            Path targetRoot,
+            List<ProjectWorkspace> projects,
+            String activeProjectId,
+            List<WorkspaceMigrationFailure> failures
+    ) {
+    }
+
+    private record ProjectWorkspaceHost(
+            String projectId,
+            MainController controller,
+            Stage hostStage,
+            Stage workspaceStage
+    ) {
+    }
+
+    /**
+     * Progress callback used during long-running workspace migration.
+     */
+    @FunctionalInterface
+    private interface WorkspaceMigrationReporter {
+        void report(int processed, int total, String message);
+    }
+
+    // FXML-injected controls (single source of truth for scene graph bindings).
     @FXML
     private BorderPane rootPane;
 
@@ -283,7 +397,7 @@ public class MainController {
     private Label dashboardGalleryInfoLabel;
 
     @FXML
-    private VBox dashboardProjectGalleryBox;
+    private FlowPane dashboardProjectGalleryBox;
 
     @FXML
     private TableView<WorkspaceFileRow> dashboardRecentFilesTable;
@@ -319,6 +433,12 @@ public class MainController {
     private VBox modulesPane;
 
     @FXML
+    private VBox legacyModuleFlowCard;
+
+    @FXML
+    private StackPane workspaceStack;
+
+    @FXML
     private Button projectCreateButton;
 
     @FXML
@@ -347,6 +467,9 @@ public class MainController {
 
     @FXML
     private TableColumn<ProjectRow, String> projectUpdatedColumn;
+
+    @FXML
+    private TableColumn<ProjectRow, String> projectSizeColumn;
 
     @FXML
     private TableColumn<ProjectRow, String> projectPathColumn;
@@ -485,6 +608,9 @@ public class MainController {
 
     @FXML
     private Button wizardRunButton;
+
+    @FXML
+    private Button wizardNextButton;
 
     @FXML
     private Label wizardStateLabel;
@@ -904,6 +1030,12 @@ public class MainController {
     private Button settingsModuleButton;
 
     @FXML
+    private HBox moduleSelectionRow;
+
+    @FXML
+    private FlowPane moduleQuickActionsPane;
+
+    @FXML
     private ComboBox<String> moduleSwitcherBox;
 
     @FXML
@@ -913,7 +1045,28 @@ public class MainController {
     private ComboBox<String> themeBox;
 
     @FXML
+    private ComboBox<String> uiLanguageBox;
+
+    @FXML
     private ComboBox<String> settingsModuleBox;
+
+    @FXML
+    private Label settingsScopeValueLabel;
+
+    @FXML
+    private Button settingsResetProjectModuleButton;
+
+    @FXML
+    private Button settingsSaveGlobalDefaultsButton;
+
+    @FXML
+    private TextField settingsWorkspaceRootField;
+
+    @FXML
+    private Button settingsChangeWorkspaceRootButton;
+
+    @FXML
+    private Label settingsWorkspaceRootInfoLabel;
 
     @FXML
     private Button settingsLoadModuleButton;
@@ -948,6 +1101,7 @@ public class MainController {
     @FXML
     private Button moduleFlowActionButton;
 
+    // Core controller services and observable collections backing table/list views.
     private final ObjectMapper mapper = new ObjectMapper();
     private final JsonPreferences preferences = new JsonPreferences(mapper, resolveRuntimeAppDataDir().resolve("config.json"));
     private final ObservableList<JobRow> jobRows = FXCollections.observableArrayList();
@@ -966,13 +1120,17 @@ public class MainController {
     private final Map<String, String> moduleLabelsToId = ModuleRegistry.labelToId();
     private final Map<String, ModuleUiSchema> moduleUiSchemas = new LinkedHashMap<>();
     private final ModuleComponent.ModuleUiContext moduleUiContext = new ControllerModuleUiContext();
+    private final String controllerInstanceId = UUID.randomUUID().toString();
+    private final Map<String, ProjectWorkspaceHost> openProjectWorkspaceHosts = new LinkedHashMap<>();
 
+    // Mutable runtime/session state.
     private BackendClient backendClient;
     private String currentJobId;
     private String lastOutputDir;
     private String appDataDir;
     private String appVersion;
     private String currentTheme = "";
+    private String currentUiLanguage = UI_LANG_EN;
     private String activeProjectId = "";
     private Path activeProjectRoot;
     private Path activeEditedFilePath;
@@ -993,21 +1151,56 @@ public class MainController {
     private String previousModule = "";
     private String selectedJobLogFilter = "";
     private String activeSection = SECTION_DASHBOARD;
+    private String wizardActivityId = "";
+    private boolean wizardSourceImported;
+    private boolean wizardYoutubeDownloadConfirmed;
+    private boolean wizardSourceUpdateInProgress;
     private boolean settingsAppearanceAllowed = true;
     private boolean settingsRuntimeAllowed = true;
     private boolean settingsCoreAllowed = true;
     private boolean settingsModuleFlowAllowed = true;
     private boolean settingsModuleScopeAllowed = true;
     private boolean settingsPresetRowAllowed = true;
+    private boolean workspaceMigrationRunning;
     private long etaAnchorMillis = -1L;
     private double etaAnchorPercent = -1.0;
 
+    // Auxiliary windows/timers detached from base FXML scene graph.
     private Timeline jobsRefreshTimeline;
     private PauseTransition editorAutosavePause;
     private SystemMonitorWindow monitorWindow;
+    private JobProgressWindow jobProgressWindow;
+    private Stage projectWorkspaceStage;
+    private Label projectWorkspaceTitleLabel;
+    private Button projectWorkspacePreflightButton;
+    private Button projectWorkspaceRunWizardButton;
+    private Button projectWorkspaceSectionOverviewButton;
+    private Button projectWorkspaceSectionWorkflowButton;
+    private Button projectWorkspaceSectionFilesButton;
+    private Button projectWorkspaceSectionJobsButton;
+    private Button projectWorkspaceSectionLogsButton;
+    private Button projectWorkspaceSectionSettingsButton;
+    private StackPane projectWorkspaceContentHost;
+    private VBox projectWorkspaceOverviewPane;
+    private Label projectWorkspaceOverviewProjectLabel;
+    private Label projectWorkspaceOverviewStatsLabel;
+    private Label projectWorkspaceOverviewActivityLabel;
+    private Label projectWorkspaceOverviewWorkflowLabel;
+    private Button projectWorkspaceOverviewRunWizardButton;
+    private String activeProjectWorkspaceSection = PROJECT_SECTION_OVERVIEW;
+    private boolean controllerRunning;
+    private boolean hostedProjectWorkspaceController;
+    private Stage launcherMainStage;
 
+    // Single backend event bridge registered/unregistered during controller lifecycle.
     private final Consumer<JsonNode> eventListener = this::handleBackendEvent;
 
+    /**
+     * JavaFX lifecycle entrypoint invoked after FXML injection.
+     *
+     * Order matters here: UI controls/tables/navigation are initialized first,
+     * then persisted preferences and module context are restored on top.
+     */
     @FXML
     private void initialize() {
         AppFileLogger.initialize();
@@ -1019,23 +1212,29 @@ public class MainController {
         setupModuleNavigation();
         setupShellNavigation();
         setupThemeSelector();
+        setupUiLanguageSelector();
         setupSettingsModuleSelector();
         setupModuleSwitcher();
         initializeWorkspace();
+        applyGuidedWizardUi();
+        applyRunReadOnlyPreviewMode();
 
         sourceModeBox.valueProperty().addListener((obs, oldVal, newVal) -> {
             updateSourceModeUi();
+            onWizardSourceFieldManuallyChanged("source_mode");
             invalidatePreflightState();
             updateWizardState();
         });
         if (localPathField != null) {
             localPathField.textProperty().addListener((obs, oldVal, newVal) -> {
+                onWizardSourceFieldManuallyChanged("local_path");
                 invalidatePreflightState();
                 updateWizardState();
             });
         }
         if (youtubeUrlField != null) {
             youtubeUrlField.textProperty().addListener((obs, oldVal, newVal) -> {
+                onWizardSourceFieldManuallyChanged("youtube_url");
                 invalidatePreflightState();
                 updateWizardState();
             });
@@ -1057,9 +1256,9 @@ public class MainController {
 
         restoreUiPreferences();
         updateSourceModeUi();
-        applyUiMode();
         activateModule(activeModule, false);
         registerPreferenceListeners();
+        registerControllerInstance();
         setRunning(false);
         refreshProfilePreview();
         updateSpeakerMappingButtonState(false);
@@ -1070,6 +1269,9 @@ public class MainController {
         showShellSection(SECTION_DASHBOARD);
     }
 
+    /**
+     * Attaches backend client, wires event listener and pulls capability/path data.
+     */
     public void initBackend(BackendClient client) {
         this.backendClient = client;
         if (this.backendClient == null) {
@@ -1115,14 +1317,15 @@ public class MainController {
                             boolean changed = preferences.setPath(Path.of(cfgPathRaw));
                             if (changed) {
                                 restoreUiPreferences();
-                                applyUiMode();
                                 activateModule(activeModule, false, true);
                             }
                         } catch (Exception ignored) {
                             // Keep default config path fallback.
                         }
                     }
-                    reloadWorkspaceFromCurrentAppDataDir();
+                    if (!isHostedProjectWorkspaceController()) {
+                        reloadWorkspaceFromCurrentAppDataDir();
+                    }
                     addUserLog("INFO", "App data: " + appDataDir);
                 }))
                 .exceptionally(ex -> {
@@ -1131,6 +1334,98 @@ public class MainController {
                 });
 
         refreshJobsSilently();
+    }
+
+    /**
+     * Marks this controller as hosted in a detached project workspace window.
+     */
+    private void configureHostedProjectWorkspaceController(Stage launcherStage) {
+        hostedProjectWorkspaceController = true;
+        launcherMainStage = launcherStage;
+    }
+
+    private boolean isLauncherController() {
+        return !hostedProjectWorkspaceController;
+    }
+
+    private boolean isHostedProjectWorkspaceController() {
+        return hostedProjectWorkspaceController;
+    }
+
+    /**
+     * Registers controller for global run-lock broadcasts across all windows.
+     */
+    private void registerControllerInstance() {
+        REGISTERED_CONTROLLERS.add(this);
+        applyGlobalRunLockState();
+    }
+
+    /**
+     * Unregisters controller and releases lock ownership when this controller exits.
+     */
+    private void unregisterControllerInstance() {
+        REGISTERED_CONTROLLERS.remove(this);
+        releaseGlobalRunLockIfOwned();
+        broadcastGlobalRunLockState();
+    }
+
+    private boolean isGlobalRunLockedByOtherController() {
+        synchronized (GLOBAL_JOB_COORDINATOR_LOCK) {
+            return !globalJobOwnerControllerId.isBlank()
+                    && !Objects.equals(globalJobOwnerControllerId, controllerInstanceId);
+        }
+    }
+
+    private boolean ownsGlobalRunLock() {
+        synchronized (GLOBAL_JOB_COORDINATOR_LOCK) {
+            return Objects.equals(globalJobOwnerControllerId, controllerInstanceId);
+        }
+    }
+
+    /**
+     * Claims global run lock if no other controller currently owns it.
+     */
+    private boolean acquireGlobalRunLock() {
+        synchronized (GLOBAL_JOB_COORDINATOR_LOCK) {
+            if (!globalJobOwnerControllerId.isBlank()
+                    && !Objects.equals(globalJobOwnerControllerId, controllerInstanceId)) {
+                return false;
+            }
+            globalJobOwnerControllerId = controllerInstanceId;
+        }
+        broadcastGlobalRunLockState();
+        return true;
+    }
+
+    /**
+     * Releases global run lock only when lock is owned by this controller instance.
+     */
+    private void releaseGlobalRunLockIfOwned() {
+        boolean changed = false;
+        synchronized (GLOBAL_JOB_COORDINATOR_LOCK) {
+            if (Objects.equals(globalJobOwnerControllerId, controllerInstanceId)) {
+                globalJobOwnerControllerId = "";
+                changed = true;
+            }
+        }
+        if (changed) {
+            broadcastGlobalRunLockState();
+        }
+    }
+
+    /**
+     * Pushes lock-state refresh to all active controllers on JavaFX thread.
+     */
+    private static void broadcastGlobalRunLockState() {
+        Platform.runLater(() -> {
+            for (MainController controller : new ArrayList<>(REGISTERED_CONTROLLERS)) {
+                controller.applyGlobalRunLockState();
+            }
+        });
+    }
+
+    private void applyGlobalRunLockState() {
+        setRunning(controllerRunning);
     }
 
     public void reportBackendStartupFailure(String errorMessage) {
@@ -1188,6 +1483,7 @@ public class MainController {
         if (owner != null) {
             firstLaunchDialog.initOwner(owner);
         }
+        applyThemeToDialog(firstLaunchDialog);
 
         Optional<ButtonType> choice = firstLaunchDialog.showAndWait();
         if (choice.isPresent() && choice.get() == startSetupButton) {
@@ -1256,10 +1552,19 @@ public class MainController {
     }
 
     public void dispose() {
+        controllerRunning = false;
         saveActiveModuleState();
+        if (isLauncherController()) {
+            closeAllHostedProjectWorkspaceWindows();
+        }
         if (jobsRefreshTimeline != null) {
             jobsRefreshTimeline.stop();
             jobsRefreshTimeline = null;
+        }
+        closeProjectWorkspaceWindow();
+        if (jobProgressWindow != null) {
+            jobProgressWindow.close();
+            jobProgressWindow = null;
         }
         if (monitorWindow != null) {
             monitorWindow.close();
@@ -1268,11 +1573,12 @@ public class MainController {
         if (backendClient != null) {
             backendClient.removeEventListener(eventListener);
         }
+        unregisterControllerInstance();
     }
 
     @FXML
     private void onToggleSimpleMode() {
-        applyUiMode();
+        // Deprecated UI toggle retained only for backward compatibility.
     }
 
     @FXML
@@ -1288,22 +1594,26 @@ public class MainController {
 
     @FXML
     private void onNavFiles() {
-        showShellSection(SECTION_FILES);
-        refreshProjectFiles();
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
+        openProjectWindowForProject(activeProjectId, false, PROJECT_SECTION_FILES);
     }
 
     @FXML
     private void onNavModules() {
-        showShellSection(SECTION_MODULES);
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
+        openProjectWindowForProject(activeProjectId, false, PROJECT_SECTION_WORKFLOW);
     }
 
     @FXML
     private void onNavOperations() {
-        showShellSection(SECTION_MODULES);
-        if (operationsTab != null) {
-            selectModule(operationsTab);
+        if (!ensureWorkflowProjectReady()) {
+            return;
         }
-        refreshOperationsDiagnostics();
+        openProjectWindowForProject(activeProjectId, false, PROJECT_SECTION_JOBS);
     }
 
     @FXML
@@ -1318,8 +1628,10 @@ public class MainController {
 
     @FXML
     private void onNavSettings() {
-        showShellSection(SECTION_MODULES);
-        selectModule(settingsTab);
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
+        openProjectWindowForProject(activeProjectId, false, PROJECT_SECTION_SETTINGS);
     }
 
     @FXML
@@ -1352,7 +1664,7 @@ public class MainController {
         if (!ensureWorkflowProjectReady()) {
             return;
         }
-        openProjectWizard(activeProjectId);
+        openProjectWindowForProject(activeProjectId, true, PROJECT_SECTION_WORKFLOW);
     }
 
     @FXML
@@ -1387,6 +1699,11 @@ public class MainController {
         dialog.setTitle("Create Project");
         dialog.setHeaderText("Create new workspace project");
         dialog.setContentText("Project name:");
+        Stage owner = getStage();
+        if (owner != null) {
+            dialog.initOwner(owner);
+        }
+        applyThemeToDialog(dialog);
         Optional<String> result = dialog.showAndWait();
         if (result.isEmpty()) {
             return;
@@ -1413,9 +1730,11 @@ public class MainController {
                     now
             );
             projectsById.put(projectId, project);
+            initializeProjectSettingsFromGlobalDefaults(projectId);
             setActiveProject(projectId, true, false);
             refreshProjectsView();
             refreshProjectFiles();
+            openProjectWindowForProject(projectId, false, PROJECT_SECTION_OVERVIEW);
             addUserLog("SUCCESS", "Project created: " + projectName);
         } catch (Exception ex) {
             addTechnicalLog("ERROR", "Failed to create project: " + ex.getMessage());
@@ -1433,6 +1752,7 @@ public class MainController {
         setActiveProject(selected.getProjectId(), true, true);
         refreshProjectsView();
         refreshProjectFiles();
+        openProjectWindowForProject(selected.getProjectId(), false, PROJECT_SECTION_OVERVIEW);
     }
 
     private boolean ensureWorkflowProjectReady() {
@@ -1445,6 +1765,10 @@ public class MainController {
     }
 
     private void openProjectWizard(String projectId) {
+        openProjectWindowForProject(projectId, true, PROJECT_SECTION_WORKFLOW);
+    }
+
+    private void openProjectWindowForProject(String projectId, boolean runWizard, String sectionId) {
         String normalized = trimToEmpty(projectId);
         if (normalized.isBlank() || !projectsById.containsKey(normalized)) {
             addUserLog("WARN", "Project does not exist anymore.");
@@ -1455,15 +1779,543 @@ public class MainController {
         setActiveProject(normalized, true, !Objects.equals(activeProjectId, normalized));
         refreshProjectsView();
         refreshProjectFiles();
-        showShellSection(SECTION_MODULES);
+        ProjectWorkspace project = projectsById.get(normalized);
+        String projectName = project == null ? normalized : project.name();
+
+        if (!isLauncherController()) {
+            openProjectWorkspaceWindow();
+            if (!trimToEmpty(sectionId).isBlank()) {
+                showProjectWorkspaceSection(sectionId);
+            }
+            if (runWizard) {
+                addUserLog("INFO", "Workflow wizard opened for project: " + projectName);
+                onRunProjectWizard();
+            }
+            return;
+        }
+
+        cleanupHostedProjectWorkspaceWindows();
+        ProjectWorkspaceHost existing = openProjectWorkspaceHosts.get(normalized);
+        if (existing != null
+                && existing.workspaceStage() != null
+                && existing.workspaceStage().isShowing()) {
+            existing.workspaceStage().toFront();
+            existing.workspaceStage().requestFocus();
+            if (!trimToEmpty(sectionId).isBlank()) {
+                existing.controller().showProjectWorkspaceSection(sectionId);
+            }
+            if (runWizard) {
+                existing.controller().onRunProjectWizard();
+            } else {
+                addUserLog("INFO", "Project already open, focused existing window: " + projectName);
+            }
+            return;
+        }
+
+        Stage launcherStage = getMainStage();
+        try {
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/transcribemate/v2/fx/main-view.fxml"));
+            Parent hostRoot = loader.load();
+            MainController hostedController = loader.getController();
+
+            Scene hostScene = new Scene(hostRoot, 1460, 920);
+            if (rootPane != null && rootPane.getScene() != null) {
+                hostScene.getStylesheets().setAll(rootPane.getScene().getStylesheets());
+            } else {
+                hostScene.getStylesheets().add(getClass().getResource("/com/transcribemate/v2/fx/styles.css").toExternalForm());
+            }
+
+            Stage hostStage = new Stage();
+            if (launcherStage != null) {
+                hostStage.initOwner(launcherStage);
+            }
+            hostStage.setScene(hostScene);
+            hostStage.setTitle(buildAppTitleText() + " - Project Host");
+
+            hostedController.configureHostedProjectWorkspaceController(launcherStage);
+            hostedController.initBackend(backendClient);
+            hostedController.setActiveProject(normalized, true, false);
+            hostedController.refreshProjectsView();
+            hostedController.refreshProjectFiles();
+            hostedController.openProjectWorkspaceWindow();
+
+            Stage workspaceStage = hostedController.projectWorkspaceStage;
+            if (workspaceStage == null) {
+                hostedController.dispose();
+                hostStage.close();
+                addTechnicalLog("ERROR", "Failed to create project workspace window for " + projectName + ".");
+                return;
+            }
+
+            workspaceStage.addEventHandler(WindowEvent.WINDOW_HIDDEN, event ->
+                    Platform.runLater(() -> unregisterHostedProjectWorkspaceWindow(normalized))
+            );
+
+            openProjectWorkspaceHosts.put(normalized, new ProjectWorkspaceHost(normalized, hostedController, hostStage, workspaceStage));
+
+            if (!trimToEmpty(sectionId).isBlank()) {
+                hostedController.showProjectWorkspaceSection(sectionId);
+            }
+            workspaceStage.toFront();
+            workspaceStage.requestFocus();
+
+            if (runWizard) {
+                addUserLog("INFO", "Workflow wizard opened for project: " + projectName);
+                hostedController.onRunProjectWizard();
+            } else {
+                addUserLog("INFO", "Project opened: " + projectName);
+            }
+        } catch (Exception ex) {
+            addTechnicalLog("ERROR", "Failed to open project window: " + rootMessage(ex));
+            addUserLog("ERROR", "Cannot open project window.");
+        }
+    }
+
+    private void cleanupHostedProjectWorkspaceWindows() {
+        if (openProjectWorkspaceHosts.isEmpty()) {
+            return;
+        }
+        List<String> closedProjectIds = new ArrayList<>();
+        for (Map.Entry<String, ProjectWorkspaceHost> entry : openProjectWorkspaceHosts.entrySet()) {
+            ProjectWorkspaceHost host = entry.getValue();
+            Stage workspaceStage = host == null ? null : host.workspaceStage();
+            if (workspaceStage == null || !workspaceStage.isShowing()) {
+                closedProjectIds.add(entry.getKey());
+            }
+        }
+        for (String projectId : closedProjectIds) {
+            unregisterHostedProjectWorkspaceWindow(projectId);
+        }
+    }
+
+    private void unregisterHostedProjectWorkspaceWindow(String projectId) {
+        String normalized = trimToEmpty(projectId);
+        if (normalized.isBlank()) {
+            return;
+        }
+        ProjectWorkspaceHost host = openProjectWorkspaceHosts.remove(normalized);
+        if (host == null) {
+            return;
+        }
+        MainController hostedController = host.controller();
+        if (hostedController != null) {
+            hostedController.dispose();
+        }
+        Stage hostStage = host.hostStage();
+        if (hostStage != null) {
+            hostStage.close();
+        }
+    }
+
+    private void closeAllHostedProjectWorkspaceWindows() {
+        if (openProjectWorkspaceHosts.isEmpty()) {
+            return;
+        }
+        List<String> projectIds = new ArrayList<>(openProjectWorkspaceHosts.keySet());
+        for (String projectId : projectIds) {
+            unregisterHostedProjectWorkspaceWindow(projectId);
+        }
+    }
+
+    private void openProjectWorkspaceWindow() {
+        if (modulesPane == null || workspaceStack == null) {
+            return;
+        }
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
+
+        if (projectWorkspaceStage != null) {
+            updateProjectWorkspaceWindowHeader();
+            refreshProjectWorkspaceOverview();
+            if (!projectWorkspaceStage.isShowing()) {
+                projectWorkspaceStage.show();
+            }
+            projectWorkspaceStage.toFront();
+            projectWorkspaceStage.requestFocus();
+            return;
+        }
+
+        if (modulesPane.getParent() instanceof Pane parentPane) {
+            parentPane.getChildren().remove(modulesPane);
+        }
+        if (filesPane != null && filesPane.getParent() instanceof Pane parentPane) {
+            parentPane.getChildren().remove(filesPane);
+        }
+
+        BorderPane windowRoot = new BorderPane();
+        windowRoot.getStyleClass().add("project-shell");
+        if (rootPane != null) {
+            for (String styleClass : rootPane.getStyleClass()) {
+                if (!windowRoot.getStyleClass().contains(styleClass)) {
+                    windowRoot.getStyleClass().add(styleClass);
+                }
+            }
+        }
+
+        HBox header = new HBox(8.0);
+        header.setPadding(new Insets(10.0, 12.0, 10.0, 12.0));
+        header.getStyleClass().addAll("card-pane", "app-titlebar");
+
+        Label title = new Label("Project workspace");
+        title.getStyleClass().add("section-title");
+        projectWorkspaceTitleLabel = title;
+
+        Region spacer = new Region();
+        HBox.setHgrow(spacer, Priority.ALWAYS);
+
+        Button runWizardButton = new Button("Run wizard");
+        runWizardButton.getStyleClass().add("accent-btn");
+        runWizardButton.setOnAction(event -> onRunProjectWizard());
+        projectWorkspaceRunWizardButton = runWizardButton;
+
+        Button runPreflightButton = new Button("Run preflight");
+        runPreflightButton.setOnAction(event -> onRunPreflight());
+        projectWorkspacePreflightButton = runPreflightButton;
+
+        Button monitorButtonLocal = new Button("System monitor");
+        monitorButtonLocal.getStyleClass().add("accent-btn");
+        monitorButtonLocal.setOnAction(event -> onOpenMonitor());
+
+        Button dashboardButton = new Button("Back to dashboard");
+        dashboardButton.setOnAction(event -> {
+            Stage mainStage = getMainStage();
+            if (mainStage != null) {
+                mainStage.show();
+                mainStage.toFront();
+            }
+            if (!isHostedProjectWorkspaceController()) {
+                showShellSection(SECTION_DASHBOARD);
+            }
+        });
+
+        Button closeButton = new Button("Close project window");
+        closeButton.setOnAction(event -> closeProjectWorkspaceWindow());
+
+        header.getChildren().addAll(
+                title,
+                spacer,
+                runWizardButton,
+                runPreflightButton,
+                monitorButtonLocal,
+                dashboardButton,
+                closeButton
+        );
+        windowRoot.setTop(header);
+
+        VBox sectionNav = createProjectWorkspaceSectionNav();
+        projectWorkspaceOverviewPane = createProjectWorkspaceOverviewPane();
+
+        projectWorkspaceContentHost = new StackPane();
+        projectWorkspaceContentHost.getStyleClass().add("project-shell-content-host");
+        if (projectWorkspaceOverviewPane != null) {
+            projectWorkspaceContentHost.getChildren().add(projectWorkspaceOverviewPane);
+        }
+        projectWorkspaceContentHost.getChildren().add(modulesPane);
+        if (filesPane != null) {
+            projectWorkspaceContentHost.getChildren().add(filesPane);
+        }
+
+        HBox shellBody = new HBox(10.0, sectionNav, projectWorkspaceContentHost);
+        shellBody.getStyleClass().add("project-shell-body");
+        HBox.setHgrow(projectWorkspaceContentHost, Priority.ALWAYS);
+        windowRoot.setCenter(shellBody);
+
+        Stage owner = getStage();
+        double defaultWidth = 1125.0;
+        double defaultHeight = 1000.0;
+
+        Scene scene = new Scene(windowRoot, defaultWidth, defaultHeight);
+        if (rootPane != null && rootPane.getScene() != null) {
+            scene.getStylesheets().setAll(rootPane.getScene().getStylesheets());
+        }
+
+        Stage stage = new Stage();
+        if (owner != null) {
+            stage.initOwner(owner);
+        }
+        stage.setTitle(buildAppTitleText() + " - Project Workspace");
+        stage.setScene(scene);
+        applyThemeToStage(stage);
+        stage.addEventFilter(WindowEvent.WINDOW_CLOSE_REQUEST, event -> {
+            if (controllerRunning) {
+                addUserLog("WARN", "Cannot close project window while a job is running.");
+                event.consume();
+            }
+        });
+        stage.setOnHidden(event -> {
+            restoreProjectWorkspacePanesToMainShell();
+            projectWorkspaceStage = null;
+            projectWorkspaceTitleLabel = null;
+            projectWorkspacePreflightButton = null;
+            projectWorkspaceRunWizardButton = null;
+            projectWorkspaceSectionOverviewButton = null;
+            projectWorkspaceSectionWorkflowButton = null;
+            projectWorkspaceSectionFilesButton = null;
+            projectWorkspaceSectionJobsButton = null;
+            projectWorkspaceSectionLogsButton = null;
+            projectWorkspaceSectionSettingsButton = null;
+            projectWorkspaceContentHost = null;
+            projectWorkspaceOverviewPane = null;
+            projectWorkspaceOverviewProjectLabel = null;
+            projectWorkspaceOverviewStatsLabel = null;
+            projectWorkspaceOverviewActivityLabel = null;
+            projectWorkspaceOverviewWorkflowLabel = null;
+            projectWorkspaceOverviewRunWizardButton = null;
+            activeProjectWorkspaceSection = PROJECT_SECTION_OVERVIEW;
+            if (!isHostedProjectWorkspaceController()) {
+                showShellSection(SECTION_DASHBOARD);
+            }
+        });
+
+        projectWorkspaceStage = stage;
+        updateProjectWorkspaceWindowHeader();
+        refreshProjectWorkspaceOverview();
+        setNodeVisibleManaged(modulesPane, true);
+        setNodeVisibleManaged(filesPane, true);
         if (runTab != null) {
             selectModule(runTab);
         }
-        requestFocusIfVisible(sourceModeBox, localPathField, youtubeUrlField);
+        showProjectWorkspaceSection(PROJECT_SECTION_OVERVIEW);
+        stage.show();
+        stage.setMaximized(false);
+        stage.toFront();
+        stage.requestFocus();
+    }
 
-        ProjectWorkspace project = projectsById.get(normalized);
-        String projectName = project == null ? normalized : project.name();
-        addUserLog("INFO", "Workflow wizard opened for project: " + projectName);
+    private void closeProjectWorkspaceWindow() {
+        if (projectWorkspaceStage != null) {
+            projectWorkspaceStage.close();
+        }
+    }
+
+    private void restoreProjectWorkspacePanesToMainShell() {
+        if (workspaceStack == null) {
+            return;
+        }
+
+        restorePaneToWorkspaceStack(modulesPane);
+        restorePaneToWorkspaceStack(filesPane);
+
+        setNodeVisibleManaged(modulesPane, SECTION_MODULES.equals(activeSection));
+        setNodeVisibleManaged(filesPane, SECTION_FILES.equals(activeSection));
+    }
+
+    private void restorePaneToWorkspaceStack(Node pane) {
+        if (pane == null || workspaceStack == null) {
+            return;
+        }
+        if (pane.getParent() instanceof Pane parentPane) {
+            parentPane.getChildren().remove(pane);
+        }
+        if (!workspaceStack.getChildren().contains(pane)) {
+            workspaceStack.getChildren().add(pane);
+        }
+    }
+
+    private void updateProjectWorkspaceWindowHeader() {
+        if (projectWorkspaceTitleLabel == null) {
+            return;
+        }
+        ProjectWorkspace active = projectsById.get(activeProjectId);
+        if (active == null) {
+            projectWorkspaceTitleLabel.setText("Project workspace");
+            return;
+        }
+        projectWorkspaceTitleLabel.setText(
+                "Project workspace - " + active.name() + " (" + trimToEmpty(active.projectId()) + ")"
+        );
+    }
+
+    private VBox createProjectWorkspaceSectionNav() {
+        VBox nav = new VBox(8.0);
+        nav.getStyleClass().addAll("card-pane", "project-section-nav");
+        nav.setPadding(new Insets(10.0));
+        nav.setPrefWidth(210.0);
+        nav.setMinWidth(190.0);
+
+        Label title = new Label("Project sections");
+        title.getStyleClass().add("section-title");
+
+        projectWorkspaceSectionOverviewButton = createProjectWorkspaceSectionButton("Overview", PROJECT_SECTION_OVERVIEW);
+        projectWorkspaceSectionWorkflowButton = createProjectWorkspaceSectionButton("Workflow", PROJECT_SECTION_WORKFLOW);
+        projectWorkspaceSectionFilesButton = createProjectWorkspaceSectionButton("Files", PROJECT_SECTION_FILES);
+        projectWorkspaceSectionJobsButton = createProjectWorkspaceSectionButton("Jobs", PROJECT_SECTION_JOBS);
+        projectWorkspaceSectionLogsButton = createProjectWorkspaceSectionButton("Logs", PROJECT_SECTION_LOGS);
+        projectWorkspaceSectionSettingsButton = createProjectWorkspaceSectionButton("Settings", PROJECT_SECTION_SETTINGS);
+
+        nav.getChildren().addAll(
+                title,
+                projectWorkspaceSectionOverviewButton,
+                projectWorkspaceSectionWorkflowButton,
+                projectWorkspaceSectionFilesButton,
+                projectWorkspaceSectionJobsButton,
+                projectWorkspaceSectionLogsButton,
+                projectWorkspaceSectionSettingsButton
+        );
+        return nav;
+    }
+
+    private Button createProjectWorkspaceSectionButton(String label, String sectionId) {
+        Button button = new Button(label);
+        button.getStyleClass().add("project-section-btn");
+        button.setMaxWidth(Double.MAX_VALUE);
+        button.setOnAction(event -> showProjectWorkspaceSection(sectionId));
+        return button;
+    }
+
+    private VBox createProjectWorkspaceOverviewPane() {
+        VBox pane = new VBox(10.0);
+        pane.getStyleClass().addAll("workspace-pane", "project-overview-pane");
+
+        VBox summaryCard = new VBox(8.0);
+        summaryCard.getStyleClass().add("card-pane");
+        summaryCard.setPadding(new Insets(12.0));
+
+        Label heading = new Label("Overview");
+        heading.getStyleClass().add("section-title");
+
+        projectWorkspaceOverviewProjectLabel = new Label("Project: -");
+        projectWorkspaceOverviewProjectLabel.getStyleClass().add("small-label");
+        projectWorkspaceOverviewStatsLabel = new Label("Input: 0 | Output: 0 | Transcripts: 0");
+        projectWorkspaceOverviewStatsLabel.getStyleClass().add("small-label");
+        projectWorkspaceOverviewActivityLabel = new Label("Last activity: -");
+        projectWorkspaceOverviewActivityLabel.getStyleClass().add("small-label");
+        projectWorkspaceOverviewWorkflowLabel = new Label("Current workflow: -");
+        projectWorkspaceOverviewWorkflowLabel.getStyleClass().add("small-label");
+
+        HBox actions = new HBox(8.0);
+        Button openWizard = new Button("Run wizard");
+        openWizard.getStyleClass().add("accent-btn");
+        openWizard.setOnAction(event -> onRunProjectWizard());
+        projectWorkspaceOverviewRunWizardButton = openWizard;
+        Button openWorkflow = new Button("Open workflow");
+        openWorkflow.setOnAction(event -> showProjectWorkspaceSection(PROJECT_SECTION_WORKFLOW));
+        Button openFiles = new Button("Open files");
+        openFiles.setOnAction(event -> showProjectWorkspaceSection(PROJECT_SECTION_FILES));
+        Button openFolder = new Button("Open project folder");
+        openFolder.setOnAction(event -> onOpenProjectFolder());
+        actions.getChildren().addAll(openWizard, openWorkflow, openFiles, openFolder);
+
+        summaryCard.getChildren().addAll(
+                heading,
+                projectWorkspaceOverviewProjectLabel,
+                projectWorkspaceOverviewStatsLabel,
+                projectWorkspaceOverviewActivityLabel,
+                projectWorkspaceOverviewWorkflowLabel,
+                actions
+        );
+        pane.getChildren().add(summaryCard);
+        VBox.setVgrow(summaryCard, Priority.NEVER);
+        return pane;
+    }
+
+    private void refreshProjectWorkspaceOverview() {
+        if (projectWorkspaceOverviewProjectLabel == null) {
+            return;
+        }
+        ProjectWorkspace active = projectsById.get(activeProjectId);
+        if (active == null) {
+            projectWorkspaceOverviewProjectLabel.setText("Project: none");
+            projectWorkspaceOverviewStatsLabel.setText("Input: 0 | Output: 0 | Transcripts: 0");
+            projectWorkspaceOverviewActivityLabel.setText("Last activity: -");
+            projectWorkspaceOverviewWorkflowLabel.setText("Current workflow: " + moduleLabel(activeModule));
+            return;
+        }
+
+        Path root = active.rootPath();
+        long inputCount = countRegularFiles(root == null ? null : root.resolve("input"));
+        long outputCount = countRegularFiles(root == null ? null : root.resolve("output"));
+        long transcriptCount = countTranscriptArtifacts(root == null ? null : root.resolve("output"));
+        ActivitySnapshot activity = readLastTimelineActivity(root == null ? null : root.resolve("jobs").resolve("timeline.jsonl"));
+        if (activity == null) {
+            activity = new ActivitySnapshot("No activity yet", parseStamp(active.updatedAt()));
+        }
+        String activityTime = activity.at() == null ? "-" : DASHBOARD_ACTIVITY_FMT.format(activity.at());
+
+        projectWorkspaceOverviewProjectLabel.setText("Project: " + active.name() + " (" + trimToEmpty(active.projectId()) + ")");
+        projectWorkspaceOverviewStatsLabel.setText(
+                "Input: " + inputCount
+                        + " | Output: " + outputCount
+                        + " | Transcripts: " + transcriptCount
+                        + " | Size: " + formatBytes(directorySizeBytes(root))
+        );
+        projectWorkspaceOverviewActivityLabel.setText("Last activity: " + trimToEmpty(activity.label()) + " (" + activityTime + ")");
+        projectWorkspaceOverviewWorkflowLabel.setText("Current workflow: " + moduleLabel(activeModule));
+    }
+
+    private void showProjectWorkspaceSection(String sectionId) {
+        String normalized = trimToEmpty(sectionId).toLowerCase(Locale.ROOT);
+        if (normalized.isBlank()) {
+            normalized = PROJECT_SECTION_OVERVIEW;
+        }
+        activeProjectWorkspaceSection = normalized;
+
+        boolean showOverview = PROJECT_SECTION_OVERVIEW.equals(normalized);
+        boolean showFiles = PROJECT_SECTION_FILES.equals(normalized);
+        boolean showModules = !showOverview && !showFiles;
+
+        setNodeVisibleManaged(projectWorkspaceOverviewPane, showOverview);
+        setNodeVisibleManaged(filesPane, showFiles);
+        setNodeVisibleManaged(modulesPane, showModules);
+
+        if (showOverview) {
+            refreshProjectWorkspaceOverview();
+        } else if (showFiles) {
+            refreshProjectFiles();
+        } else if (PROJECT_SECTION_WORKFLOW.equals(normalized)) {
+            if (runTab != null) {
+                selectModule(runTab);
+            }
+            setNodeVisibleManaged(filesPane, false);
+            setNodeVisibleManaged(modulesPane, true);
+        } else if (PROJECT_SECTION_JOBS.equals(normalized)) {
+            if (jobsTab != null) {
+                selectModule(jobsTab);
+            }
+            setNodeVisibleManaged(filesPane, false);
+            setNodeVisibleManaged(modulesPane, true);
+        } else if (PROJECT_SECTION_LOGS.equals(normalized)) {
+            if (logsTab != null) {
+                selectModule(logsTab);
+            }
+            setNodeVisibleManaged(filesPane, false);
+            setNodeVisibleManaged(modulesPane, true);
+        } else if (PROJECT_SECTION_SETTINGS.equals(normalized)) {
+            if (settingsTab != null) {
+                selectModule(settingsTab);
+            }
+            setNodeVisibleManaged(filesPane, false);
+            setNodeVisibleManaged(modulesPane, true);
+        }
+        updateProjectWorkspaceSectionButtons();
+    }
+
+    private void updateProjectWorkspaceSectionButtons() {
+        setProjectSectionButtonActive(projectWorkspaceSectionOverviewButton, PROJECT_SECTION_OVERVIEW.equals(activeProjectWorkspaceSection));
+        setProjectSectionButtonActive(projectWorkspaceSectionWorkflowButton, PROJECT_SECTION_WORKFLOW.equals(activeProjectWorkspaceSection));
+        setProjectSectionButtonActive(projectWorkspaceSectionFilesButton, PROJECT_SECTION_FILES.equals(activeProjectWorkspaceSection));
+        setProjectSectionButtonActive(projectWorkspaceSectionJobsButton, PROJECT_SECTION_JOBS.equals(activeProjectWorkspaceSection));
+        setProjectSectionButtonActive(projectWorkspaceSectionLogsButton, PROJECT_SECTION_LOGS.equals(activeProjectWorkspaceSection));
+        setProjectSectionButtonActive(projectWorkspaceSectionSettingsButton, PROJECT_SECTION_SETTINGS.equals(activeProjectWorkspaceSection));
+    }
+
+    private void setProjectSectionButtonActive(Button button, boolean active) {
+        if (button == null) {
+            return;
+        }
+        button.getStyleClass().remove("project-section-btn-active");
+        if (active) {
+            button.getStyleClass().add("project-section-btn-active");
+        }
+    }
+
+    private void selectProjectWorkspaceWorkflowTab() {
+        showProjectWorkspaceSection(PROJECT_SECTION_WORKFLOW);
+    }
+
+    private void selectProjectWorkspaceFilesTab() {
+        showProjectWorkspaceSection(PROJECT_SECTION_FILES);
     }
 
     @FXML
@@ -1485,6 +2337,11 @@ public class MainController {
         confirm.setTitle("Delete Project");
         confirm.setHeaderText("Delete project '" + workspace.name() + "'?");
         confirm.setContentText("This will remove project metadata and delete the project folder from disk.");
+        Stage owner = getStage();
+        if (owner != null) {
+            confirm.initOwner(owner);
+        }
+        applyThemeToDialog(confirm);
         Optional<ButtonType> answer = confirm.showAndWait();
         if (answer.isEmpty() || answer.get() != ButtonType.OK) {
             return;
@@ -1492,10 +2349,15 @@ public class MainController {
 
         try {
             Path root = workspace.rootPath();
+            if (isLauncherController()) {
+                unregisterHostedProjectWorkspaceWindow(workspace.projectId());
+            }
             if (root != null && Files.exists(root)) {
                 deleteRecursively(root);
             }
             projectsById.remove(workspace.projectId());
+            preferences.removeByPrefix(PREF_PROJECT_PREFIX + workspace.projectId() + ".");
+            preferences.flush();
             if (Objects.equals(activeProjectId, workspace.projectId())) {
                 String replacement = projectsById.keySet().stream().findFirst().orElse("");
                 setActiveProject(replacement, false, false);
@@ -1539,31 +2401,9 @@ public class MainController {
             addUserLog("WARN", "Select an active project first.");
             return;
         }
-        Stage stage = getStage();
-        if (stage == null) {
+        int copied = importFromChooserToProjectInput("Import files to project input");
+        if (copied <= 0) {
             return;
-        }
-        FileChooser chooser = new FileChooser();
-        chooser.setTitle("Import files to project input");
-        List<File> selected = chooser.showOpenMultipleDialog(stage);
-        if (selected == null || selected.isEmpty()) {
-            return;
-        }
-
-        Path targetDir = activeProjectRoot.resolve("input");
-        int copied = 0;
-        for (File file : selected) {
-            if (file == null || !file.isFile()) {
-                continue;
-            }
-            try {
-                Files.createDirectories(targetDir);
-                Path destination = resolveUniqueTargetPath(targetDir, Path.of(file.getName()));
-                Files.copy(file.toPath(), destination, StandardCopyOption.REPLACE_EXISTING);
-                copied += 1;
-            } catch (Exception ex) {
-                addTechnicalLog("WARN", "Failed to import '" + file.getAbsolutePath() + "': " + ex.getMessage());
-            }
         }
         refreshProjectFiles();
         addUserLog("INFO", "Imported files: " + copied);
@@ -1622,8 +2462,11 @@ public class MainController {
         if (!ensureWorkflowProjectReady()) {
             return;
         }
-        selectModule(runTab);
-        requestFocusIfVisible(sourceModeBox, localPathField, youtubeUrlField);
+        Optional<WizardActivityDefinition> selected = promptWizardActivitySelection();
+        if (selected.isEmpty()) {
+            return;
+        }
+        applyWizardActivitySelection(selected.get());
     }
 
     @FXML
@@ -1631,13 +2474,32 @@ public class MainController {
         if (!ensureWorkflowProjectReady()) {
             return;
         }
-        selectModule(runTab);
-        requestFocusIfVisible(outputDirField);
+        WizardActivityDefinition activity = resolveWizardActivitySelection();
+        if (activity == null || !Objects.equals(trimToEmpty(wizardActivityId), activity.id())) {
+            addUserLog("WARN", "Step 1 required: select activity first.");
+            return;
+        }
+        if (runWizardImportStep(activity)) {
+            updateWizardState();
+        }
     }
 
     @FXML
     private void onWizardPreflight() {
         if (!ensureWorkflowProjectReady()) {
+            return;
+        }
+        WizardActivityDefinition activity = resolveWizardActivitySelection();
+        if (activity == null || !Objects.equals(trimToEmpty(wizardActivityId), activity.id())) {
+            addUserLog("WARN", "Step 1 required: select activity first.");
+            return;
+        }
+        if (!wizardSourceImported) {
+            addUserLog("WARN", "Step 2 required: import source first.");
+            return;
+        }
+        if ("youtube".equals(activity.sourceMode()) && !wizardYoutubeDownloadConfirmed) {
+            addUserLog("WARN", "Step 2 required: confirm YouTube import step first.");
             return;
         }
         onRunPreflight();
@@ -1648,7 +2510,875 @@ public class MainController {
         if (!ensureWorkflowProjectReady()) {
             return;
         }
+        WizardActivityDefinition activity = resolveWizardActivitySelection();
+        if (activity == null || !Objects.equals(trimToEmpty(wizardActivityId), activity.id())) {
+            addUserLog("WARN", "Step 1 required: select activity first.");
+            return;
+        }
+        if (!wizardSourceImported) {
+            addUserLog("WARN", "Step 2 required: import source first.");
+            return;
+        }
+        if ("youtube".equals(activity.sourceMode()) && !wizardYoutubeDownloadConfirmed) {
+            addUserLog("WARN", "Step 2 required: confirm YouTube import step first.");
+            return;
+        }
         onStart();
+    }
+
+    @FXML
+    private void onWizardNext() {
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
+        if (runtimeBootstrapRunning) {
+            addUserLog("WARN", "Online runtime setup is in progress. Wait until it completes.");
+            return;
+        }
+        if (backendClient == null) {
+            addTechnicalLog("ERROR", "Backend is not initialized.");
+            return;
+        }
+
+        WizardActivityDefinition activity = resolveWizardActivitySelection();
+        boolean activityReady = activity != null && Objects.equals(trimToEmpty(wizardActivityId), activity.id());
+        if (!activityReady) {
+            Optional<WizardActivityDefinition> selected = promptWizardActivitySelection();
+            if (selected.isEmpty()) {
+                return;
+            }
+            applyWizardActivitySelection(selected.get());
+            activity = selected.get();
+            activityReady = true;
+        }
+
+        if (activity == null || !activityReady) {
+            addUserLog("WARN", "Wizard could not determine activity.");
+            return;
+        }
+
+        boolean sourceReady = wizardSourceImported;
+        boolean youtubeConfirmReady = !"youtube".equals(activity.sourceMode()) || wizardYoutubeDownloadConfirmed;
+        if (!sourceReady || !youtubeConfirmReady) {
+            if (!runWizardImportStep(activity)) {
+                updateWizardState();
+                return;
+            }
+            sourceReady = wizardSourceImported;
+            youtubeConfirmReady = !"youtube".equals(activity.sourceMode()) || wizardYoutubeDownloadConfirmed;
+        }
+
+        if (!sourceReady || !youtubeConfirmReady) {
+            updateWizardState();
+            return;
+        }
+
+        saveActiveModuleState();
+        String validationError = validateInputs();
+        if (validationError != null) {
+            addUserLog("ERROR", validationError);
+            updateWizardState();
+            return;
+        }
+
+        ObjectNode params = buildPipelineParams();
+        startPipelineRequest(params, "wizard");
+    }
+
+    /**
+     * Opens guided wizard window and executes module-defined steps in order.
+     */
+    @FXML
+    private void onRunProjectWizard() {
+        if (!ensureWorkflowProjectReady()) {
+            return;
+        }
+        if (controllerRunning) {
+            addUserLog("WARN", "A job is running. Wait until it finishes.");
+            return;
+        }
+        if (isGlobalRunLockedByOtherController()) {
+            addUserLog("WARN", "Another project job is running. Wait until it finishes.");
+            return;
+        }
+
+        Optional<WizardActivityDefinition> selectedActivity = promptWizardActivitySelection();
+        if (selectedActivity.isEmpty()) {
+            addUserLog("INFO", "Wizard cancelled.");
+            return;
+        }
+
+        WizardActivityDefinition activity = selectedActivity.get();
+        applyWizardActivitySelection(activity);
+        showProjectWorkspaceSection(PROJECT_SECTION_WORKFLOW);
+        final WizardActivityDefinition resolvedActivity = activity;
+        ModuleWizardSpec wizardSpec = resolveActiveModuleWizardSpec(resolvedActivity);
+        Stage owner = projectWorkspaceStage != null ? projectWorkspaceStage : getStage();
+        ProjectWizardWindow wizardWindow = new ProjectWizardWindow(
+                owner,
+                wizardSpec,
+                (step, index, total, store) -> runProjectWizardStep(step, resolvedActivity, store),
+                this::applyThemeToStage
+        );
+
+        var result = wizardWindow.showAndWait();
+        if (result.completed()) {
+            addUserLog("INFO", "Wizard completed: " + wizardSpec.title());
+        } else {
+            addUserLog("INFO", "Wizard cancelled: " + wizardSpec.title());
+        }
+        refreshProjectWorkspaceOverview();
+        updateWizardState();
+    }
+
+    private boolean isProjectWorkspaceDetached() {
+        if (projectWorkspaceStage == null) {
+            return false;
+        }
+        if (workspaceStack == null) {
+            return true;
+        }
+        boolean modulesDetached = modulesPane != null
+                && modulesPane.getParent() != null
+                && modulesPane.getParent() != workspaceStack;
+        boolean filesDetached = filesPane != null
+                && filesPane.getParent() != null
+                && filesPane.getParent() != workspaceStack;
+        return modulesDetached || filesDetached;
+    }
+
+    private WizardActivityDefinition resolveWizardActivityForModule(String moduleId) {
+        String normalized = normalizeModuleId(moduleId);
+        for (WizardActivityDefinition option : WIZARD_ACTIVITIES) {
+            if (Objects.equals(option.moduleId(), normalized)) {
+                return option;
+            }
+        }
+        return null;
+    }
+
+    private ModuleWizardSpec resolveActiveModuleWizardSpec(WizardActivityDefinition activity) {
+        ModuleComponent component = getActiveModuleComponent();
+        ModuleWizardSpec spec = component == null ? null : component.wizardSpec();
+        if (spec == null || spec.steps().isEmpty()) {
+            List<ModuleWizardStepSpec> fallbackSteps = new ArrayList<>();
+            if (activity != null && Objects.equals(activity.sourceMode(), "youtube")) {
+                fallbackSteps.add(new ModuleWizardStepSpec("import_youtube", "YouTube source", "Provide URL and quality.", "import_youtube"));
+            } else {
+                fallbackSteps.add(new ModuleWizardStepSpec("import_local", "Import local source", "Copy media into project input.", "import_local"));
+            }
+            fallbackSteps.add(new ModuleWizardStepSpec("transcription", "Transcription settings", "Set model and language defaults.", "configure_transcription"));
+            fallbackSteps.add(new ModuleWizardStepSpec("output", "Output options", "Set output prefix and output options.", "configure_output"));
+            fallbackSteps.add(new ModuleWizardStepSpec("preflight_start", "Preflight and start", "Run preflight gate and confirm start.", "preflight_start"));
+            String title = activity == null ? moduleLabel(activeModule) + " Wizard" : activity.title() + " Wizard";
+            String moduleId = activity == null ? activeModule : activity.moduleId();
+            return new ModuleWizardSpec(moduleId, title, fallbackSteps);
+        }
+        return spec;
+    }
+
+    /**
+     * Executes one wizard step action and records step metadata in wizard store.
+     */
+    private boolean runProjectWizardStep(ModuleWizardStepSpec step, WizardActivityDefinition activity, WizardValueStore store) {
+        if (step == null) {
+            return true;
+        }
+        String actionKey = trimToEmpty(step.actionKey());
+        if (actionKey.isBlank()) {
+            return true;
+        }
+        boolean ok = runWizardStepAction(actionKey, activity);
+        if (ok && store != null) {
+            store.put("last_step", trimToEmpty(step.id()));
+            store.put("last_action", actionKey);
+            store.put("module", activeModule);
+            store.put("activity", activity == null ? "" : activity.id());
+        }
+        refreshProjectWorkspaceOverview();
+        updateWizardState();
+        return ok;
+    }
+
+    /**
+     * Dispatches wizard action keys to concrete handlers.
+     */
+    private boolean runWizardStepAction(String actionKey, WizardActivityDefinition activity) {
+        String key = trimToEmpty(actionKey).toLowerCase(Locale.ROOT);
+        return switch (key) {
+            case "import_local" -> runWizardLocalImportStep(activity);
+            case "import_youtube" -> runWizardYoutubeImportStep(activity);
+            case "configure_transcription" -> promptWizardTranscriptionSettings();
+            case "configure_output" -> promptWizardOutputSettings();
+            case "configure_speaker" -> promptWizardSpeakerSettings();
+            case "configure_conference" -> promptWizardConferenceSettings();
+            case "configure_subtitles" -> promptWizardSubtitleSettings();
+            case "configure_dub" -> promptWizardDubSettings();
+            case "preflight_start" -> confirmWizardStartAndRun(activity);
+            default -> {
+                addUserLog("WARN", "Unknown wizard step action: " + actionKey);
+                yield false;
+            }
+        };
+    }
+
+    private boolean promptWizardTranscriptionSettings() {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Transcription settings");
+        dialog.setHeaderText("Configure transcription defaults for this run.");
+        Stage owner = getStage();
+        if (owner != null) {
+            dialog.initOwner(owner);
+        }
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        ComboBox<String> modelPicker = new ComboBox<>(FXCollections.observableArrayList(modelField.getItems()));
+        modelPicker.setMaxWidth(Double.MAX_VALUE);
+        modelPicker.getSelectionModel().select(safeValue(modelField));
+
+        ComboBox<String> sourceLangPicker = new ComboBox<>(FXCollections.observableArrayList(sourceLangBox.getItems()));
+        sourceLangPicker.setMaxWidth(Double.MAX_VALUE);
+        sourceLangPicker.getSelectionModel().select(safeValue(sourceLangBox));
+
+        ComboBox<String> summaryLangPicker = new ComboBox<>(FXCollections.observableArrayList(summaryLangBox.getItems()));
+        summaryLangPicker.setMaxWidth(Double.MAX_VALUE);
+        summaryLangPicker.getSelectionModel().select(safeValue(summaryLangBox));
+
+        VBox content = new VBox(
+                8.0,
+                new Label("Model"),
+                modelPicker,
+                new Label("Source language"),
+                sourceLangPicker,
+                new Label("Summary language"),
+                summaryLangPicker
+        );
+        dialog.getDialogPane().setContent(content);
+        applyThemeToDialog(dialog);
+
+        Optional<ButtonType> result = dialog.showAndWait();
+        if (result.isEmpty() || result.get() != ButtonType.OK) {
+            return false;
+        }
+
+        selectComboValue(modelField, safeValue(modelPicker));
+        selectComboValue(sourceLangBox, safeValue(sourceLangPicker));
+        selectComboValue(summaryLangBox, safeValue(summaryLangPicker));
+        addUserLog("INFO", "Wizard settings updated: transcription.");
+        return true;
+    }
+
+    private boolean promptWizardOutputSettings() {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Output settings");
+        dialog.setHeaderText("Configure output options for this run.");
+        Stage owner = getStage();
+        if (owner != null) {
+            dialog.initOwner(owner);
+        }
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        TextField prefixField = new TextField(trimToEmpty(outputPrefixField == null ? "" : outputPrefixField.getText()));
+        prefixField.setPromptText("optional");
+        CheckBox keepOriginalsToggle = new CheckBox("Keep originals");
+        keepOriginalsToggle.setSelected(keepOriginalsBox != null && keepOriginalsBox.isSelected());
+
+        Label outputInfo = new Label(
+                "Output folder is managed by project workspace:\n"
+                        + trimToEmpty(outputDirField == null ? "" : outputDirField.getText())
+        );
+        outputInfo.getStyleClass().add("small-label");
+        outputInfo.setWrapText(true);
+
+        VBox content = new VBox(
+                8.0,
+                outputInfo,
+                new Label("Output prefix"),
+                prefixField,
+                keepOriginalsToggle
+        );
+        dialog.getDialogPane().setContent(content);
+        applyThemeToDialog(dialog);
+
+        Optional<ButtonType> result = dialog.showAndWait();
+        if (result.isEmpty() || result.get() != ButtonType.OK) {
+            return false;
+        }
+
+        if (outputPrefixField != null) {
+            outputPrefixField.setText(trimToEmpty(prefixField.getText()));
+        }
+        if (keepOriginalsBox != null) {
+            keepOriginalsBox.setSelected(keepOriginalsToggle.isSelected());
+        }
+        addUserLog("INFO", "Wizard settings updated: output.");
+        return true;
+    }
+
+    private boolean promptWizardSpeakerSettings() {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Speaker diarization settings");
+        dialog.setHeaderText("Configure diarization backend and speaker limits.");
+        Stage owner = getStage();
+        if (owner != null) {
+            dialog.initOwner(owner);
+        }
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        ComboBox<String> backendPicker = new ComboBox<>(FXCollections.observableArrayList(diarizationBackendBox.getItems()));
+        backendPicker.setMaxWidth(Double.MAX_VALUE);
+        backendPicker.getSelectionModel().select(safeValue(diarizationBackendBox));
+
+        ComboBox<String> accuracyPicker = new ComboBox<>(FXCollections.observableArrayList(diarizationAccuracyBox.getItems()));
+        accuracyPicker.setMaxWidth(Double.MAX_VALUE);
+        accuracyPicker.getSelectionModel().select(safeValue(diarizationAccuracyBox));
+
+        SpinnerValueFactory.IntegerSpinnerValueFactory minFactory = new SpinnerValueFactory.IntegerSpinnerValueFactory(0, 32, diarizationMinSpinner.getValue());
+        Spinner<Integer> minSpinner = new Spinner<>(minFactory);
+        minSpinner.setEditable(true);
+        SpinnerValueFactory.IntegerSpinnerValueFactory maxFactory = new SpinnerValueFactory.IntegerSpinnerValueFactory(0, 32, diarizationMaxSpinner.getValue());
+        Spinner<Integer> maxSpinner = new Spinner<>(maxFactory);
+        maxSpinner.setEditable(true);
+
+        VBox content = new VBox(
+                8.0,
+                new Label("Backend"), backendPicker,
+                new Label("Accuracy profile"), accuracyPicker,
+                new Label("Min speakers"), minSpinner,
+                new Label("Max speakers"), maxSpinner
+        );
+        dialog.getDialogPane().setContent(content);
+        applyThemeToDialog(dialog);
+
+        Optional<ButtonType> result = dialog.showAndWait();
+        if (result.isEmpty() || result.get() != ButtonType.OK) {
+            return false;
+        }
+
+        if (diarizationEnabledBox != null) {
+            diarizationEnabledBox.setSelected(true);
+        }
+        selectComboValue(diarizationBackendBox, safeValue(backendPicker));
+        selectComboValue(diarizationAccuracyBox, safeValue(accuracyPicker));
+        if (diarizationMinSpinner != null) {
+            diarizationMinSpinner.getValueFactory().setValue(minSpinner.getValue());
+        }
+        if (diarizationMaxSpinner != null) {
+            diarizationMaxSpinner.getValueFactory().setValue(maxSpinner.getValue());
+        }
+        addUserLog("INFO", "Wizard settings updated: speaker diarization.");
+        return true;
+    }
+
+    private boolean promptWizardConferenceSettings() {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Conference settings");
+        dialog.setHeaderText("Configure conference metadata defaults.");
+        Stage owner = getStage();
+        if (owner != null) {
+            dialog.initOwner(owner);
+        }
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        TextField titleField = new TextField(trimToEmpty(conferenceTitleField == null ? "" : conferenceTitleField.getText()));
+        TextField dateField = new TextField(trimToEmpty(conferenceDateField == null ? "" : conferenceDateField.getText()));
+        TextField speakerFieldLocal = new TextField(trimToEmpty(speakerField == null ? "" : speakerField.getText()));
+        TextField topicFieldLocal = new TextField(trimToEmpty(topicField == null ? "" : topicField.getText()));
+        CheckBox syncFilesToggle = new CheckBox("Sync file rows from current input now");
+        syncFilesToggle.setSelected(false);
+
+        VBox content = new VBox(
+                8.0,
+                new Label("Conference title"), titleField,
+                new Label("Conference date"), dateField,
+                new Label("Default speaker"), speakerFieldLocal,
+                new Label("Default topic"), topicFieldLocal,
+                syncFilesToggle
+        );
+        dialog.getDialogPane().setContent(content);
+        applyThemeToDialog(dialog);
+
+        Optional<ButtonType> result = dialog.showAndWait();
+        if (result.isEmpty() || result.get() != ButtonType.OK) {
+            return false;
+        }
+
+        if (conferenceTitleField != null) {
+            conferenceTitleField.setText(trimToEmpty(titleField.getText()));
+        }
+        if (conferenceDateField != null) {
+            conferenceDateField.setText(trimToEmpty(dateField.getText()));
+        }
+        if (speakerField != null) {
+            speakerField.setText(trimToEmpty(speakerFieldLocal.getText()));
+        }
+        if (topicField != null) {
+            topicField.setText(trimToEmpty(topicFieldLocal.getText()));
+        }
+        if (syncFilesToggle.isSelected()) {
+            onSyncConferenceFiles();
+        }
+        addUserLog("INFO", "Wizard settings updated: conference metadata.");
+        return true;
+    }
+
+    private boolean promptWizardSubtitleSettings() {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Subtitle settings");
+        dialog.setHeaderText("Configure subtitle workflow options.");
+        Stage owner = getStage();
+        if (owner != null) {
+            dialog.initOwner(owner);
+        }
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        ComboBox<String> subtitleModePicker = new ComboBox<>(FXCollections.observableArrayList(subtitleModeBox.getItems()));
+        subtitleModePicker.setMaxWidth(Double.MAX_VALUE);
+        subtitleModePicker.getSelectionModel().select(safeValue(subtitleModeBox));
+
+        CheckBox translateToggle = new CheckBox("Translate subtitles");
+        translateToggle.setSelected(translateSubtitlesBox != null && translateSubtitlesBox.isSelected());
+
+        ComboBox<String> targetLangPicker = new ComboBox<>(FXCollections.observableArrayList(targetLangBox.getItems()));
+        targetLangPicker.setMaxWidth(Double.MAX_VALUE);
+        targetLangPicker.getSelectionModel().select(safeValue(targetLangBox));
+        targetLangPicker.disableProperty().bind(translateToggle.selectedProperty().not());
+
+        VBox content = new VBox(
+                8.0,
+                new Label("Subtitle mode"), subtitleModePicker,
+                translateToggle,
+                new Label("Target language"), targetLangPicker
+        );
+        dialog.getDialogPane().setContent(content);
+        applyThemeToDialog(dialog);
+
+        Optional<ButtonType> result = dialog.showAndWait();
+        if (result.isEmpty() || result.get() != ButtonType.OK) {
+            return false;
+        }
+
+        selectComboValue(subtitleModeBox, safeValue(subtitleModePicker));
+        if (translateSubtitlesBox != null) {
+            translateSubtitlesBox.setSelected(translateToggle.isSelected());
+        }
+        selectComboValue(targetLangBox, safeValue(targetLangPicker));
+        updateTranslationUi();
+        addUserLog("INFO", "Wizard settings updated: subtitles.");
+        return true;
+    }
+
+    private boolean promptWizardDubSettings() {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Dub settings");
+        dialog.setHeaderText("Configure dub workflow options.");
+        Stage owner = getStage();
+        if (owner != null) {
+            dialog.initOwner(owner);
+        }
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        ComboBox<String> targetLangPicker = new ComboBox<>(FXCollections.observableArrayList(targetLangBox.getItems()));
+        targetLangPicker.setMaxWidth(Double.MAX_VALUE);
+        targetLangPicker.getSelectionModel().select(safeValue(targetLangBox));
+
+        ComboBox<String> sourceLangPicker = new ComboBox<>(FXCollections.observableArrayList(sourceLangBox.getItems()));
+        sourceLangPicker.setMaxWidth(Double.MAX_VALUE);
+        sourceLangPicker.getSelectionModel().select(safeValue(sourceLangBox));
+
+        VBox content = new VBox(
+                8.0,
+                new Label("Target language"), targetLangPicker,
+                new Label("Source language"), sourceLangPicker
+        );
+        dialog.getDialogPane().setContent(content);
+        applyThemeToDialog(dialog);
+
+        Optional<ButtonType> result = dialog.showAndWait();
+        if (result.isEmpty() || result.get() != ButtonType.OK) {
+            return false;
+        }
+
+        if (translateSubtitlesBox != null) {
+            translateSubtitlesBox.setSelected(true);
+        }
+        selectComboValue(targetLangBox, safeValue(targetLangPicker));
+        selectComboValue(sourceLangBox, safeValue(sourceLangPicker));
+        updateTranslationUi();
+        addUserLog("INFO", "Wizard settings updated: dubbing.");
+        return true;
+    }
+
+    private boolean confirmWizardStartAndRun(WizardActivityDefinition activity) {
+        if (activity == null) {
+            addUserLog("WARN", "Wizard activity is missing.");
+            return false;
+        }
+        if (!wizardSourceImported) {
+            addUserLog("WARN", "Source is not prepared. Complete import step first.");
+            return false;
+        }
+        if ("youtube".equals(activity.sourceMode()) && !wizardYoutubeDownloadConfirmed) {
+            addUserLog("WARN", "YouTube source is not confirmed. Complete import step first.");
+            return false;
+        }
+
+        saveActiveModuleState();
+        String validationError = validateInputs();
+        if (validationError != null) {
+            addUserLog("ERROR", validationError);
+            return false;
+        }
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Start workflow");
+        confirm.setHeaderText("Preflight is mandatory and will run before job start.");
+        confirm.setContentText(
+                "Activity: " + activity.title() + "\n"
+                        + "Project: " + trimToEmpty(activeProjectId) + "\n\n"
+                        + "Start workflow now?"
+        );
+        Stage owner = getStage();
+        if (owner != null) {
+            confirm.initOwner(owner);
+        }
+        applyThemeToDialog(confirm);
+        Optional<ButtonType> answer = confirm.showAndWait();
+        if (answer.isEmpty() || answer.get() != ButtonType.OK) {
+            addUserLog("WARN", "Wizard start cancelled.");
+            return false;
+        }
+
+        ObjectNode params = buildPipelineParams();
+        startPipelineRequest(params, "wizard");
+        return true;
+    }
+
+    private Optional<WizardActivityDefinition> promptWizardActivitySelection() {
+        List<String> choices = WIZARD_ACTIVITIES.stream().map(WizardActivityDefinition::title).toList();
+        String defaultChoice = WIZARD_ACTIVITIES.get(0).title();
+
+        WizardActivityDefinition current = resolveWizardActivitySelection();
+        if (current != null) {
+            defaultChoice = current.title();
+        } else {
+            for (WizardActivityDefinition option : WIZARD_ACTIVITIES) {
+                if (Objects.equals(option.moduleId(), activeModule)) {
+                    defaultChoice = option.title();
+                    break;
+                }
+            }
+        }
+
+        ChoiceDialog<String> dialog = new ChoiceDialog<>(defaultChoice, choices);
+        dialog.setTitle("Wizard - Select Activity");
+        dialog.setHeaderText("Step 1/4: choose activity for this project");
+        dialog.setContentText("Activity:");
+        Stage owner = getStage();
+        if (owner != null) {
+            dialog.initOwner(owner);
+        }
+        applyThemeToDialog(dialog);
+        Optional<String> selectedLabel = dialog.showAndWait();
+        if (selectedLabel.isEmpty()) {
+            return Optional.empty();
+        }
+        for (WizardActivityDefinition option : WIZARD_ACTIVITIES) {
+            if (Objects.equals(option.title(), selectedLabel.get())) {
+                return Optional.of(option);
+            }
+        }
+        return Optional.empty();
+    }
+
+    private WizardActivityDefinition resolveWizardActivitySelection() {
+        String selectedId = trimToEmpty(wizardActivityId);
+        WizardActivityDefinition selectedOption = null;
+        if (!selectedId.isBlank()) {
+            for (WizardActivityDefinition option : WIZARD_ACTIVITIES) {
+                if (Objects.equals(option.id(), selectedId)) {
+                    selectedOption = option;
+                    break;
+                }
+            }
+        }
+        if (selectedOption != null && Objects.equals(selectedOption.moduleId(), activeModule)) {
+            return selectedOption;
+        }
+        for (WizardActivityDefinition option : WIZARD_ACTIVITIES) {
+            if (Objects.equals(option.moduleId(), activeModule)) {
+                return option;
+            }
+        }
+        return selectedOption;
+    }
+
+    private void applyWizardActivitySelection(WizardActivityDefinition activity) {
+        if (activity == null) {
+            return;
+        }
+        wizardActivityId = activity.id();
+        wizardSourceImported = false;
+        wizardYoutubeDownloadConfirmed = false;
+        invalidatePreflightState();
+
+        showShellSection(SECTION_MODULES);
+        activateModule(activity.moduleId(), true, true);
+        selectModule(runTab);
+        withWizardSourceUpdate(() -> selectComboValue(sourceModeBox, activity.sourceMode()));
+
+        if ("local".equals(activity.sourceMode()) && activeProjectRoot != null && localPathField != null) {
+            withWizardSourceUpdate(() -> localPathField.setText(activeProjectRoot.resolve("input").toString()));
+            requestFocusIfVisible(localPathField);
+        } else if ("youtube".equals(activity.sourceMode())) {
+            requestFocusIfVisible(youtubeUrlField);
+        }
+
+        addUserLog("INFO", "Wizard activity selected: " + activity.title());
+        updateWizardState();
+    }
+
+    private boolean runWizardImportStep(WizardActivityDefinition activity) {
+        if (activity == null) {
+            return false;
+        }
+        if ("youtube".equals(activity.sourceMode())) {
+            return runWizardYoutubeImportStep(activity);
+        }
+        return runWizardLocalImportStep(activity);
+    }
+
+    private boolean runWizardLocalImportStep(WizardActivityDefinition activity) {
+        int copied = importFromChooserToProjectInput("Step 2/4 - Import local source into project input");
+        Path inputDir = activeProjectRoot == null ? null : activeProjectRoot.resolve("input");
+        if (copied <= 0) {
+            long existingCount = countRegularFiles(inputDir);
+            if (existingCount <= 0L) {
+                addUserLog("WARN", "No source imported. Add at least one file for this activity.");
+                return false;
+            }
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+            confirm.setTitle("Use Existing Project Input");
+            confirm.setHeaderText("No new files were selected.");
+            confirm.setContentText(
+                    "Project input already contains " + existingCount + " file(s).\n"
+                            + "Use existing input for activity '" + activity.title() + "'?"
+            );
+            Stage owner = getStage();
+            if (owner != null) {
+                confirm.initOwner(owner);
+            }
+            applyThemeToDialog(confirm);
+            Optional<ButtonType> answer = confirm.showAndWait();
+            if (answer.isEmpty() || answer.get() != ButtonType.OK) {
+                addUserLog("WARN", "Step 2 not completed.");
+                return false;
+            }
+            addUserLog("INFO", "Wizard import step accepted existing project input (" + existingCount + " file(s)).");
+        } else {
+            refreshProjectFiles();
+            addUserLog("INFO", "Wizard import step copied " + copied + " file(s) into project input.");
+        }
+
+        wizardSourceImported = true;
+        wizardYoutubeDownloadConfirmed = false;
+        if (inputDir != null && localPathField != null) {
+            withWizardSourceUpdate(() -> localPathField.setText(inputDir.toString()));
+        }
+        return true;
+    }
+
+    private boolean runWizardYoutubeImportStep(WizardActivityDefinition activity) {
+        Optional<WizardYoutubeInput> inputResult = promptWizardYoutubeImportInput(activity);
+        if (inputResult.isEmpty()) {
+            addUserLog("WARN", "YouTube import step cancelled.");
+            return false;
+        }
+        WizardYoutubeInput input = inputResult.get();
+
+        String selectedQuality = input.quality();
+
+        withWizardSourceUpdate(() -> selectComboValue(sourceModeBox, "youtube"));
+        if (youtubeUrlField != null) {
+            final String finalUrl = input.url();
+            withWizardSourceUpdate(() -> youtubeUrlField.setText(finalUrl));
+        }
+        if (qualityBox != null) {
+            selectedQuality = resolveWizardYoutubeQualitySelection(input.quality(), qualityBox.getItems());
+            final String finalQuality = selectedQuality;
+            withWizardSourceUpdate(() -> selectComboValue(qualityBox, finalQuality));
+        }
+        if (playlistBox != null) {
+            final boolean playlistSelected = input.playlist();
+            withWizardSourceUpdate(() -> playlistBox.setSelected(playlistSelected));
+        }
+
+        wizardSourceImported = true;
+        wizardYoutubeDownloadConfirmed = true;
+        addUserLog(
+                "INFO",
+                "Wizard import step confirmed YouTube source ("
+                        + sanitizeYoutubeUrlForLog(input.url())
+                        + ", quality="
+                        + selectedQuality
+                        + ")."
+        );
+        return true;
+    }
+
+    private Optional<WizardYoutubeInput> promptWizardYoutubeImportInput(WizardActivityDefinition activity) {
+        Dialog<WizardYoutubeInput> dialog = new Dialog<>();
+        dialog.setTitle("YouTube Import");
+        dialog.setHeaderText("Step 2/4: provide YouTube source for " + trimToEmpty(activity == null ? "" : activity.title()));
+        Stage owner = getStage();
+        if (owner != null) {
+            dialog.initOwner(owner);
+        }
+
+        ButtonType continueButtonType = new ButtonType("Continue", ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().addAll(continueButtonType, ButtonType.CANCEL);
+
+        TextField urlField = new TextField("");
+        urlField.setPromptText("https://www.youtube.com/watch?v=...");
+
+        List<String> availableQualities = new ArrayList<>();
+        if (qualityBox != null && qualityBox.getItems() != null) {
+            availableQualities.addAll(qualityBox.getItems());
+        }
+        if (availableQualities.isEmpty()) {
+            availableQualities.add("best");
+        }
+
+        ComboBox<String> qualityPicker = new ComboBox<>(FXCollections.observableArrayList(availableQualities));
+        qualityPicker.setMaxWidth(Double.MAX_VALUE);
+        String defaultQuality = resolveWizardYoutubeQualitySelection(
+                qualityBox == null ? "" : safeValue(qualityBox),
+                availableQualities
+        );
+        qualityPicker.getSelectionModel().select(defaultQuality);
+
+        CheckBox playlistToggle = new CheckBox("Playlist");
+        playlistToggle.setSelected(playlistBox != null && playlistBox.isSelected());
+
+        Label validationLabel = new Label("URL is required.");
+        validationLabel.getStyleClass().add("warning-label");
+        validationLabel.setWrapText(true);
+
+        Label disclaimerLabel = new Label(wizardYoutubeDisclaimerText());
+        disclaimerLabel.getStyleClass().add("warning-label");
+        disclaimerLabel.setWrapText(true);
+
+        VBox content = new VBox(8);
+        content.getChildren().addAll(
+                new Label("YouTube URL"),
+                urlField,
+                new Label("Quality"),
+                qualityPicker,
+                playlistToggle,
+                validationLabel,
+                disclaimerLabel
+        );
+        dialog.getDialogPane().setContent(content);
+        applyThemeToDialog(dialog);
+
+        Node continueButton = dialog.getDialogPane().lookupButton(continueButtonType);
+        Runnable refreshValidity = () -> {
+            boolean valid = !trimToEmpty(urlField.getText()).isBlank();
+            if (continueButton != null) {
+                continueButton.setDisable(!valid);
+            }
+            validationLabel.setManaged(!valid);
+            validationLabel.setVisible(!valid);
+        };
+        urlField.textProperty().addListener((obs, oldValue, newValue) -> refreshValidity.run());
+        refreshValidity.run();
+
+        dialog.setResultConverter(buttonType -> {
+            if (buttonType != continueButtonType) {
+                return null;
+            }
+            String url = trimToEmpty(urlField.getText());
+            if (url.isBlank()) {
+                return null;
+            }
+            String quality = resolveWizardYoutubeQualitySelection(safeValue(qualityPicker), availableQualities);
+            return new WizardYoutubeInput(url, quality, playlistToggle.isSelected());
+        });
+
+        Platform.runLater(urlField::requestFocus);
+        return dialog.showAndWait();
+    }
+
+    private String wizardYoutubeDisclaimerText() {
+        String language = normalizeUiLanguage(currentUiLanguage);
+        if (UI_LANG_CS.equals(language)) {
+            return "Pouzivejte pouze obsah, ke kteremu mate opravneni, a dodrzujte podminky platforem (napr. YouTube).";
+        }
+        return "Use only content you are authorized to process and follow platform terms (e.g., YouTube).";
+    }
+
+    private String resolveWizardYoutubeQualitySelection(String requested, List<String> availableQualities) {
+        List<String> qualities = availableQualities == null ? List.of() : availableQualities;
+        if (qualities.isEmpty()) {
+            return "best";
+        }
+        String normalized = trimToEmpty(requested);
+        if (!normalized.isBlank() && qualities.contains(normalized)) {
+            return normalized;
+        }
+        if (qualities.contains("best")) {
+            return "best";
+        }
+        return qualities.get(0);
+    }
+
+    private String sanitizeYoutubeUrlForLog(String url) {
+        String trimmed = trimToEmpty(url);
+        if (trimmed.isBlank()) {
+            return "(empty)";
+        }
+        int queryStart = trimmed.indexOf('?');
+        String sanitized = queryStart >= 0 ? trimmed.substring(0, queryStart) : trimmed;
+        if (sanitized.length() > 120) {
+            sanitized = sanitized.substring(0, 117) + "...";
+        }
+        return sanitized;
+    }
+
+    private void onWizardSourceFieldManuallyChanged(String fieldKey) {
+        if (wizardSourceUpdateInProgress) {
+            return;
+        }
+        WizardActivityDefinition activity = resolveWizardActivitySelection();
+        if (activity == null) {
+            return;
+        }
+        String key = trimToEmpty(fieldKey).toLowerCase(Locale.ROOT);
+        if ("source_mode".equals(key) && !Objects.equals(activity.sourceMode(), safeValue(sourceModeBox))) {
+            wizardSourceImported = false;
+            wizardYoutubeDownloadConfirmed = false;
+            return;
+        }
+        if ("local".equals(activity.sourceMode()) && "local_path".equals(key)) {
+            wizardSourceImported = false;
+            return;
+        }
+        if ("youtube".equals(activity.sourceMode()) && "youtube_url".equals(key)) {
+            wizardSourceImported = false;
+            wizardYoutubeDownloadConfirmed = false;
+        }
+    }
+
+    private void withWizardSourceUpdate(Runnable action) {
+        if (action == null) {
+            return;
+        }
+        wizardSourceUpdateInProgress = true;
+        try {
+            action.run();
+        } finally {
+            wizardSourceUpdateInProgress = false;
+        }
     }
 
     @FXML
@@ -1737,6 +3467,36 @@ public class MainController {
                 event.consume();
             });
         }
+    }
+
+    private int importFromChooserToProjectInput(String chooserTitle) {
+        if (activeProjectRoot == null) {
+            return 0;
+        }
+        Stage stage = getStage();
+        if (stage == null) {
+            return 0;
+        }
+
+        List<Path> selectedPaths = new ArrayList<>();
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle(trimToEmpty(chooserTitle).isBlank() ? "Import files to project input" : chooserTitle);
+        List<File> selectedFiles = chooser.showOpenMultipleDialog(stage);
+        if (selectedFiles != null && !selectedFiles.isEmpty()) {
+            for (File file : selectedFiles) {
+                if (file != null) {
+                    selectedPaths.add(file.toPath());
+                }
+            }
+        } else {
+            DirectoryChooser directoryChooser = new DirectoryChooser();
+            directoryChooser.setTitle("Import folder to project input");
+            File folder = directoryChooser.showDialog(stage);
+            if (folder != null) {
+                selectedPaths.add(folder.toPath());
+            }
+        }
+        return importPathsToProjectInput(selectedPaths);
     }
 
     private int importPathsToProjectInput(List<Path> paths) {
@@ -2033,23 +3793,64 @@ public class MainController {
 
     private void updateWizardState() {
         boolean projectReady = activeProjectRoot != null && !trimToEmpty(activeProjectId).isBlank();
-        boolean sourceReady;
-        if ("youtube".equalsIgnoreCase(safeValue(sourceModeBox))) {
-            sourceReady = !trimToEmpty(youtubeUrlField == null ? "" : youtubeUrlField.getText()).isBlank();
-        } else {
-            sourceReady = !trimToEmpty(localPathField == null ? "" : localPathField.getText()).isBlank();
-        }
+        boolean running = startButton != null && startButton.isDisabled();
+        WizardActivityDefinition activity = resolveWizardActivitySelection();
+        boolean activityReady = activity != null && Objects.equals(trimToEmpty(wizardActivityId), activity.id());
+        boolean sourceReady = wizardSourceImported;
+        boolean youtubeConfirmReady = activity == null
+                || !"youtube".equals(activity.sourceMode())
+                || wizardYoutubeDownloadConfirmed;
         boolean outputReady = !trimToEmpty(outputDirField == null ? "" : outputDirField.getText()).isBlank();
-        String preflightState = lastPreflightMillis <= 0L
-                ? "not run"
-                : (lastPreflightOk ? "passed" : "has issues");
+        boolean preflightPassed = lastPreflightMillis > 0L && lastPreflightOk;
+        String activityTitle = activityReady ? activity.title() : "not selected";
+        String step1State = activityReady ? "done" : "pending";
+        String step2State = sourceReady && youtubeConfirmReady ? "done" : "pending";
+        String step3State = lastPreflightMillis <= 0L ? "pending" : (preflightPassed ? "done" : "failed");
+        String step4State = projectReady && activityReady && sourceReady && youtubeConfirmReady && preflightPassed
+                ? "ready"
+                : "blocked";
+        String nextAction;
+        if (!projectReady) {
+            nextAction = "Create or select a project on Dashboard.";
+        } else if (!activityReady) {
+            nextAction = "Step 1: choose activity.";
+        } else if (!sourceReady || !youtubeConfirmReady) {
+            nextAction = "Step 2: import source into project input.";
+        } else if (!preflightPassed) {
+            nextAction = "Step 3: run preflight until all required checks pass.";
+        } else {
+            nextAction = "Step 4: start workflow.";
+        }
         if (wizardStateLabel != null) {
             wizardStateLabel.setText(
-                    "Project: " + (projectReady ? "selected" : "required")
-                            + " | Source: " + (sourceReady ? "ready" : "missing")
-                            + " | Output: " + (outputReady ? "ready" : "missing")
-                            + " | Preflight: " + preflightState
+                    "Project: " + (projectReady ? "selected" : "required") + "\n"
+                            + "1) Activity: " + step1State + " (" + activityTitle + ")\n"
+                            + "2) Import: " + step2State + (outputReady ? " | output ready" : " | output missing") + "\n"
+                            + "3) Validate: " + step3State
+                            + (activityReady && activity != null && "youtube".equals(activity.sourceMode())
+                            ? " | YouTube confirm: " + (youtubeConfirmReady ? "done" : "pending")
+                            : "")
+                            + "\n"
+                            + "4) Start: " + step4State + "\n"
+                            + "Next action: " + nextAction
             );
+        }
+
+        if (wizardNextButton != null) {
+            wizardNextButton.setDisable(running || !projectReady);
+            wizardNextButton.setText("Run wizard");
+        }
+        if (wizardSourceButton != null) {
+            wizardSourceButton.setDisable(running || !projectReady);
+        }
+        if (wizardOutputButton != null) {
+            wizardOutputButton.setDisable(running || !projectReady || !activityReady);
+        }
+        if (wizardPreflightButton != null) {
+            wizardPreflightButton.setDisable(running || !projectReady || !activityReady || !sourceReady || !youtubeConfirmReady);
+        }
+        if (wizardRunButton != null) {
+            wizardRunButton.setDisable(running || !projectReady || !activityReady || !sourceReady || !youtubeConfirmReady || !preflightPassed);
         }
     }
 
@@ -2170,6 +3971,7 @@ public class MainController {
         refreshProjectsView();
         refreshProjectFiles();
         refreshDashboardData();
+        refreshWorkspaceSettingsUi();
     }
 
     private void reloadWorkspaceFromCurrentAppDataDir() {
@@ -2177,6 +3979,172 @@ public class MainController {
         refreshProjectsView();
         refreshProjectFiles();
         refreshDashboardData();
+        refreshWorkspaceSettingsUi();
+    }
+
+    private void refreshWorkspaceSettingsUi() {
+        Path workspaceRoot = workspaceRootPath();
+        boolean running = startButton != null && startButton.isDisabled();
+        if (settingsWorkspaceRootField != null) {
+            settingsWorkspaceRootField.setText(workspaceRoot == null ? "" : workspaceRoot.toString());
+        }
+        if (settingsWorkspaceRootInfoLabel != null) {
+            settingsWorkspaceRootInfoLabel.setText(
+                    "Projects: " + projectsById.size()
+                            + " | Active: " + (trimToEmpty(activeProjectId).isBlank() ? "none" : trimToEmpty(activeProjectId))
+                            + (workspaceMigrationRunning ? " | Migration in progress..." : "")
+            );
+        }
+        if (settingsChangeWorkspaceRootButton != null) {
+            settingsChangeWorkspaceRootButton.setDisable(running || workspaceMigrationRunning);
+        }
+    }
+
+    private Stage createWorkspaceMigrationProgressStage(Stage owner, Task<?> task) {
+        ProgressBar progressBarControl = new ProgressBar();
+        progressBarControl.setPrefWidth(420);
+        progressBarControl.progressProperty().bind(task.progressProperty());
+
+        Label title = new Label("Moving workspace projects...");
+        Label detail = new Label("Preparing...");
+        detail.textProperty().bind(task.messageProperty());
+        detail.setWrapText(true);
+
+        VBox content = new VBox(10, title, progressBarControl, detail);
+        content.setPadding(new Insets(14, 14, 14, 14));
+        content.getStyleClass().addAll("app-shell", themeClassFromName(currentTheme));
+
+        Stage stage = new Stage();
+        stage.setTitle("Workspace Migration");
+        stage.initModality(Modality.WINDOW_MODAL);
+        if (owner != null) {
+            stage.initOwner(owner);
+        }
+        stage.setScene(new Scene(content, 480, 140));
+        applyThemeToStage(stage);
+        stage.setResizable(false);
+        return stage;
+    }
+
+    private WorkspaceMigrationResult migrateWorkspaceRoot(
+            Path sourceRoot,
+            Path targetRoot,
+            List<ProjectWorkspace> snapshot,
+            String snapshotActiveProjectId,
+            WorkspaceMigrationReporter reporter
+    ) throws Exception {
+        Path normalizedSource = sourceRoot.toAbsolutePath().normalize();
+        Path normalizedTarget = targetRoot.toAbsolutePath().normalize();
+        if (Objects.equals(normalizedSource, normalizedTarget)) {
+            return new WorkspaceMigrationResult(normalizedTarget, snapshot, snapshotActiveProjectId, List.of());
+        }
+
+        Files.createDirectories(normalizedTarget);
+        Files.createDirectories(normalizedTarget.resolve(WORKSPACE_PROJECTS_DIR));
+
+        List<ProjectWorkspace> migratedProjects = new ArrayList<>();
+        List<WorkspaceMigrationFailure> failures = new ArrayList<>();
+        int total = Math.max(snapshot.size(), 1);
+        long startedAtMillis = System.currentTimeMillis();
+
+        int processed = 0;
+        for (ProjectWorkspace workspace : snapshot) {
+            String projectId = trimToEmpty(workspace.projectId());
+            Path sourceProjectRoot = workspace.rootPath();
+            Path targetProjectRoot = normalizedTarget.resolve(WORKSPACE_PROJECTS_DIR).resolve(projectId);
+            try {
+                if (sourceProjectRoot == null || !Files.exists(sourceProjectRoot)) {
+                    throw new IllegalStateException("Project root does not exist.");
+                }
+                if (Files.exists(targetProjectRoot)) {
+                    throw new IllegalStateException("Target project folder already exists.");
+                }
+                moveDirectoryRobust(sourceProjectRoot, targetProjectRoot);
+                migratedProjects.add(new ProjectWorkspace(
+                        workspace.projectId(),
+                        workspace.name(),
+                        targetProjectRoot.toString(),
+                        workspace.createdAt(),
+                        nowStamp(),
+                        workspace.lastOpenedAt()
+                ));
+            } catch (Exception ex) {
+                failures.add(new WorkspaceMigrationFailure(projectId, trimToEmpty(ex.getMessage())));
+                migratedProjects.add(workspace);
+            }
+            processed += 1;
+            double progress = processed / (double) total;
+            long elapsed = Math.max(0L, System.currentTimeMillis() - startedAtMillis);
+            long remainingMillis = progress <= 0.0 ? 0L : Math.max(0L, (long) (elapsed / progress - elapsed));
+            reporter.report(
+                    processed,
+                    total,
+                    "Moved " + processed + "/" + snapshot.size()
+                            + " | Remaining: " + formatRemainingDuration(remainingMillis)
+            );
+        }
+        reporter.report(total, total, "Migration finished. Applying workspace metadata...");
+
+        return new WorkspaceMigrationResult(normalizedTarget, migratedProjects, snapshotActiveProjectId, failures);
+    }
+
+    private void moveDirectoryRobust(Path source, Path target) throws Exception {
+        Path normalizedSource = source.toAbsolutePath().normalize();
+        Path normalizedTarget = target.toAbsolutePath().normalize();
+        if (Objects.equals(normalizedSource, normalizedTarget)) {
+            return;
+        }
+        Files.createDirectories(normalizedTarget.getParent());
+        try {
+            Files.move(normalizedSource, normalizedTarget, StandardCopyOption.ATOMIC_MOVE);
+            return;
+        } catch (Exception ignored) {
+            // Fallback to non-atomic move/copy.
+        }
+        try {
+            Files.move(normalizedSource, normalizedTarget);
+            return;
+        } catch (Exception ignored) {
+            // Cross-volume fallback.
+        }
+
+        copyDirectoryRecursively(normalizedSource, normalizedTarget);
+        deleteDirectoryRecursively(normalizedSource);
+    }
+
+    private void copyDirectoryRecursively(Path source, Path target) throws Exception {
+        try (Stream<Path> stream = Files.walk(source)) {
+            for (Path path : stream.toList()) {
+                Path relative = source.relativize(path);
+                Path destination = target.resolve(relative);
+                if (Files.isDirectory(path)) {
+                    Files.createDirectories(destination);
+                } else {
+                    Files.createDirectories(destination.getParent());
+                    Files.copy(path, destination, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES);
+                }
+            }
+        }
+    }
+
+    private void deleteDirectoryRecursively(Path root) throws Exception {
+        try (Stream<Path> stream = Files.walk(root)) {
+            List<Path> paths = stream.sorted(Comparator.reverseOrder()).toList();
+            for (Path path : paths) {
+                Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private static String formatRemainingDuration(long remainingMillis) {
+        long totalSeconds = Math.max(0L, remainingMillis / 1000L);
+        long hours = totalSeconds / 3600L;
+        long minutes = (totalSeconds % 3600L) / 60L;
+        long seconds = totalSeconds % 60L;
+        if (hours > 0) {
+            return String.format(Locale.ROOT, "%dh %02dm %02ds", hours, minutes, seconds);
+        }
+        return String.format(Locale.ROOT, "%02dm %02ds", minutes, seconds);
     }
 
     private void loadWorkspaceState() {
@@ -2258,11 +4226,14 @@ public class MainController {
         projectRows.clear();
         for (ProjectWorkspace workspace : projectsById.values()) {
             String status = Objects.equals(workspace.projectId(), activeProjectId) ? "Active" : "-";
+            Path rootPath = workspace.rootPath();
+            String projectSize = formatBytes(directorySizeBytes(rootPath));
             projectRows.add(new ProjectRow(
                     workspace.projectId(),
                     workspace.name(),
                     status,
                     trimTimestamp(workspace.updatedAt()),
+                    projectSize,
                     workspace.rootDir()
             ));
         }
@@ -2381,7 +4352,7 @@ public class MainController {
 
         long inputCount = countRegularFiles(activeProjectRoot.resolve("input"));
         long outputCount = countRegularFiles(activeProjectRoot.resolve("output"));
-        long transcriptCount = countRegularFiles(activeProjectRoot.resolve("transcripts"));
+        long transcriptCount = countTranscriptArtifacts(activeProjectRoot.resolve("output"));
         long jobCount = countRegularFiles(activeProjectRoot.resolve("jobs"));
         if (dashboardProjectStatsLabel != null) {
             dashboardProjectStatsLabel.setText(
@@ -2422,7 +4393,11 @@ public class MainController {
             return;
         }
 
-        boolean running = startButton != null && startButton.isDisabled();
+        boolean runActionLocked = controllerRunning || isGlobalRunLockedByOtherController();
+        if (dashboardProjectGalleryBox.getParent() instanceof javafx.scene.layout.Region region) {
+            double wrapLength = Math.max(640.0, region.getWidth() - 24.0);
+            dashboardProjectGalleryBox.setPrefWrapLength(wrapLength);
+        }
         List<ProjectDashboardCard> cards = new ArrayList<>();
         for (ProjectWorkspace workspace : projectsById.values()) {
             cards.add(buildProjectDashboardCard(workspace));
@@ -2434,27 +4409,64 @@ public class MainController {
         );
 
         dashboardProjectGalleryBox.getChildren().clear();
+        dashboardProjectGalleryBox.getChildren().add(buildCreateProjectPlaceholderCard(controllerRunning));
         for (ProjectDashboardCard card : cards) {
-            dashboardProjectGalleryBox.getChildren().add(buildProjectGalleryCard(card, running));
+            dashboardProjectGalleryBox.getChildren().add(buildProjectGalleryCard(card, runActionLocked));
         }
 
         if (dashboardGalleryInfoLabel != null) {
             if (cards.isEmpty()) {
-                dashboardGalleryInfoLabel.setText("No projects yet. Create one to start.");
+                dashboardGalleryInfoLabel.setText("No projects yet. Use the Create Project card to start.");
             } else {
                 dashboardGalleryInfoLabel.setText("Projects: " + cards.size() + " (sorted by last activity)");
             }
         }
     }
 
-    private Node buildProjectGalleryCard(ProjectDashboardCard card, boolean running) {
-        boolean active = Objects.equals(activeProjectId, card.projectId());
+    private Node buildCreateProjectPlaceholderCard(boolean running) {
+        VBox box = new VBox(8);
+        box.getStyleClass().addAll("project-gallery-card", "project-gallery-card-create");
+        box.setMinWidth(320.0);
+        box.setPrefWidth(340.0);
+        box.setMaxWidth(360.0);
+        box.setPadding(new Insets(10, 10, 10, 10));
+        box.setAlignment(Pos.CENTER);
+        box.setFocusTraversable(true);
+        box.setAccessibleText("Create Project");
+        box.setDisable(running);
 
+        Label plusLabel = new Label("+");
+        plusLabel.getStyleClass().add("project-gallery-plus");
+
+        Label textLabel = new Label("Create Project");
+        textLabel.getStyleClass().add("project-gallery-create-label");
+
+        box.getChildren().addAll(plusLabel, textLabel);
+
+        box.setOnMouseClicked(event -> {
+            if (!running) {
+                onCreateProject();
+            }
+        });
+        box.setOnKeyPressed(event -> {
+            if (running) {
+                return;
+            }
+            KeyCode code = event.getCode();
+            if (code == KeyCode.ENTER || code == KeyCode.SPACE) {
+                onCreateProject();
+                event.consume();
+            }
+        });
+        return box;
+    }
+
+    private Node buildProjectGalleryCard(ProjectDashboardCard card, boolean runActionLocked) {
         VBox box = new VBox(6);
         box.getStyleClass().add("project-gallery-card");
-        if (active) {
-            box.getStyleClass().add("project-gallery-card-active");
-        }
+        box.setMinWidth(320.0);
+        box.setPrefWidth(340.0);
+        box.setMaxWidth(360.0);
         box.setPadding(new Insets(10, 10, 10, 10));
 
         Label title = new Label(trimToEmpty(card.projectName()) + " (" + trimToEmpty(card.projectId()) + ")");
@@ -2475,28 +4487,26 @@ public class MainController {
         statsLabel.getStyleClass().add("small-label");
 
         HBox actions = new HBox(8);
-        Button selectButton = new Button(active ? "Active" : "Select");
-        selectButton.setDisable(running || active);
-        selectButton.setOnAction(event -> {
-            setActiveProject(card.projectId(), true, true);
-            refreshProjectsView();
-            refreshProjectFiles();
-        });
+        Button openProjectButton = new Button("Open project");
+        openProjectButton.getStyleClass().add("accent-btn");
+        openProjectButton.setDisable(false);
+        openProjectButton.setOnAction(event ->
+                openProjectWindowForProject(card.projectId(), false, PROJECT_SECTION_OVERVIEW)
+        );
 
         Button wizardButton = new Button("Open wizard");
-        wizardButton.getStyleClass().add("accent-btn");
-        wizardButton.setDisable(running);
+        wizardButton.setDisable(runActionLocked);
         wizardButton.setOnAction(event -> openProjectWizard(card.projectId()));
 
         Button folderButton = new Button("Open folder");
-        folderButton.setDisable(running || card.rootPath() == null);
+        folderButton.setDisable(card.rootPath() == null);
         folderButton.setOnAction(event -> {
             if (card.rootPath() != null) {
                 openPath(card.rootPath().toString());
             }
         });
 
-        actions.getChildren().addAll(selectButton, wizardButton, folderButton);
+        actions.getChildren().addAll(openProjectButton, wizardButton, folderButton);
         box.getChildren().addAll(title, activityLabel, activityDateLabel, statsLabel, actions);
         return box;
     }
@@ -2505,7 +4515,7 @@ public class MainController {
         Path root = workspace == null ? null : workspace.rootPath();
         long inputCount = countRegularFiles(root == null ? null : root.resolve("input"));
         long outputCount = countRegularFiles(root == null ? null : root.resolve("output"));
-        long transcriptCount = countRegularFiles(root == null ? null : root.resolve("transcripts"));
+        long transcriptCount = countTranscriptArtifacts(root == null ? null : root.resolve("output"));
         long diskBytes = directorySizeBytes(root);
 
         ActivitySnapshot best = new ActivitySnapshot("No activity yet", null);
@@ -2620,7 +4630,6 @@ public class MainController {
         for (Path root : List.of(
                 projectRoot.resolve("input"),
                 projectRoot.resolve("output"),
-                projectRoot.resolve("transcripts"),
                 projectRoot.resolve("jobs")
         )) {
             if (!Files.isDirectory(root)) {
@@ -2762,10 +4771,7 @@ public class MainController {
         }
 
         List<Path> candidates = new ArrayList<>();
-        List<Path> roots = List.of(
-                projectRoot.resolve("output"),
-                projectRoot.resolve("transcripts")
-        );
+        List<Path> roots = List.of(projectRoot.resolve("output"));
 
         for (Path root : roots) {
             if (!Files.isDirectory(root)) {
@@ -2803,14 +4809,34 @@ public class MainController {
         }
     }
 
+    private long countTranscriptArtifacts(Path outputRoot) {
+        if (outputRoot == null || !Files.exists(outputRoot)) {
+            return 0L;
+        }
+        try (Stream<Path> stream = Files.walk(outputRoot)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .map(path -> path.getFileName().toString().toLowerCase(Locale.ROOT))
+                    .filter(name -> name.endsWith(".txt") || name.endsWith(".md"))
+                    .count();
+        } catch (Exception ignored) {
+            return 0L;
+        }
+    }
+
     private void setActiveProject(String projectId, boolean persist, boolean logChange) {
         String normalized = trimToEmpty(projectId);
+        String previousProjectId = trimToEmpty(activeProjectId);
+        if (!previousProjectId.isBlank() && !Objects.equals(previousProjectId, normalized)) {
+            saveActiveModuleState();
+        }
         if (normalized.isBlank() || !projectsById.containsKey(normalized)) {
             activeProjectId = "";
             activeProjectRoot = null;
             activeEditedFilePath = null;
             refreshActiveProjectLabels();
             refreshJobsSilently();
+            applySettingsScopeContext();
             return;
         }
 
@@ -2847,16 +4873,40 @@ public class MainController {
         activeProjectId = effective.projectId();
         activeProjectRoot = root;
         activeEditedFilePath = null;
+        wizardSourceImported = false;
+        wizardYoutubeDownloadConfirmed = false;
         applyActiveProjectToRunFields();
+        activateModule(activeModule, false, true);
+        invalidatePreflightState();
         refreshActiveProjectLabels();
         refreshDashboardData();
         refreshJobsSilently();
+        applySettingsScopeContext();
+        updateProjectWorkspaceWindowHeader();
         if (persist) {
             saveWorkspaceState();
         }
         if (logChange) {
             addUserLog("INFO", "Active project: " + effective.name());
         }
+    }
+
+    private void initializeProjectSettingsFromGlobalDefaults(String projectId) {
+        String normalizedProjectId = trimToEmpty(projectId);
+        if (normalizedProjectId.isBlank()) {
+            return;
+        }
+        for (String module : SUPPORTED_MODULES) {
+            String globalPrefix = modulePrefPrefix(module);
+            String projectPrefix = projectModulePrefPrefix(normalizedProjectId, module);
+            if (preferences.hasAnyWithPrefix(projectPrefix)) {
+                continue;
+            }
+            if (preferences.hasAnyWithPrefix(globalPrefix)) {
+                preferences.copyPrefix(globalPrefix, projectPrefix, true);
+            }
+        }
+        preferences.flush();
     }
 
     private void applyActiveProjectToRunFields() {
@@ -3008,7 +5058,6 @@ public class MainController {
         Files.createDirectories(projectRoot);
         Files.createDirectories(projectRoot.resolve("input"));
         Files.createDirectories(projectRoot.resolve("output"));
-        Files.createDirectories(projectRoot.resolve("transcripts"));
         Files.createDirectories(projectRoot.resolve("jobs"));
         Files.createDirectories(projectRoot.resolve("logs"));
         Files.createDirectories(projectRoot.resolve("assets"));
@@ -3028,6 +5077,14 @@ public class MainController {
     }
 
     private Path workspaceRootPath() {
+        String configuredRoot = trimToEmpty(preferences.get(PREF_WORKSPACE_ROOT, ""));
+        if (!configuredRoot.isBlank()) {
+            try {
+                return Path.of(configuredRoot).toAbsolutePath().normalize();
+            } catch (Exception ignored) {
+                // Fall back to default app data workspace root.
+            }
+        }
         Path appDataPath = currentAppDataPath();
         return appDataPath.resolve(WORKSPACE_DIR_NAME);
     }
@@ -3233,11 +5290,293 @@ public class MainController {
     }
 
     @FXML
+    private void onOpenAppSettings() {
+        Dialog<Void> dialog = new Dialog<>();
+        dialog.setTitle("App Settings");
+        dialog.setHeaderText("Global application settings");
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+
+        ComboBox<String> languageSelector = new ComboBox<>();
+        if (uiLanguageBox != null) {
+            languageSelector.setItems(FXCollections.observableArrayList(uiLanguageBox.getItems()));
+            languageSelector.getSelectionModel().select(normalizeUiLanguage(safeValue(uiLanguageBox)));
+        }
+        languageSelector.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal == null || uiLanguageBox == null) {
+                return;
+            }
+            uiLanguageBox.getSelectionModel().select(normalizeUiLanguage(newVal));
+            onUiLanguageChanged();
+        });
+
+        ComboBox<String> themeSelector = new ComboBox<>();
+        if (themeBox != null) {
+            themeSelector.setItems(FXCollections.observableArrayList(themeBox.getItems()));
+            themeSelector.getSelectionModel().select(normalizeThemeName(safeValue(themeBox)));
+        }
+        themeSelector.valueProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal == null || themeBox == null) {
+                return;
+            }
+            themeBox.getSelectionModel().select(normalizeThemeName(newVal));
+            onThemeChanged();
+        });
+
+        Button refreshCacheButton = new Button("Refresh model cache");
+        refreshCacheButton.setOnAction(event -> onRefreshModels());
+
+        Button repairRuntimeButton = new Button("Repair runtime");
+        repairRuntimeButton.setOnAction(event -> onRepairRuntime());
+
+        Button openAppDataButton = new Button("Open app data");
+        openAppDataButton.setOnAction(event -> onOpenData());
+
+        Button openOutputButton = new Button("Open output");
+        openOutputButton.setOnAction(event -> onOpenOutput());
+
+        TextField workspaceField = new TextField(workspaceRootPath().toString());
+        workspaceField.setEditable(false);
+        workspaceField.getStyleClass().add("readonly-preview-field");
+        workspaceField.setPrefWidth(520.0);
+
+        Button changeWorkspaceButton = new Button("Change...");
+        changeWorkspaceButton.setOnAction(event -> {
+            onChangeWorkspaceRoot();
+            workspaceField.setText(workspaceRootPath().toString());
+        });
+
+        GridPane appearanceGrid = new GridPane();
+        appearanceGrid.setHgap(10.0);
+        appearanceGrid.setVgap(8.0);
+        appearanceGrid.add(new Label("UI language"), 0, 0);
+        appearanceGrid.add(languageSelector, 1, 0);
+        appearanceGrid.add(new Label("Theme"), 0, 1);
+        appearanceGrid.add(themeSelector, 1, 1);
+
+        HBox runtimeActions = new HBox(8.0, refreshCacheButton, repairRuntimeButton, openAppDataButton, openOutputButton);
+        runtimeActions.setAlignment(Pos.CENTER_LEFT);
+
+        HBox workspaceRow = new HBox(8.0, new Label("Workspace root"), workspaceField, changeWorkspaceButton);
+        workspaceRow.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(workspaceField, Priority.ALWAYS);
+
+        VBox content = new VBox(
+                12.0,
+                new Label("Appearance"),
+                appearanceGrid,
+                new Label("Runtime tools"),
+                runtimeActions,
+                workspaceRow
+        );
+        content.setPadding(new Insets(8.0, 4.0, 4.0, 4.0));
+        content.getStyleClass().add("card-pane");
+
+        dialog.getDialogPane().setContent(content);
+        dialog.getDialogPane().setPrefWidth(760.0);
+        Stage owner = getMainStage();
+        if (owner != null) {
+            dialog.initOwner(owner);
+        }
+        applyThemeToDialog(dialog);
+        dialog.showAndWait();
+    }
+
+    @FXML
     private void onThemeChanged() {
         if (themeInitializing) {
             return;
         }
         applyTheme(themeBox.getValue(), true);
+    }
+
+    @FXML
+    private void onUiLanguageChanged() {
+        String normalized = normalizeUiLanguage(safeValue(uiLanguageBox));
+        if (Objects.equals(currentUiLanguage, normalized)) {
+            return;
+        }
+        currentUiLanguage = normalized;
+        preferences.put(PREF_UI_LANGUAGE, normalized);
+        preferences.flush();
+        addUserLog("INFO", "UI language set to '" + normalized + "'.");
+    }
+
+    @FXML
+    private void onChangeWorkspaceRoot() {
+        if (workspaceMigrationRunning) {
+            return;
+        }
+        Stage stage = getStage();
+        if (stage == null) {
+            return;
+        }
+
+        DirectoryChooser chooser = new DirectoryChooser();
+        chooser.setTitle("Choose workspace root");
+        Path currentRoot = workspaceRootPath();
+        try {
+            Path initial = Files.isDirectory(currentRoot)
+                    ? currentRoot
+                    : (currentRoot == null ? null : currentRoot.getParent());
+            if (initial != null && Files.isDirectory(initial)) {
+                chooser.setInitialDirectory(initial.toFile());
+            }
+        } catch (Exception ignored) {
+            // Best effort only.
+        }
+
+        File selected = chooser.showDialog(stage);
+        if (selected == null) {
+            return;
+        }
+
+        Path targetRoot;
+        try {
+            targetRoot = selected.toPath().toAbsolutePath().normalize();
+        } catch (Exception ex) {
+            addUserLog("ERROR", "Invalid workspace root.");
+            return;
+        }
+        if (Objects.equals(currentRoot, targetRoot)) {
+            addUserLog("INFO", "Workspace root is already set to this location.");
+            return;
+        }
+
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Move workspace root");
+        confirm.setHeaderText("Move all project data to new workspace root?");
+        confirm.setContentText(
+                "Current: " + currentRoot + "\n"
+                        + "New: " + targetRoot + "\n\n"
+                        + "This will move project folders and update workspace metadata.\n"
+                        + "A progress window with remaining time will be shown.\n"
+                        + "If a project move fails, migration continues and failed projects are listed."
+        );
+        confirm.initOwner(stage);
+        applyThemeToDialog(confirm);
+        Optional<ButtonType> decision = confirm.showAndWait();
+        if (decision.isEmpty() || decision.get() != ButtonType.OK) {
+            return;
+        }
+
+        List<ProjectWorkspace> snapshot = new ArrayList<>(projectsById.values());
+        String snapshotActiveProjectId = trimToEmpty(activeProjectId);
+        Task<WorkspaceMigrationResult> task = new Task<>() {
+            @Override
+            protected WorkspaceMigrationResult call() throws Exception {
+                return migrateWorkspaceRoot(currentRoot, targetRoot, snapshot, snapshotActiveProjectId, (processed, total, message) -> {
+                    updateProgress(processed, total);
+                    updateMessage(message);
+                });
+            }
+        };
+
+        Stage progressStage = createWorkspaceMigrationProgressStage(stage, task);
+        workspaceMigrationRunning = true;
+        refreshWorkspaceSettingsUi();
+
+        task.setOnSucceeded(event -> {
+            workspaceMigrationRunning = false;
+            progressStage.close();
+            WorkspaceMigrationResult result = task.getValue();
+            preferences.put(PREF_WORKSPACE_ROOT, result.targetRoot().toString());
+            preferences.flush();
+
+            projectsById.clear();
+            for (ProjectWorkspace workspace : result.projects()) {
+                projectsById.put(workspace.projectId(), workspace);
+            }
+
+            String nextActive = trimToEmpty(result.activeProjectId());
+            if (nextActive.isBlank() || !projectsById.containsKey(nextActive)) {
+                nextActive = projectsById.keySet().stream().findFirst().orElse("");
+            }
+            setActiveProject(nextActive, false, false);
+            saveWorkspaceState();
+            refreshProjectsView();
+            refreshProjectFiles();
+            refreshDashboardData();
+            refreshWorkspaceSettingsUi();
+            applySettingsScopeContext();
+
+            int failureCount = result.failures().size();
+            if (failureCount == 0) {
+                addUserLog("SUCCESS", "Workspace root moved to: " + result.targetRoot());
+                return;
+            }
+
+            StringBuilder details = new StringBuilder();
+            result.failures().stream().limit(12).forEach(failure ->
+                    details.append("- ").append(failure.projectId()).append(": ").append(failure.message()).append("\n")
+            );
+            if (failureCount > 12) {
+                details.append("... and ").append(failureCount - 12).append(" more");
+            }
+            Alert partial = new Alert(Alert.AlertType.WARNING);
+            partial.setTitle("Workspace migration completed with issues");
+            partial.setHeaderText("Some projects could not be moved");
+            partial.setContentText(details.toString().trim());
+            partial.initOwner(stage);
+            applyThemeToDialog(partial);
+            partial.showAndWait();
+            addUserLog("WARN", "Workspace moved with " + failureCount + " failed project(s).");
+        });
+
+        task.setOnFailed(event -> {
+            workspaceMigrationRunning = false;
+            progressStage.close();
+            refreshWorkspaceSettingsUi();
+            Throwable ex = task.getException();
+            String message = ex == null ? "Unknown migration error." : rootMessage(ex);
+            addTechnicalLog("ERROR", "Workspace migration failed: " + message);
+            addUserLog("ERROR", "Workspace migration failed: " + message);
+        });
+
+        Thread worker = new Thread(task, "tm-workspace-migration");
+        worker.setDaemon(true);
+        worker.start();
+        progressStage.show();
+    }
+
+    @FXML
+    private void onResetProjectModuleFromDefaults() {
+        String projectId = trimToEmpty(activeProjectId);
+        if (projectId.isBlank()) {
+            addUserLog("WARN", "No active project selected.");
+            return;
+        }
+        String module = normalizeModuleId(activeModule);
+        String projectPrefix = projectModulePrefPrefix(projectId, module);
+        String globalPrefix = modulePrefPrefix(module);
+        preferences.removeByPrefix(projectPrefix);
+        if (preferences.hasAnyWithPrefix(globalPrefix)) {
+            preferences.copyPrefix(globalPrefix, projectPrefix, true);
+        }
+        preferences.flush();
+
+        boolean loaded = loadModuleState(module);
+        if (!loaded) {
+            applyModuleDefaults(module);
+            saveActiveModuleState();
+        }
+        refreshModulePresetList(null);
+        addUserLog("INFO", "Project module settings reset from global defaults (" + moduleLabel(module) + ").");
+    }
+
+    @FXML
+    private void onSaveModuleAsGlobalDefaults() {
+        String module = normalizeModuleId(activeModule);
+        saveActiveModuleState();
+        String sourcePrefix = effectiveModulePrefPrefix(module);
+        String globalPrefix = modulePrefPrefix(module);
+        if (!preferences.hasAnyWithPrefix(sourcePrefix)) {
+            addUserLog("WARN", "Nothing to save as global defaults.");
+            return;
+        }
+        preferences.removeByPrefix(globalPrefix);
+        preferences.copyPrefix(sourcePrefix, globalPrefix, true);
+        preferences.flush();
+        addUserLog("SUCCESS", "Global defaults updated from current module state (" + moduleLabel(module) + ").");
     }
 
     @FXML
@@ -3307,6 +5646,10 @@ public class MainController {
 
     @FXML
     private void onStart() {
+        if (ENFORCE_GUIDED_WIZARD) {
+            onRunProjectWizard();
+            return;
+        }
         if (runtimeBootstrapRunning) {
             addUserLog("WARN", "Online runtime setup is in progress. Wait until it completes.");
             return;
@@ -3327,45 +5670,62 @@ public class MainController {
         }
 
         ObjectNode params = buildPipelineParams();
-        startPipelineRequest(params, autoPreflightBox.isSelected(), "manual");
+        startPipelineRequest(params, "manual");
     }
 
-    private void startPipelineRequest(ObjectNode params, boolean runPreflight, String trigger) {
+    /**
+     * Starts pipeline with mandatory preflight gate.
+     *
+     * Sequence:
+     * 1) Acquire global run lock
+     * 2) Run preflight gate (interactive when needed)
+     * 3) Send run_pipeline request
+     * 4) Initialize current job UI state
+     */
+    private void startPipelineRequest(ObjectNode params, String trigger) {
         if (backendClient == null) {
             addTechnicalLog("ERROR", "Backend is not initialized.");
             return;
         }
+        if (!acquireGlobalRunLock()) {
+            addUserLog("WARN", "Another project job is already running. Wait until it finishes.");
+            return;
+        }
+        ObjectNode workingParams = params == null ? mapper.createObjectNode() : params.deepCopy();
 
         setRunning(true);
         progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
-        stepLabel.setText("prepare");
-        statusLabel.setText(runPreflight ? "Preflight" : "Starting");
+        stepLabel.setText("preflight_check");
+        statusLabel.setText("Preflight");
         resetEtaDisplay();
 
-        CompletableFuture<Boolean> preflightFuture = runPreflight
-                ? runPreflightAsync(params, true)
-                : CompletableFuture.completedFuture(true);
-
-        preflightFuture
-                .thenCompose(ok -> {
-                    if (!ok) {
-                        CompletableFuture<JsonNode> failed = new CompletableFuture<>();
-                        failed.completeExceptionally(
-                                new IllegalStateException("Preflight failed. Resolve errors and retry.")
-                        );
-                        return failed;
+        runPreflightGateAsync(workingParams, true, trigger)
+                .thenCompose(continueRun -> {
+                    if (!continueRun) {
+                        releaseGlobalRunLockIfOwned();
+                        return CompletableFuture.completedFuture(null);
                     }
                     Platform.runLater(() -> {
                         statusLabel.setText("Starting");
                         stepLabel.setText("run_pipeline");
                     });
-                    return backendClient.sendRequest("run_pipeline", params);
+                    return backendClient.sendRequest("run_pipeline", workingParams);
                 })
                 .thenAccept(result -> Platform.runLater(() -> {
+                    if (result == null || result.isNull()) {
+                        setRunning(false);
+                        releaseGlobalRunLockIfOwned();
+                        statusLabel.setText("Ready");
+                        stepLabel.setText("-");
+                        progressBar.setProgress(0.0);
+                        resetEtaDisplay();
+                        return;
+                    }
                     currentJobId = result.path("job_id").asText("");
-                    String moduleId = normalizeModuleId(params.path("module").asText(activeModule));
-                    String sourceMode = params.path("source").path("mode").asText(sourceModeBox.getValue());
+                    String moduleId = normalizeModuleId(workingParams.path("module").asText(activeModule));
+                    String sourceMode = workingParams.path("source").path("mode").asText(sourceModeBox.getValue());
                     statusLabel.setText("Running");
+                    showJobProgressWindow(currentJobId, moduleLabel(moduleId), sourceMode);
                     if ("replay".equals(trigger)) {
                         addUserLog("INFO", "Replay started: " + shortJobId(currentJobId));
                     } else {
@@ -3377,11 +5737,15 @@ public class MainController {
                 .exceptionally(ex -> {
                     Platform.runLater(() -> {
                         setRunning(false);
+                        releaseGlobalRunLockIfOwned();
                         statusLabel.setText("Error");
                         stepLabel.setText("-");
                         progressBar.setProgress(0.0);
                         resetEtaDisplay();
                         addTechnicalLog("ERROR", "Failed to start job: " + rootMessage(ex));
+                        if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
+                            jobProgressWindow.markFailed(rootMessage(ex));
+                        }
                     });
                     return null;
                 });
@@ -3389,6 +5753,14 @@ public class MainController {
 
     @FXML
     private void onRunPreflight() {
+        if (controllerRunning) {
+            addUserLog("WARN", "A job is running. Wait until it finishes.");
+            return;
+        }
+        if (isGlobalRunLockedByOtherController()) {
+            addUserLog("WARN", "Another project job is running. Wait until it finishes.");
+            return;
+        }
         if (!ensureWorkflowProjectReady()) {
             return;
         }
@@ -3410,9 +5782,10 @@ public class MainController {
         progressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
         resetEtaDisplay();
 
-        runPreflightAsync(params, true)
-                .thenAccept(ok -> Platform.runLater(() -> {
-                    statusLabel.setText(ok ? "Preflight OK" : "Preflight issues");
+        ObjectNode workingParams = params == null ? mapper.createObjectNode() : params.deepCopy();
+        runPreflightGateAsync(workingParams, false, "manual_preflight")
+                .thenAccept(result -> Platform.runLater(() -> {
+                    statusLabel.setText(lastPreflightOk ? "Preflight OK" : "Preflight issues");
                     stepLabel.setText("-");
                     progressBar.setProgress(0.0);
                     resetEtaDisplay();
@@ -3427,6 +5800,262 @@ public class MainController {
                     });
                     return null;
                 });
+    }
+
+    private CompletableFuture<Boolean> runPreflightGateAsync(
+            ObjectNode workingParams,
+            boolean requireContinueForStart,
+            String trigger
+    ) {
+        // First refresh checks, then always resolve user decision in the gate dialog.
+        addUserLog("INFO", "Running preflight gate (" + trimToEmpty(trigger) + ")...");
+        return runPreflightAsync(workingParams, true)
+                .thenCompose(ok -> showPreflightGateDialogAsync(workingParams, requireContinueForStart, trigger));
+    }
+
+    /**
+     * Shows preflight gate modal used for quick fixes / re-run / continue decisions.
+     */
+    private CompletableFuture<Boolean> showPreflightGateDialogAsync(
+            ObjectNode workingParams,
+            boolean requireContinueForStart,
+            String trigger
+    ) {
+        CompletableFuture<Boolean> decision = new CompletableFuture<>();
+        Platform.runLater(() -> {
+            Stage owner = getStage();
+            Stage dialog = new Stage();
+            if (owner != null) {
+                dialog.initOwner(owner);
+            }
+            dialog.initModality(Modality.WINDOW_MODAL);
+            dialog.setTitle("Preflight gate");
+
+            Label title = new Label("Preflight checks");
+            title.getStyleClass().add("section-title");
+            Label subtitle = new Label(
+                    requireContinueForStart
+                            ? "Job start is blocked until all FAIL checks are resolved."
+                            : "Manual preflight run for current project state."
+            );
+            subtitle.setWrapText(true);
+            subtitle.getStyleClass().add("small-label");
+
+            Label summary = new Label();
+            summary.getStyleClass().add("small-label");
+
+            ObservableList<PreflightCheckRow> gateRows = FXCollections.observableArrayList();
+            gateRows.setAll(snapshotPreflightRows(preflightCheckRows));
+
+            TableView<PreflightCheckRow> gateTable = new TableView<>(gateRows);
+            gateTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_SUBSEQUENT_COLUMNS);
+            TableColumn<PreflightCheckRow, String> nameColumn = new TableColumn<>("Check");
+            nameColumn.setCellValueFactory(new PropertyValueFactory<>("name"));
+            nameColumn.setPrefWidth(170.0);
+            TableColumn<PreflightCheckRow, String> statusColumn = new TableColumn<>("Status");
+            statusColumn.setCellValueFactory(new PropertyValueFactory<>("status"));
+            statusColumn.setPrefWidth(100.0);
+            TableColumn<PreflightCheckRow, String> messageColumn = new TableColumn<>("Message");
+            messageColumn.setCellValueFactory(new PropertyValueFactory<>("message"));
+            messageColumn.setPrefWidth(430.0);
+            TableColumn<PreflightCheckRow, String> fixColumn = new TableColumn<>("Suggested fix");
+            fixColumn.setCellValueFactory(new PropertyValueFactory<>("suggestedFix"));
+            fixColumn.setPrefWidth(220.0);
+            gateTable.getColumns().setAll(nameColumn, statusColumn, messageColumn, fixColumn);
+            gateTable.setPrefHeight(260.0);
+
+            Button applyFixButton = new Button("Apply selected fix");
+            Button rerunButton = new Button("Re-run checks");
+            Button cancelButton = new Button("Cancel");
+            Button continueButton = new Button(requireContinueForStart ? "Continue" : "Close");
+            continueButton.getStyleClass().add("accent-btn");
+            final boolean[] rerunRequired = {false};
+
+            Runnable refreshSummaryAndActions = () -> {
+                long failCount = gateRows.stream()
+                        .filter(row -> "fail".equalsIgnoreCase(trimToEmpty(row.getStatus())))
+                        .count();
+                long warnCount = gateRows.stream()
+                        .filter(row -> "warn".equalsIgnoreCase(trimToEmpty(row.getStatus())))
+                        .count();
+
+                if (failCount == 0L) {
+                    if (warnCount > 0L) {
+                        summary.setText("Preflight OK for start (" + warnCount + " warning(s)).");
+                    } else {
+                        summary.setText("Preflight OK. No blocking issues.");
+                    }
+                } else {
+                    summary.setText("Blocking issues: " + failCount + " fail, " + warnCount + " warn.");
+                }
+                if (requireContinueForStart && rerunRequired[0]) {
+                    summary.setText(summary.getText() + " Re-run checks after quick fix.");
+                }
+
+                PreflightCheckRow selected = gateTable.getSelectionModel().getSelectedItem();
+                boolean hasFix = selected != null && !trimToEmpty(selected.getSuggestedFix()).isBlank();
+                applyFixButton.setDisable(!hasFix);
+                if (requireContinueForStart) {
+                    continueButton.setDisable(failCount > 0L || rerunRequired[0]);
+                } else {
+                    continueButton.setDisable(false);
+                }
+            };
+            gateTable.getSelectionModel().selectedItemProperty().addListener((obs, oldValue, newValue) -> refreshSummaryAndActions.run());
+
+            applyFixButton.setOnAction(event -> {
+                PreflightCheckRow selected = gateTable.getSelectionModel().getSelectedItem();
+                if (selected == null) {
+                    addUserLog("WARN", "Select a preflight check first.");
+                    return;
+                }
+                applyPreflightQuickFix(selected);
+                synchronizePreflightWorkingParams(workingParams, trigger);
+                addUserLog("INFO", "Preflight quick fix applied for '" + selected.getName() + "'.");
+                rerunRequired[0] = true;
+                if (requireContinueForStart) {
+                    continueButton.setDisable(true);
+                }
+                summary.setText("Quick fix applied. Re-run checks to refresh status.");
+            });
+
+            rerunButton.setOnAction(event -> {
+                rerunButton.setDisable(true);
+                applyFixButton.setDisable(true);
+                cancelButton.setDisable(true);
+                continueButton.setDisable(true);
+                summary.setText("Re-running preflight checks...");
+
+                runPreflightAsync(workingParams, true)
+                        .thenAccept(ok -> Platform.runLater(() -> {
+                            gateRows.setAll(snapshotPreflightRows(preflightCheckRows));
+                            rerunRequired[0] = false;
+                            refreshSummaryAndActions.run();
+                            rerunButton.setDisable(false);
+                            cancelButton.setDisable(false);
+                            addUserLog("INFO", "Preflight re-run finished in gate popup.");
+                        }))
+                        .exceptionally(ex -> {
+                            Platform.runLater(() -> {
+                                rerunButton.setDisable(false);
+                                cancelButton.setDisable(false);
+                                refreshSummaryAndActions.run();
+                                addTechnicalLog("ERROR", "Preflight re-run failed: " + rootMessage(ex));
+                            });
+                            return null;
+                        });
+            });
+
+            cancelButton.setOnAction(event -> {
+                if (!decision.isDone()) {
+                    addUserLog("WARN", "Preflight gate cancelled by user.");
+                    decision.complete(false);
+                }
+                dialog.close();
+            });
+
+            continueButton.setOnAction(event -> {
+                if (requireContinueForStart) {
+                    long failCount = gateRows.stream()
+                            .filter(row -> "fail".equalsIgnoreCase(trimToEmpty(row.getStatus())))
+                            .count();
+                    if (failCount > 0L) {
+                        return;
+                    }
+                    addUserLog("INFO", "Preflight gate continued by user (" + trimToEmpty(trigger) + ").");
+                } else {
+                    addUserLog("INFO", "Manual preflight dialog closed.");
+                }
+                if (!decision.isDone()) {
+                    decision.complete(true);
+                }
+                dialog.close();
+            });
+
+            dialog.setOnCloseRequest(event -> {
+                if (!decision.isDone()) {
+                    addUserLog("WARN", "Preflight gate cancelled by user.");
+                    decision.complete(false);
+                }
+            });
+
+            HBox actions = new HBox(8.0, applyFixButton, rerunButton, new Region(), cancelButton, continueButton);
+            HBox.setHgrow(actions.getChildren().get(2), Priority.ALWAYS);
+            VBox root = new VBox(10.0, title, subtitle, summary, gateTable, actions);
+            root.setPadding(new Insets(12.0));
+            root.getStyleClass().add("app-shell");
+            dialog.setScene(new Scene(root, 980.0, 430.0));
+            dialog.setMinWidth(900.0);
+            dialog.setMinHeight(400.0);
+            applyThemeToStage(dialog);
+
+            refreshSummaryAndActions.run();
+            dialog.show();
+            dialog.toFront();
+            dialog.requestFocus();
+        });
+        return decision;
+    }
+
+    private List<PreflightCheckRow> snapshotPreflightRows(List<PreflightCheckRow> sourceRows) {
+        if (sourceRows == null || sourceRows.isEmpty()) {
+            return List.of();
+        }
+        List<PreflightCheckRow> rows = new ArrayList<>();
+        for (PreflightCheckRow row : sourceRows) {
+            rows.add(new PreflightCheckRow(
+                    trimToEmpty(row.getName()),
+                    trimToEmpty(row.getStatus()),
+                    trimToEmpty(row.getMessage()),
+                    trimToEmpty(row.getSuggestedFix())
+            ));
+        }
+        return rows;
+    }
+
+    private void synchronizePreflightWorkingParams(ObjectNode workingParams, String trigger) {
+        if (workingParams == null) {
+            return;
+        }
+        String normalizedTrigger = trimToEmpty(trigger).toLowerCase(Locale.ROOT);
+        if (!"replay".equals(normalizedTrigger)) {
+            ObjectNode refreshed = buildPipelineParams();
+            workingParams.removeAll();
+            workingParams.setAll(refreshed);
+            return;
+        }
+
+        ObjectNode source = ensureObjectNode(workingParams, "source");
+        ObjectNode output = ensureObjectNode(workingParams, "output");
+        if (sourceModeBox != null) {
+            source.put("mode", safeValue(sourceModeBox));
+        }
+        if (localPathField != null) {
+            source.put("path", trimToEmpty(localPathField.getText()));
+        }
+        if (youtubeUrlField != null) {
+            source.put("url", trimToEmpty(youtubeUrlField.getText()));
+        }
+        if (outputDirField != null) {
+            output.put("out_dir", trimToEmpty(outputDirField.getText()));
+        }
+        if (outputPrefixField != null) {
+            output.put("output_prefix", trimToEmpty(outputPrefixField.getText()));
+        }
+        if (useGpuBox != null) {
+            workingParams.put("use_gpu", useGpuBox.isSelected());
+        }
+    }
+
+    private static ObjectNode ensureObjectNode(ObjectNode parent, String fieldName) {
+        if (parent == null) {
+            return null;
+        }
+        JsonNode existing = parent.path(fieldName);
+        if (existing.isObject()) {
+            return (ObjectNode) existing;
+        }
+        return parent.putObject(fieldName);
     }
 
     @FXML
@@ -3505,6 +6134,7 @@ public class MainController {
         if (owner != null) {
             repairDialog.initOwner(owner);
         }
+        applyThemeToDialog(repairDialog);
 
         Optional<ButtonType> choice = repairDialog.showAndWait();
         if (choice.isEmpty() || choice.get() != startRepairButton) {
@@ -3602,6 +6232,44 @@ public class MainController {
         monitorWindow.show();
     }
 
+    private void ensureJobProgressWindow() {
+        if (jobProgressWindow != null) {
+            return;
+        }
+        jobProgressWindow = new JobProgressWindow();
+        jobProgressWindow.applyThemeClass(themeClassFromName(currentTheme));
+    }
+
+    private void showJobProgressWindow(String jobId, String moduleName, String sourceMode) {
+        if (jobId == null || jobId.isBlank()) {
+            return;
+        }
+        ensureJobProgressWindow();
+        jobProgressWindow.showForJob(jobId, moduleName, sourceMode, this::onCancel);
+    }
+
+    private void updateJobProgressWindowFromEvent(String jobId, JsonNode payload, double overall, boolean indeterminate, String step) {
+        if (jobProgressWindow == null || jobId == null || jobId.isBlank() || !jobId.equals(currentJobId)) {
+            return;
+        }
+
+        JsonNode stepPctNode = payload.path("step_pct");
+        Double stepPct = stepPctNode.isNumber() ? stepPctNode.asDouble(0.0) : null;
+        int itemIndex = payload.path("item_index").asInt(0);
+        int totalItems = payload.path("total_items").asInt(0);
+        String overallEtaText = etaLabel == null ? "--:--" : trimToEmpty(etaLabel.getText());
+
+        jobProgressWindow.updateProgress(
+                step,
+                stepPct,
+                overall,
+                indeterminate,
+                itemIndex,
+                totalItems,
+                overallEtaText
+        );
+    }
+
     @FXML
     private void onRefreshJobs() {
         refreshJobs(true);
@@ -3642,7 +6310,7 @@ public class MainController {
                                     + moduleLabel(replayModule)
                                     + "."
                     );
-                    startPipelineRequest(replayParams, autoPreflightBox.isSelected(), "replay");
+                    startPipelineRequest(replayParams, "replay");
                 }))
                 .exceptionally(ex -> {
                     Platform.runLater(() -> {
@@ -4103,6 +6771,9 @@ public class MainController {
             projectNameColumn.setCellValueFactory(new PropertyValueFactory<>("projectName"));
             projectStatusColumn.setCellValueFactory(new PropertyValueFactory<>("status"));
             projectUpdatedColumn.setCellValueFactory(new PropertyValueFactory<>("updated"));
+            if (projectSizeColumn != null) {
+                projectSizeColumn.setCellValueFactory(new PropertyValueFactory<>("size"));
+            }
             projectPathColumn.setCellValueFactory(new PropertyValueFactory<>("path"));
             projectTable.getSelectionModel().selectedItemProperty()
                     .addListener((obs, oldItem, newItem) -> onProjectSelectionChanged(newItem));
@@ -4214,7 +6885,60 @@ public class MainController {
     }
 
     private void setupShellNavigation() {
+        if (dashboardPane != null && dashboardProjectGalleryBox != null) {
+            dashboardPane.widthProperty().addListener((obs, oldVal, newVal) -> {
+                double wrapLength = Math.max(640.0, newVal.doubleValue() - 56.0);
+                dashboardProjectGalleryBox.setPrefWrapLength(wrapLength);
+            });
+        }
         showShellSection(SECTION_DASHBOARD);
+    }
+
+    private void applyGuidedWizardUi() {
+        setNodeVisibleManaged(legacyModuleFlowCard, false);
+        setNodeVisibleManaged(moduleSelectionRow, false);
+        setNodeVisibleManaged(moduleQuickActionsPane, false);
+        setNodeVisibleManaged(moduleFlowTitleLabel, false);
+        setNodeVisibleManaged(moduleFlowLabel, false);
+        setNodeVisibleManaged(moduleFlowActionButton, false);
+        setNodeVisibleManaged(startButton, false);
+        setNodeVisibleManaged(preflightButton, false);
+        setNodeVisibleManaged(autoPreflightBox, false);
+        setNodeVisibleManaged(wizardSourceButton, false);
+        setNodeVisibleManaged(wizardOutputButton, false);
+        setNodeVisibleManaged(wizardPreflightButton, false);
+        setNodeVisibleManaged(wizardRunButton, false);
+    }
+
+    private void applyRunReadOnlyPreviewMode() {
+        if (!RUN_SOURCE_OUTPUT_READONLY_PREVIEW) {
+            return;
+        }
+
+        if (localPathField != null) {
+            localPathField.setEditable(false);
+            if (!localPathField.getStyleClass().contains("readonly-preview-field")) {
+                localPathField.getStyleClass().add("readonly-preview-field");
+            }
+        }
+        if (youtubeUrlField != null) {
+            youtubeUrlField.setEditable(false);
+            if (!youtubeUrlField.getStyleClass().contains("readonly-preview-field")) {
+                youtubeUrlField.getStyleClass().add("readonly-preview-field");
+            }
+        }
+        if (outputDirField != null) {
+            outputDirField.setEditable(false);
+            if (!outputDirField.getStyleClass().contains("readonly-preview-field")) {
+                outputDirField.getStyleClass().add("readonly-preview-field");
+            }
+        }
+        if (outputPrefixField != null) {
+            outputPrefixField.setEditable(false);
+            if (!outputPrefixField.getStyleClass().contains("readonly-preview-field")) {
+                outputPrefixField.getStyleClass().add("readonly-preview-field");
+            }
+        }
     }
 
     private void setupThemeSelector() {
@@ -4224,6 +6948,16 @@ public class MainController {
         themeBox.getSelectionModel().select(storedTheme);
         applyTheme(storedTheme, false);
         themeInitializing = false;
+    }
+
+    private void setupUiLanguageSelector() {
+        if (uiLanguageBox == null) {
+            return;
+        }
+        uiLanguageBox.setItems(FXCollections.observableArrayList(UI_LANG_EN, UI_LANG_CS));
+        String stored = normalizeUiLanguage(preferences.get(PREF_UI_LANGUAGE, UI_LANG_EN));
+        uiLanguageBox.getSelectionModel().select(stored);
+        currentUiLanguage = stored;
     }
 
     private void setupSettingsModuleSelector() {
@@ -4299,6 +7033,11 @@ public class MainController {
         dialog.setTitle("Save Module Preset");
         dialog.setHeaderText("Save preset for " + moduleLabel(activeModule));
         dialog.setContentText("Preset name:");
+        Stage owner = getStage();
+        if (owner != null) {
+            dialog.initOwner(owner);
+        }
+        applyThemeToDialog(dialog);
 
         Optional<String> result = dialog.showAndWait();
         if (result.isEmpty()) {
@@ -4315,7 +7054,7 @@ public class MainController {
         ObjectNode presets = loadModulePresetsNode(activeModule);
         presets.set(presetName, captureCurrentModuleStateNode());
         saveModulePresetsNode(activeModule, presets);
-        preferences.put(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, presetName);
+        preferences.put(effectiveModulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, presetName);
         preferences.flush();
         refreshModulePresetList(presetName);
         addUserLog("SUCCESS", "Preset saved: " + presetName + " (" + moduleLabel(activeModule) + ")");
@@ -4340,7 +7079,7 @@ public class MainController {
         applyModuleStateFromNode(state);
         enforceModuleConstraints(activeModule, true);
         saveActiveModuleState();
-        preferences.put(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, presetName);
+        preferences.put(effectiveModulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, presetName);
         preferences.flush();
         refreshModulePresetList(presetName);
         addUserLog("INFO", "Preset loaded: " + presetName + " (" + moduleLabel(activeModule) + ")");
@@ -4361,7 +7100,7 @@ public class MainController {
             return;
         }
         saveModulePresetsNode(activeModule, presets);
-        preferences.put(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, "");
+        preferences.put(effectiveModulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, "");
         preferences.flush();
         refreshModulePresetList(null);
         addUserLog("INFO", "Preset deleted: " + presetName + " (" + moduleLabel(activeModule) + ")");
@@ -4370,13 +7109,18 @@ public class MainController {
     private void restoreUiPreferences() {
         restoringPreferences = true;
         try {
+            String storedLanguage = normalizeUiLanguage(preferences.get(PREF_UI_LANGUAGE, UI_LANG_EN));
+            currentUiLanguage = storedLanguage;
+            if (uiLanguageBox != null) {
+                uiLanguageBox.getSelectionModel().select(storedLanguage);
+            }
+
             String storedTheme = normalizeThemeName(preferences.get(PREF_THEME, THEME_LIGHT));
             themeInitializing = true;
             themeBox.getSelectionModel().select(storedTheme);
             themeInitializing = false;
             applyTheme(storedTheme, false);
 
-            simpleModeBox.setSelected(preferences.getBoolean(PREF_SIMPLE_MODE, true));
             autoPreflightBox.setSelected(preferences.getBoolean(PREF_AUTO_PREFLIGHT, true));
             activeModule = normalizeModuleId(preferences.get(PREF_ACTIVE_MODULE, MODULE_OFFLINE));
 
@@ -4414,15 +7158,10 @@ public class MainController {
         } finally {
             restoringPreferences = false;
         }
+        refreshWorkspaceSettingsUi();
     }
 
     private void registerPreferenceListeners() {
-        simpleModeBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
-            if (!restoringPreferences) {
-                preferences.putBoolean(PREF_SIMPLE_MODE, newVal);
-                preferences.flush();
-            }
-        });
         autoPreflightBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
             if (!restoringPreferences) {
                 preferences.putBoolean(PREF_AUTO_PREFLIGHT, newVal);
@@ -4481,7 +7220,9 @@ public class MainController {
             addUserLog("WARN", "Module is unavailable in Simple mode.");
             return;
         }
-        showShellSection(SECTION_MODULES);
+        if (!isProjectWorkspaceDetached()) {
+            showShellSection(SECTION_MODULES);
+        }
         mainTabs.getSelectionModel().select(tab);
     }
 
@@ -4496,8 +7237,22 @@ public class MainController {
         activeSection = normalized;
         setNodeVisibleManaged(dashboardPane, SECTION_DASHBOARD.equals(normalized));
         setNodeVisibleManaged(projectsPane, SECTION_PROJECTS.equals(normalized));
-        setNodeVisibleManaged(filesPane, SECTION_FILES.equals(normalized));
-        setNodeVisibleManaged(modulesPane, SECTION_MODULES.equals(normalized));
+        boolean filesDetachedToProjectWindow = filesPane != null
+                && filesPane.getParent() != null
+                && filesPane.getParent() != workspaceStack;
+        if (filesDetachedToProjectWindow) {
+            setNodeVisibleManaged(filesPane, true);
+        } else {
+            setNodeVisibleManaged(filesPane, SECTION_FILES.equals(normalized));
+        }
+        boolean modulesDetachedToProjectWindow = modulesPane != null
+                && modulesPane.getParent() != null
+                && modulesPane.getParent() != workspaceStack;
+        if (modulesDetachedToProjectWindow) {
+            setNodeVisibleManaged(modulesPane, true);
+        } else {
+            setNodeVisibleManaged(modulesPane, SECTION_MODULES.equals(normalized));
+        }
         syncMainNavigation();
     }
 
@@ -4586,22 +7341,49 @@ public class MainController {
         if (runModuleContextLabel != null) {
             runModuleContextLabel.setText(
                     "Active module: " + label
-                            + ". Run only shows source/output controls relevant for this module."
+                            + ". Source/Output values are read-only here and managed by wizard."
             );
         }
         if (settingsScopeLabel != null) {
             settingsScopeLabel.setText("Module settings - " + label);
         }
+        applySettingsScopeContext();
+    }
+
+    private void applySettingsScopeContext() {
+        String projectId = trimToEmpty(activeProjectId);
+        ProjectWorkspace activeWorkspace = projectsById.get(projectId);
+        boolean hasProject = activeWorkspace != null && activeProjectRoot != null;
+        boolean running = startButton != null && startButton.isDisabled();
+        if (settingsScopeValueLabel != null) {
+            if (hasProject) {
+                settingsScopeValueLabel.setText("Active project: " + activeWorkspace.name() + " (" + projectId + ")");
+            } else {
+                settingsScopeValueLabel.setText("Global defaults (no active project)");
+            }
+        }
+        if (settingsResetProjectModuleButton != null) {
+            settingsResetProjectModuleButton.setDisable(running || !hasProject || workspaceMigrationRunning);
+        }
+        if (settingsSaveGlobalDefaultsButton != null) {
+            settingsSaveGlobalDefaultsButton.setDisable(running || workspaceMigrationRunning);
+        }
     }
 
     private void configureModuleFlow(String title, String details, String actionKey, String actionText) {
-        moduleFlowTitleLabel.setText(title);
-        moduleFlowLabel.setText(details);
+        if (moduleFlowTitleLabel != null) {
+            moduleFlowTitleLabel.setText(title);
+        }
+        if (moduleFlowLabel != null) {
+            moduleFlowLabel.setText(details);
+        }
         moduleFlowActionKey = actionKey == null ? "" : actionKey;
-        moduleFlowActionButton.setText(actionText == null ? "Action" : actionText);
         boolean running = startButton != null && startButton.isDisabled();
         boolean hasActiveProject = activeProjectRoot != null && !trimToEmpty(activeProjectId).isBlank();
-        moduleFlowActionButton.setDisable(running || !hasActiveProject);
+        if (moduleFlowActionButton != null) {
+            moduleFlowActionButton.setText(actionText == null ? "Action" : actionText);
+            moduleFlowActionButton.setDisable(running || !hasActiveProject);
+        }
     }
 
     private void activateModule(String moduleId, boolean logChange) {
@@ -4636,7 +7418,7 @@ public class MainController {
         syncModuleButtons();
         syncSettingsModuleSelector();
         syncModuleSwitcher();
-        refreshModulePresetList(trimToEmpty(preferences.get(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, "")));
+        refreshModulePresetList(trimToEmpty(preferences.get(effectiveModulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, "")));
         updateModuleSpecificUiVisibility();
         updateModuleContextLabels();
         applyActiveProjectToRunFields();
@@ -4732,20 +7514,19 @@ public class MainController {
         targetLangBox.setDisable(!enabled);
     }
 
+    /**
+     * Applies module schema to tabs/cards and then delegates field-level visibility.
+     */
     private void updateModuleSpecificUiVisibility() {
         ModuleUiSchema schema = resolveModuleUiSchema(activeModule);
 
         setTabVisible(runTab, schema.allowsTab("run"));
         setTabVisible(advancedTab, schema.allowsTab("advanced"));
         setTabVisible(diarizationTab, schema.allowsTab("diarization"));
-        // Legacy per-tab logs/jobs are hidden from the main flow.
-        // Operations tab is the unified surface for logs, jobs and diagnostics.
-        setTabVisible(logsTab, false);
-        setTabVisible(jobsTab, false);
-        boolean operationsAllowed = schema.allowsTab("operations")
-                || schema.allowsTab("logs")
-                || schema.allowsTab("jobs");
-        setTabVisible(operationsTab, operationsAllowed);
+        setTabVisible(logsTab, schema.allowsTab("logs"));
+        setTabVisible(jobsTab, schema.allowsTab("jobs"));
+        // Project shell integrates jobs/logs directly. Operations stays hidden as legacy surface.
+        setTabVisible(operationsTab, false);
         setTabVisible(settingsTab, schema.allowsTab("settings"));
 
         setNodeVisibleManaged(runModuleContextCard, schema.allowsTab("run"));
@@ -4763,21 +7544,25 @@ public class MainController {
         settingsPresetRowAllowed = schema.allowsSection("settings_preset_row");
         applySettingsSearchFilter();
 
-        boolean showSimpleHint = simpleModeBox.isSelected() && schema.allowsSection("simple_hint_card");
-        setNodeVisibleManaged(simpleHintCard, showSimpleHint);
+        setNodeVisibleManaged(simpleHintCard, false);
 
         applyFieldVisibility(schema);
     }
 
+    /**
+     * Applies field-level visibility and read-only preview rules for run/settings surfaces.
+     */
     private void applyFieldVisibility(ModuleUiSchema schema) {
+        boolean readOnlyPreview = RUN_SOURCE_OUTPUT_READONLY_PREVIEW;
+
         boolean showSourceMode = schema.allowsField("run.source_mode");
-        setNodeVisibleManaged(sourceModeLabel, showSourceMode);
-        setNodeVisibleManaged(sourceModeBox, showSourceMode);
+        setNodeVisibleManaged(sourceModeLabel, showSourceMode && !readOnlyPreview);
+        setNodeVisibleManaged(sourceModeBox, showSourceMode && !readOnlyPreview);
 
         boolean showLocalPath = schema.allowsField("run.local_path");
         setNodeVisibleManaged(localPathLabel, showLocalPath);
         setNodeVisibleManaged(localPathField, showLocalPath);
-        setNodeVisibleManaged(localPathBrowseButton, showLocalPath);
+        setNodeVisibleManaged(localPathBrowseButton, showLocalPath && !readOnlyPreview);
 
         boolean showYoutube = schema.allowsField("run.youtube_url");
         setNodeVisibleManaged(youtubeUrlLabel, showYoutube);
@@ -4785,19 +7570,28 @@ public class MainController {
 
         boolean showPlaylist = schema.allowsField("run.playlist");
         setNodeVisibleManaged(playlistBox, showPlaylist);
+        if (playlistBox != null) {
+            playlistBox.setDisable(readOnlyPreview);
+        }
 
         boolean showQuality = schema.allowsField("run.quality");
         setNodeVisibleManaged(qualityLabel, showQuality);
         setNodeVisibleManaged(qualityBox, showQuality);
+        if (qualityBox != null) {
+            qualityBox.setDisable(readOnlyPreview);
+        }
 
         boolean showOutputDir = schema.allowsField("run.output_dir");
         setNodeVisibleManaged(outputDirLabel, showOutputDir);
         setNodeVisibleManaged(outputDirField, showOutputDir);
-        setNodeVisibleManaged(outputDirBrowseButton, showOutputDir);
+        setNodeVisibleManaged(outputDirBrowseButton, showOutputDir && !readOnlyPreview);
 
         boolean showOutputMode = schema.allowsField("run.output_mode");
         setNodeVisibleManaged(outputModeLabel, showOutputMode);
         setNodeVisibleManaged(outputModeBox, showOutputMode);
+        if (outputModeBox != null) {
+            outputModeBox.setDisable(readOnlyPreview);
+        }
 
         boolean showOutputPrefix = schema.allowsField("run.output_prefix");
         setNodeVisibleManaged(outputPrefixLabel, showOutputPrefix);
@@ -4805,6 +7599,9 @@ public class MainController {
 
         boolean showKeepOriginals = schema.allowsField("run.keep_originals");
         setNodeVisibleManaged(keepOriginalsBox, showKeepOriginals);
+        if (keepOriginalsBox != null) {
+            keepOriginalsBox.setDisable(readOnlyPreview);
+        }
 
         setNodeVisibleManaged(settingsWhisperModelLabel, schema.allowsField("settings.model"));
         setNodeVisibleManaged(modelField, schema.allowsField("settings.model"));
@@ -4837,9 +7634,9 @@ public class MainController {
                 : trimToEmpty(settingsSearchField.getText()).toLowerCase(Locale.ROOT);
 
         boolean appearanceMatch = query.isBlank()
-                || containsAny(query, "theme", "appearance", "global", "ui");
+                || containsAny(query, "theme", "appearance", "global", "ui", "language");
         boolean runtimeMatch = query.isBlank()
-                || containsAny(query, "runtime", "repair", "path", "output", "data");
+                || containsAny(query, "runtime", "repair", "path", "output", "data", "workspace", "root", "migrate");
         boolean coreMatch = query.isBlank()
                 || containsAny(
                 query,
@@ -4923,7 +7720,7 @@ public class MainController {
 
     private void saveActiveModuleState() {
         String module = normalizeModuleId(activeModule);
-        String prefix = modulePrefPrefix(module);
+        String prefix = effectiveModulePrefPrefix(module);
         preferences.putBoolean(prefix + "initialized", true);
         preferences.put(prefix + "source_mode", safeValue(sourceModeBox));
         preferences.put(prefix + "output_mode", safeValue(outputModeBox));
@@ -4976,7 +7773,15 @@ public class MainController {
 
     private boolean loadModuleState(String moduleId) {
         String module = normalizeModuleId(moduleId);
-        String prefix = modulePrefPrefix(module);
+        String prefix = effectiveModulePrefPrefix(module);
+        String activeProject = trimToEmpty(activeProjectId);
+        if (!activeProject.isBlank() && !preferences.getBoolean(prefix + "initialized", false)) {
+            String globalPrefix = modulePrefPrefix(module);
+            if (preferences.hasAnyWithPrefix(globalPrefix)) {
+                preferences.copyPrefix(globalPrefix, prefix, true);
+                preferences.flush();
+            }
+        }
         if (!preferences.getBoolean(prefix + "initialized", false)) {
             return false;
         }
@@ -5088,7 +7893,7 @@ public class MainController {
         String selected = sanitizePresetName(preferredName);
         if (selected.isBlank()) {
             selected = sanitizePresetName(
-                    preferences.get(modulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, "")
+                    preferences.get(effectiveModulePrefPrefix(activeModule) + PREF_MODULE_SELECTED_PRESET, "")
             );
         }
         if (!selected.isBlank() && names.contains(selected)) {
@@ -5109,7 +7914,7 @@ public class MainController {
     }
 
     private ObjectNode loadModulePresetsNode(String moduleId) {
-        String prefix = modulePrefPrefix(moduleId);
+        String prefix = effectiveModulePrefPrefix(moduleId);
         String raw = trimToEmpty(preferences.get(prefix + PREF_MODULE_PRESETS_JSON, "{}"));
         if (raw.isBlank()) {
             return mapper.createObjectNode();
@@ -5126,7 +7931,7 @@ public class MainController {
     }
 
     private void saveModulePresetsNode(String moduleId, ObjectNode presetsNode) {
-        String prefix = modulePrefPrefix(moduleId);
+        String prefix = effectiveModulePrefPrefix(moduleId);
         try {
             preferences.put(prefix + PREF_MODULE_PRESETS_JSON, mapper.writeValueAsString(presetsNode));
         } catch (Exception ignored) {
@@ -5357,6 +8162,19 @@ public class MainController {
         return PREF_MODULE_PREFIX + normalizeModuleId(moduleId) + ".";
     }
 
+    private static String projectModulePrefPrefix(String projectId, String moduleId) {
+        return PREF_PROJECT_PREFIX + trimToEmpty(projectId) + ".module." + normalizeModuleId(moduleId) + ".";
+    }
+
+    private String effectiveModulePrefPrefix(String moduleId) {
+        String normalizedModule = normalizeModuleId(moduleId);
+        String projectId = trimToEmpty(activeProjectId);
+        if (projectId.isBlank()) {
+            return modulePrefPrefix(normalizedModule);
+        }
+        return projectModulePrefPrefix(projectId, normalizedModule);
+    }
+
     private static void selectComboValue(ComboBox<String> box, String value) {
         String normalized = trimToEmpty(value);
         if (!normalized.isBlank() && box.getItems().contains(normalized)) {
@@ -5427,10 +8245,64 @@ public class MainController {
         if (monitorWindow != null) {
             monitorWindow.applyThemeClass(themeCssClass);
         }
+        if (jobProgressWindow != null) {
+            jobProgressWindow.applyThemeClass(themeCssClass);
+        }
+        applyThemeToStage(projectWorkspaceStage);
+        if (isLauncherController()) {
+            for (ProjectWorkspaceHost host : new ArrayList<>(openProjectWorkspaceHosts.values())) {
+                if (host != null && host.controller() != null) {
+                    host.controller().applyTheme(normalizedTheme, false);
+                }
+            }
+        }
 
         if (logChange) {
             addUserLog("INFO", "Theme switched to " + normalizedTheme + ".");
         }
+    }
+
+    private void applyThemeToDialog(Dialog<?> dialog) {
+        if (dialog == null) {
+            return;
+        }
+        DialogPane pane = dialog.getDialogPane();
+        if (pane == null) {
+            return;
+        }
+        if (rootPane != null && rootPane.getScene() != null) {
+            pane.getStylesheets().setAll(rootPane.getScene().getStylesheets());
+        }
+        pane.getStyleClass().removeAll("theme-light", "theme-dark", "theme-dracula");
+        if (!pane.getStyleClass().contains("app-shell")) {
+            pane.getStyleClass().add("app-shell");
+        }
+        pane.getStyleClass().add(themeClassFromName(currentTheme));
+    }
+
+    private void applyThemeToStage(Stage stage) {
+        if (stage == null || stage.getScene() == null) {
+            return;
+        }
+        applyThemeToScene(stage.getScene());
+    }
+
+    private void applyThemeToScene(Scene scene) {
+        if (scene == null) {
+            return;
+        }
+        if (rootPane != null && rootPane.getScene() != null) {
+            scene.getStylesheets().setAll(rootPane.getScene().getStylesheets());
+        }
+        Node sceneRoot = scene.getRoot();
+        if (sceneRoot == null) {
+            return;
+        }
+        sceneRoot.getStyleClass().removeAll("theme-light", "theme-dark", "theme-dracula");
+        if (!sceneRoot.getStyleClass().contains("app-shell")) {
+            sceneRoot.getStyleClass().add("app-shell");
+        }
+        sceneRoot.getStyleClass().add(themeClassFromName(currentTheme));
     }
 
     private String validateInputs() {
@@ -5461,6 +8333,12 @@ public class MainController {
         return null;
     }
 
+    /**
+     * Builds backend request payload from current UI + active project context.
+     *
+     * Module-specific normalization is applied at the end via
+     * {@link #applyActiveModulePayloadOverrides(ObjectNode, ObjectNode, ObjectNode, ObjectNode)}.
+     */
     private ObjectNode buildPipelineParams() {
         ObjectNode params = mapper.createObjectNode();
         params.put("module", activeModule);
@@ -5626,6 +8504,9 @@ public class MainController {
                 });
     }
 
+    /**
+     * Central backend event dispatcher (logs, progress, terminal job states, protocol errors).
+     */
     private void handleBackendEvent(JsonNode event) {
         Platform.runLater(() -> {
             String eventName = event.path("event").asText("");
@@ -5638,6 +8519,9 @@ public class MainController {
                     String level = detectLevel(line);
                     LogCategory category = detectCategory(line);
                     addLog(level, category, withJobPrefix(jobId, line));
+                    if (jobProgressWindow != null && jobId != null && !jobId.isBlank() && jobId.equals(currentJobId)) {
+                        jobProgressWindow.updateLastLog(line);
+                    }
                 }
                 case "job.progress" -> {
                     updateJobStatus(jobId, "running");
@@ -5655,6 +8539,7 @@ public class MainController {
                         stepLabel.setText(step + " (" + String.format(Locale.ROOT, "%.0f", overall) + "%)");
                         statusLabel.setText("Running");
                         updateEta(overall, indeterminate);
+                        updateJobProgressWindowFromEvent(jobId, payload, overall, indeterminate, step);
                     }
                 }
                 case "job.started" -> {
@@ -5663,7 +8548,11 @@ public class MainController {
                         operationsStatusLabel.setText("Job running");
                     }
                     boolean affectsCurrent = false;
-                    if (jobId != null && !jobId.isBlank() && (currentJobId == null || currentJobId.isBlank())) {
+                    boolean canClaimCurrentJob = controllerRunning || ownsGlobalRunLock();
+                    if (jobId != null
+                            && !jobId.isBlank()
+                            && (currentJobId == null || currentJobId.isBlank())
+                            && canClaimCurrentJob) {
                         currentJobId = jobId;
                         affectsCurrent = true;
                     } else if (jobId != null && !jobId.isBlank() && jobId.equals(currentJobId)) {
@@ -5671,6 +8560,9 @@ public class MainController {
                     }
                     if (affectsCurrent) {
                         resetEtaDisplay();
+                        String moduleId = normalizeModuleId(payload.path("request").path("module").asText(activeModule));
+                        String sourceMode = payload.path("request").path("source").path("mode").asText("");
+                        showJobProgressWindow(jobId, moduleLabel(moduleId), sourceMode);
                     }
                     addUserLog("INFO", withJobPrefix(jobId, "Job running..."));
                     refreshDashboardData();
@@ -5691,11 +8583,15 @@ public class MainController {
                     }
                     if (jobId != null && !jobId.isBlank() && jobId.equals(currentJobId)) {
                         setRunning(false);
+                        releaseGlobalRunLockIfOwned();
                         statusLabel.setText("Completed");
                         stepLabel.setText("done");
                         progressBar.setProgress(1.0);
                         setEtaDone();
                         lastOutputDir = finalOut;
+                    }
+                    if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
+                        jobProgressWindow.markCompleted(finalOut);
                     }
                     addUserLog("SUCCESS", withJobPrefix(jobId, "Job completed. Output: " + finalOut));
                     if (notifyDoneBox.isSelected() && finalOut != null && !finalOut.isBlank()) {
@@ -5723,10 +8619,14 @@ public class MainController {
                     }
                     if (jobId != null && !jobId.isBlank() && jobId.equals(currentJobId)) {
                         setRunning(false);
+                        releaseGlobalRunLockIfOwned();
                         statusLabel.setText("Failed");
                         stepLabel.setText("error");
                         progressBar.setProgress(0.0);
                         resetEtaDisplay();
+                    }
+                    if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
+                        jobProgressWindow.markFailed(message);
                     }
                     refreshOperationsDiagnostics();
                     refreshDashboardData();
@@ -5740,16 +8640,25 @@ public class MainController {
                     addUserLog("WARN", withJobPrefix(jobId, "Job cancelled."));
                     if (jobId != null && !jobId.isBlank() && jobId.equals(currentJobId)) {
                         setRunning(false);
+                        releaseGlobalRunLockIfOwned();
                         statusLabel.setText("Cancelled");
                         stepLabel.setText("cancelled");
                         progressBar.setProgress(0.0);
                         resetEtaDisplay();
                     }
+                    if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
+                        jobProgressWindow.markCancelled();
+                    }
                     refreshOperationsDiagnostics();
                     refreshDashboardData();
                     refreshJobsSilently();
                 }
-                case "job.cancel_requested" -> addUserLog("INFO", withJobPrefix(jobId, "Cancel request accepted."));
+                case "job.cancel_requested" -> {
+                    addUserLog("INFO", withJobPrefix(jobId, "Cancel request accepted."));
+                    if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
+                        jobProgressWindow.markCancelRequested();
+                    }
+                }
                 case "backend.stderr" -> addTechnicalLog("DEBUG", payload.path("message").asText(""));
                 case "backend.io_error", "backend.protocol_error" ->
                         addTechnicalLog("ERROR", payload.path("message").asText(""));
@@ -6158,6 +9067,7 @@ public class MainController {
         if (owner != null) {
             mapDialog.initOwner(owner);
         }
+        applyThemeToDialog(mapDialog);
         Optional<ButtonType> choice = mapDialog.showAndWait();
         if (choice.isPresent() && choice.get() == mapNow) {
             selectModule(diarizationTab);
@@ -6215,17 +9125,39 @@ public class MainController {
         profilePreviewArea.setText(sb.toString());
     }
 
-    private void applyUiMode() {
-        boolean simpleMode = simpleModeBox.isSelected();
-        ModuleUiSchema schema = resolveModuleUiSchema(activeModule);
-        boolean showSimpleHint = simpleMode && schema.allowsSection("simple_hint_card");
-        setNodeVisibleManaged(simpleHintCard, showSimpleHint);
-
-        syncModuleButtons();
-        addUserLog("INFO", simpleMode ? "Simple mode enabled." : "Advanced mode enabled.");
-    }
-
     private void updateSourceModeUi() {
+        if (RUN_SOURCE_OUTPUT_READONLY_PREVIEW) {
+            if (localPathField != null) {
+                localPathField.setDisable(false);
+            }
+            if (youtubeUrlField != null) {
+                youtubeUrlField.setDisable(false);
+            }
+            if (sourceModeBox != null) {
+                sourceModeBox.setDisable(true);
+            }
+            if (outputModeBox != null) {
+                outputModeBox.setDisable(true);
+            }
+            if (localPathBrowseButton != null) {
+                localPathBrowseButton.setDisable(true);
+            }
+            if (outputDirBrowseButton != null) {
+                outputDirBrowseButton.setDisable(true);
+            }
+            if (playlistBox != null) {
+                playlistBox.setDisable(true);
+            }
+            if (qualityBox != null) {
+                qualityBox.setDisable(true);
+            }
+            if (keepOriginalsBox != null) {
+                keepOriginalsBox.setDisable(true);
+            }
+            updateWizardState();
+            return;
+        }
+
         String mode = safeValue(sourceModeBox);
         boolean local = "local".equals(mode);
 
@@ -6402,13 +9334,14 @@ public class MainController {
     }
 
     private void setRunning(boolean running) {
+        controllerRunning = running;
         boolean hasActiveProject = activeProjectRoot != null && !trimToEmpty(activeProjectId).isBlank();
-        startButton.setDisable(running || !hasActiveProject);
+        boolean runActionLocked = running || isGlobalRunLockedByOtherController();
+        startButton.setDisable(runActionLocked || !hasActiveProject);
         cancelButton.setDisable(!running);
-        preflightButton.setDisable(running || !hasActiveProject);
-        simpleModeBox.setDisable(running);
-        moduleFlowActionButton.setDisable(running || !hasActiveProject);
-        runModuleButton.setDisable(running);
+        preflightButton.setDisable(runActionLocked || !hasActiveProject);
+        moduleFlowActionButton.setDisable(runActionLocked || !hasActiveProject);
+        runModuleButton.setDisable(runActionLocked);
         advancedModuleButton.setDisable(running);
         diarizationModuleButton.setDisable(running);
         logsModuleButton.setDisable(running);
@@ -6416,16 +9349,19 @@ public class MainController {
         youtubeDubModuleButton.setDisable(running);
         settingsModuleButton.setDisable(running);
         if (wizardSourceButton != null) {
-            wizardSourceButton.setDisable(running || !hasActiveProject);
+            wizardSourceButton.setDisable(runActionLocked || !hasActiveProject);
         }
         if (wizardOutputButton != null) {
-            wizardOutputButton.setDisable(running || !hasActiveProject);
+            wizardOutputButton.setDisable(runActionLocked || !hasActiveProject);
         }
         if (wizardPreflightButton != null) {
-            wizardPreflightButton.setDisable(running || !hasActiveProject);
+            wizardPreflightButton.setDisable(runActionLocked || !hasActiveProject);
         }
         if (wizardRunButton != null) {
-            wizardRunButton.setDisable(running || !hasActiveProject);
+            wizardRunButton.setDisable(runActionLocked || !hasActiveProject);
+        }
+        if (wizardNextButton != null) {
+            wizardNextButton.setDisable(runActionLocked || !hasActiveProject);
         }
         if (moduleSwitcherBox != null) {
             moduleSwitcherBox.setDisable(running);
@@ -6451,6 +9387,18 @@ public class MainController {
         }
         if (settingsSearchField != null) {
             settingsSearchField.setDisable(running);
+        }
+        if (uiLanguageBox != null) {
+            uiLanguageBox.setDisable(running || workspaceMigrationRunning);
+        }
+        if (settingsChangeWorkspaceRootButton != null) {
+            settingsChangeWorkspaceRootButton.setDisable(running || workspaceMigrationRunning);
+        }
+        if (settingsResetProjectModuleButton != null) {
+            settingsResetProjectModuleButton.setDisable(running || workspaceMigrationRunning || activeProjectRoot == null);
+        }
+        if (settingsSaveGlobalDefaultsButton != null) {
+            settingsSaveGlobalDefaultsButton.setDisable(running || workspaceMigrationRunning);
         }
         if (jobsSearchField != null) {
             jobsSearchField.setDisable(running);
@@ -6549,7 +9497,34 @@ public class MainController {
             dashboardOpenOutputFolderButton.setDisable(running || activeProjectRoot == null);
         }
         if (dashboardOpenWizardButton != null) {
-            dashboardOpenWizardButton.setDisable(running || activeProjectRoot == null);
+            dashboardOpenWizardButton.setDisable(runActionLocked || activeProjectRoot == null);
+        }
+        if (projectWorkspacePreflightButton != null) {
+            projectWorkspacePreflightButton.setDisable(runActionLocked || !hasActiveProject);
+        }
+        if (projectWorkspaceRunWizardButton != null) {
+            projectWorkspaceRunWizardButton.setDisable(runActionLocked || !hasActiveProject);
+        }
+        if (projectWorkspaceOverviewRunWizardButton != null) {
+            projectWorkspaceOverviewRunWizardButton.setDisable(runActionLocked || !hasActiveProject);
+        }
+        if (projectWorkspaceSectionOverviewButton != null) {
+            projectWorkspaceSectionOverviewButton.setDisable(running);
+        }
+        if (projectWorkspaceSectionWorkflowButton != null) {
+            projectWorkspaceSectionWorkflowButton.setDisable(running);
+        }
+        if (projectWorkspaceSectionFilesButton != null) {
+            projectWorkspaceSectionFilesButton.setDisable(running);
+        }
+        if (projectWorkspaceSectionJobsButton != null) {
+            projectWorkspaceSectionJobsButton.setDisable(running);
+        }
+        if (projectWorkspaceSectionLogsButton != null) {
+            projectWorkspaceSectionLogsButton.setDisable(running);
+        }
+        if (projectWorkspaceSectionSettingsButton != null) {
+            projectWorkspaceSectionSettingsButton.setDisable(running);
         }
         if (dashboardOpenTimelineButton != null) {
             boolean hasTimeline = activeProjectRoot != null
@@ -6570,6 +9545,8 @@ public class MainController {
         updateEditorButtonsState();
         updateSpeakerMappingButtonState(running);
         updateWizardState();
+        refreshWorkspaceSettingsUi();
+        applySettingsScopeContext();
     }
 
     private void updateSpeakerMappingButtonState(boolean running) {
@@ -6596,6 +9573,12 @@ public class MainController {
         }
     }
 
+    /**
+     * Estimates overall ETA from incremental percent deltas.
+     *
+     * Uses rolling anchor points and conservative thresholds to avoid unstable
+     * ETA jumps when progress updates are sparse.
+     */
     private void updateEta(double overallPercent, boolean indeterminate) {
         if (etaLabel == null) {
             return;
@@ -6632,6 +9615,9 @@ public class MainController {
         etaAnchorPercent = overallPercent;
     }
 
+    /**
+     * Compact ETA formatter shared by main progress and job progress window.
+     */
     private String formatDurationShort(long millis) {
         long totalSeconds = Math.max(1L, Math.round(millis / 1000.0));
         long hours = totalSeconds / 3600L;
@@ -6646,6 +9632,9 @@ public class MainController {
         return String.format(Locale.ROOT, "%ds", seconds);
     }
 
+    /**
+     * Adapter exposing controlled UI operations to module implementations.
+     */
     private final class ControllerModuleUiContext implements ModuleComponent.ModuleUiContext {
         @Override
         public void selectSourceMode(String value) {
@@ -6863,6 +9852,9 @@ public class MainController {
         }
     }
 
+    /**
+     * Resolves bootstrap script/backend root from bundled app layout or dev layout.
+     */
     private RuntimeBootstrapTarget resolveRuntimeBootstrapTarget() {
         Path appDataPath = resolveRuntimeAppDataDir();
         Set<Path> roots = new LinkedHashSet<>();
@@ -6979,6 +9971,9 @@ public class MainController {
         return Path.of(userHome, ".local", "share", APP_NAME);
     }
 
+    /**
+     * Opens runtime bootstrap dialog and executes bootstrap PowerShell process.
+     */
     private void showRuntimeBootstrapWindow(RuntimeBootstrapTarget target, boolean mandatoryLaunch, boolean repairMode) {
         runtimeBootstrapRunning = true;
         if (installRuntimeButton != null) {
@@ -7047,6 +10042,7 @@ public class MainController {
         if (rootPane != null && rootPane.getScene() != null) {
             dialog.getScene().getStylesheets().setAll(rootPane.getScene().getStylesheets());
         }
+        applyThemeToStage(dialog);
         closeButton.setOnAction(event -> dialog.close());
         closeAppButton.setOnAction(event -> {
             dialog.close();
@@ -7184,6 +10180,9 @@ public class MainController {
         });
     }
 
+    /**
+     * Parses script progress lines in format: TM_PROGRESS|<percent>|<message>.
+     */
     private RuntimeBootstrapProgress parseRuntimeBootstrapProgress(String line) {
         String raw = trimToEmpty(line);
         if (raw.isBlank()) {
@@ -7261,6 +10260,16 @@ public class MainController {
     }
 
     private Stage getStage() {
+        if (projectWorkspaceStage != null && projectWorkspaceStage.isShowing()) {
+            return projectWorkspaceStage;
+        }
+        return getMainStage();
+    }
+
+    private Stage getMainStage() {
+        if (launcherMainStage != null) {
+            return launcherMainStage;
+        }
         if (rootPane.getScene() == null) {
             return null;
         }
@@ -7284,11 +10293,7 @@ public class MainController {
     }
 
     private void runPreflightShortcut() {
-        Platform.runLater(() -> {
-            if (!preflightButton.isDisabled()) {
-                onRunPreflight();
-            }
-        });
+        Platform.runLater(this::onRunPreflight);
     }
 
     private void runMonitorShortcut() {
@@ -7321,6 +10326,14 @@ public class MainController {
             case THEME_DARK -> "theme-dark";
             case THEME_DRACULA -> "theme-dracula";
             default -> "theme-light";
+        };
+    }
+
+    private static String normalizeUiLanguage(String value) {
+        String normalized = trimToEmpty(value).toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case UI_LANG_CS -> UI_LANG_CS;
+            default -> UI_LANG_EN;
         };
     }
 
@@ -7483,6 +10496,11 @@ public class MainController {
         return trimToEmpty(cursor.getMessage()).isBlank() ? cursor.toString() : cursor.getMessage();
     }
 
+    /**
+     * Lightweight JSON-backed key-value preferences store scoped under ui_preferences.
+     *
+     * The store is intentionally best-effort: IO failures should not crash runtime UI.
+     */
     private static final class JsonPreferences {
         private static final String ROOT_UI_KEY = "ui_preferences";
 
@@ -7554,6 +10572,62 @@ public class MainController {
         private synchronized void putInt(String key, int value) {
             ensureLoaded();
             uiNode.put(key, value);
+        }
+
+        private synchronized boolean hasAnyWithPrefix(String prefix) {
+            ensureLoaded();
+            String normalizedPrefix = trimToEmpty(prefix);
+            if (normalizedPrefix.isBlank()) {
+                return false;
+            }
+            var fields = uiNode.fieldNames();
+            while (fields.hasNext()) {
+                String key = fields.next();
+                if (key.startsWith(normalizedPrefix)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private synchronized void copyPrefix(String sourcePrefix, String targetPrefix, boolean overwrite) {
+            ensureLoaded();
+            String source = trimToEmpty(sourcePrefix);
+            String target = trimToEmpty(targetPrefix);
+            if (source.isBlank() || target.isBlank()) {
+                return;
+            }
+            List<String> keys = new ArrayList<>();
+            uiNode.fieldNames().forEachRemaining(keys::add);
+            for (String key : keys) {
+                if (!key.startsWith(source)) {
+                    continue;
+                }
+                String suffix = key.substring(source.length());
+                String targetKey = target + suffix;
+                if (!overwrite && uiNode.has(targetKey)) {
+                    continue;
+                }
+                JsonNode value = uiNode.get(key);
+                if (value != null) {
+                    uiNode.set(targetKey, value.deepCopy());
+                }
+            }
+        }
+
+        private synchronized void removeByPrefix(String prefix) {
+            ensureLoaded();
+            String normalizedPrefix = trimToEmpty(prefix);
+            if (normalizedPrefix.isBlank()) {
+                return;
+            }
+            List<String> toRemove = new ArrayList<>();
+            uiNode.fieldNames().forEachRemaining(key -> {
+                if (key.startsWith(normalizedPrefix)) {
+                    toRemove.add(key);
+                }
+            });
+            toRemove.forEach(uiNode::remove);
         }
 
         private synchronized void flush() {

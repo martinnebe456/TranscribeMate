@@ -1,5 +1,6 @@
 $ErrorActionPreference = "Stop"
 
+# Validates that JAVA_HOME points to a JDK installation (java + javac).
 function Test-JavaHome([string]$HomePath) {
     if ([string]::IsNullOrWhiteSpace($HomePath)) {
         return $false
@@ -9,6 +10,7 @@ function Test-JavaHome([string]$HomePath) {
     return (Test-Path $javaExe) -and (Test-Path $javacExe)
 }
 
+# Resolves JAVA_HOME from env first, then from java.exe on PATH.
 function Resolve-JavaHome {
     if (Test-JavaHome $env:JAVA_HOME) {
         return $env:JAVA_HOME
@@ -50,6 +52,7 @@ function Resolve-JavaHome {
     return $null
 }
 
+# Resolve toolchain prerequisites before launching JavaFX frontend.
 $resolvedJavaHome = Resolve-JavaHome
 if (-not $resolvedJavaHome) {
     throw @"
@@ -83,6 +86,7 @@ if (-not (Test-Path $frontend)) {
     throw "javafx-client folder not found."
 }
 
+# Pass project root to frontend/backend bootstrap helpers for path resolution.
 $env:TM_PROJECT_ROOT = $root
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"

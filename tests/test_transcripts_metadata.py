@@ -1,3 +1,5 @@
+"""Regression coverage for transcript rendering and metadata assembly helpers."""
+
 from pathlib import Path
 
 from transcribemate.core.transcripts import (
@@ -12,6 +14,7 @@ from transcribemate.core.types import TranscriptionResult
 
 
 def test_render_metadata_block_multiline_topic():
+    """Ensure multiline metadata values are indented as nested bullet content."""
     metadata = {
         "Title": "Demo",
         "Topic": "Line one\nLine two",
@@ -23,6 +26,7 @@ def test_render_metadata_block_multiline_topic():
 
 
 def test_render_summary_prompt_language_line_explicit():
+    """Summary prompt should honor explicit output language selection."""
     prompt = render_summary_prompt(
         style="detailed",
         media_path=Path("demo.mp3"),
@@ -35,6 +39,7 @@ def test_render_summary_prompt_language_line_explicit():
 
 
 def test_render_summary_prompt_language_line_auto_detected():
+    """Summary prompt should mention detected language when summary_lang=auto."""
     prompt = render_summary_prompt(
         style="detailed",
         media_path=Path("demo.mp3"),
@@ -47,6 +52,7 @@ def test_render_summary_prompt_language_line_auto_detected():
 
 
 def test_render_raw_transcript_includes_speaker_prefix():
+    """Raw transcript should render display speaker names/labels as prefixes."""
     body = render_raw_transcript(
         [
             TranscriptSegment(start=0.0, end=0.8, text="Hello", speaker_id="SPEAKER_00", speaker_name="Alice"),
@@ -58,6 +64,7 @@ def test_render_raw_transcript_includes_speaker_prefix():
 
 
 def test_render_timestamped_transcript_includes_speaker_prefix():
+    """Timestamped transcript should keep speaker prefix formatting."""
     body = render_timestamped_transcript(
         [
             TranscriptSegment(start=0.0, end=1.0, text="First line", speaker_id="SPEAKER_00", speaker_name="Bob"),
@@ -68,6 +75,7 @@ def test_render_timestamped_transcript_includes_speaker_prefix():
 
 
 def test_render_transcript_hides_unmapped_labels_when_disabled():
+    """Unmapped speaker labels must be suppressible for cleaner exports."""
     body = render_raw_transcript(
         [
             TranscriptSegment(start=0.0, end=0.5, text="No name", speaker_id="SPEAKER_03", speaker_name=""),
@@ -78,6 +86,7 @@ def test_render_transcript_hides_unmapped_labels_when_disabled():
 
 
 def test_build_metadata_includes_conference_fields():
+    """Conference-specific metadata keys should be propagated into output metadata."""
     result = TranscriptionResult(
         srt_path=Path("x.srt"),
         raw_txt_path=Path("x.txt"),

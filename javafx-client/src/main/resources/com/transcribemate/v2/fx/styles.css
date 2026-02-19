@@ -96,6 +96,7 @@
 .app-header-shell {
     -fx-background-color: -tm-bg-pane;
     -fx-background-radius: 14;
+    -fx-spacing: 10;
 }
 
 .title {
@@ -141,6 +142,10 @@
     -fx-padding: 10 12 10 12;
 }
 
+.app-titlebar > .button {
+    -fx-min-height: 28;
+}
+
 .status-strip {
     -fx-padding: 8 12 8 12;
 }
@@ -153,6 +158,10 @@
     -fx-background-color: transparent;
 }
 
+.workspace-nav-row {
+    -fx-padding: 8 12 8 12;
+}
+
 .main-nav {
     -fx-min-width: 220;
 }
@@ -163,6 +172,34 @@
     -fx-border-color: -tm-border;
     -fx-border-radius: 12;
     -fx-effect: dropshadow(gaussian, rgba(0, 0, 0, 0.20), 12, 0.18, 0, 3);
+}
+
+.dialog-pane.app-shell {
+    -fx-background-color: -tm-bg-card;
+    -fx-border-color: -tm-border;
+    -fx-border-width: 1;
+}
+
+.dialog-pane.app-shell > .header-panel {
+    -fx-background-color: -tm-bg-pane;
+    -fx-border-color: transparent transparent -tm-border transparent;
+    -fx-border-width: 0 0 1 0;
+}
+
+.dialog-pane.app-shell > .header-panel .label {
+    -fx-text-fill: -tm-text-strong;
+}
+
+.dialog-pane.app-shell > .content {
+    -fx-background-color: -tm-bg-card;
+}
+
+.dialog-pane.app-shell > .content.label {
+    -fx-text-fill: -tm-text;
+}
+
+.dialog-pane.app-shell .button-bar {
+    -fx-background-color: -tm-bg-card;
 }
 
 .project-gallery-scroll {
@@ -179,11 +216,114 @@
     -fx-background-radius: 10;
     -fx-border-color: -tm-border;
     -fx-border-radius: 10;
+    -fx-min-width: 320;
+    -fx-pref-width: 340;
+    -fx-max-width: 360;
+}
+
+.project-gallery-card-create {
+    -fx-alignment: center;
+    -fx-spacing: 8;
+    -fx-cursor: hand;
+    -fx-border-color: -tm-accent-c;
+    -fx-border-style: segments(8, 6) line-cap round;
+    -fx-border-width: 1.5;
+    -fx-background-color: linear-gradient(to bottom right, -tm-bg-soft, -tm-bg-soft-2);
+}
+
+.project-gallery-card-create:hover {
+    -fx-border-color: -tm-accent-d;
+    -fx-background-color: linear-gradient(to bottom right, -tm-bg-soft-2, -tm-bg-soft);
+}
+
+.project-gallery-card-create:focused {
+    -fx-border-color: -tm-accent-d;
+    -fx-border-width: 2.0;
+}
+
+.project-gallery-card-create:disabled {
+    -fx-opacity: 0.6;
+    -fx-cursor: default;
+}
+
+.project-gallery-plus {
+    -fx-font-size: 44px;
+    -fx-font-weight: 800;
+    -fx-text-fill: -tm-accent-c;
+}
+
+.project-gallery-create-label {
+    -fx-font-size: 17px;
+    -fx-font-weight: 700;
+    -fx-text-fill: -tm-text-strong;
 }
 
 .project-gallery-card-active {
     -fx-border-color: -tm-accent-c;
     -fx-border-width: 1.5;
+}
+
+.project-shell {
+    -fx-background-color: -tm-bg-canvas;
+}
+
+.project-shell-body {
+    -fx-padding: 10 12 12 12;
+}
+
+.project-shell-content-host {
+    -fx-background-color: transparent;
+}
+
+.project-section-nav {
+    -fx-min-width: 190;
+    -fx-pref-width: 210;
+}
+
+.project-section-btn {
+    -fx-max-width: Infinity;
+    -fx-alignment: CENTER_LEFT;
+    -fx-background-color: -tm-bg-soft;
+    -fx-text-fill: -tm-text;
+    -fx-border-color: -tm-border;
+    -fx-border-width: 1;
+    -fx-padding: 8 10 8 10;
+}
+
+.project-section-btn:hover {
+    -fx-background-color: -tm-bg-soft-2;
+}
+
+.project-section-btn-active {
+    -fx-background-color: linear-gradient(to right, -tm-accent-a, -tm-accent-c);
+    -fx-text-fill: -tm-accent-on;
+    -fx-border-color: -tm-accent-c;
+}
+
+.project-overview-pane {
+    -fx-background-color: transparent;
+}
+
+.wizard-window {
+    -fx-background-color: -tm-bg-canvas;
+}
+
+.wizard-window .list-view {
+    -fx-background-color: -tm-bg-soft;
+    -fx-control-inner-background: -tm-bg-soft;
+    -fx-border-color: -tm-border;
+    -fx-border-radius: 8;
+    -fx-background-radius: 8;
+}
+
+.wizard-window .list-view .list-cell {
+    -fx-text-fill: -tm-text;
+    -fx-background-color: transparent;
+}
+
+.wizard-window .list-view .list-cell:filled:selected {
+    -fx-background-color: -tm-bg-soft-2;
+    -fx-text-fill: -tm-text-strong;
 }
 
 .module-menu {
@@ -235,13 +375,13 @@
 }
 
 .main-nav-btn {
-    -fx-max-width: Infinity;
-    -fx-alignment: CENTER_LEFT;
-    -fx-background-color: transparent;
+    -fx-alignment: CENTER;
+    -fx-background-color: -tm-bg-soft;
     -fx-text-fill: -tm-text;
-    -fx-border-color: transparent;
+    -fx-border-color: -tm-border;
+    -fx-border-width: 1;
     -fx-font-weight: 700;
-    -fx-padding: 11 12 11 12;
+    -fx-padding: 8 14 8 14;
 }
 
 .main-nav-btn:hover {
@@ -271,6 +411,46 @@
 
 .module-tabs > .tab-content-area {
     -fx-background-color: transparent;
+}
+
+.project-workspace-tabs {
+    -fx-background-color: transparent;
+    -fx-tab-min-height: 34;
+}
+
+.project-workspace-tabs > .tab-header-area {
+    -fx-padding: 8 10 0 10;
+}
+
+.project-workspace-tabs > .tab-header-area .tab-header-background {
+    -fx-background-color: transparent;
+}
+
+.project-workspace-tabs > .tab-header-area .headers-region .tab {
+    -fx-background-color: -tm-bg-soft;
+    -fx-background-radius: 10 10 0 0;
+    -fx-border-color: -tm-border;
+    -fx-border-radius: 10 10 0 0;
+    -fx-padding: 6 14 6 14;
+}
+
+.project-workspace-tabs > .tab-header-area .headers-region .tab .tab-label {
+    -fx-text-fill: -tm-text;
+    -fx-font-weight: 700;
+}
+
+.project-workspace-tabs > .tab-header-area .headers-region .tab:selected {
+    -fx-background-color: linear-gradient(to right, -tm-accent-a, -tm-accent-c);
+    -fx-border-color: -tm-accent-c;
+}
+
+.project-workspace-tabs > .tab-header-area .headers-region .tab:selected .tab-label {
+    -fx-text-fill: -tm-accent-on;
+}
+
+.project-workspace-tabs > .tab-content-area {
+    -fx-background-color: transparent;
+    -fx-border-color: transparent;
 }
 
 .scroll-pane {
@@ -499,6 +679,17 @@
     -fx-background-color: -tm-text-muted;
 }
 
+.readonly-preview-field {
+    -fx-background-color: derive(-tm-bg-soft, 6%);
+    -fx-border-color: -tm-border;
+    -fx-text-fill: -tm-text;
+    -fx-prompt-text-fill: -tm-text-muted;
+}
+
+.readonly-preview-field:focused {
+    -fx-border-color: -tm-border-strong;
+}
+
 .check-box {
     -fx-text-fill: -tm-text;
 }
@@ -515,8 +706,22 @@
 .text-area {
     -fx-background-radius: 10;
     -fx-border-radius: 10;
+    -fx-control-inner-background: -tm-bg-soft;
+    -fx-text-fill: -tm-text;
+    -fx-prompt-text-fill: -tm-text-muted;
+    -fx-highlight-fill: -tm-accent-c;
+    -fx-highlight-text-fill: -tm-accent-on;
+    -fx-border-color: -tm-border-strong;
     -fx-font-family: "JetBrains Mono", "Cascadia Mono", "Consolas", monospace;
     -fx-font-size: 12px;
+}
+
+.text-area .content {
+    -fx-background-color: -tm-bg-soft;
+}
+
+.text-area .text {
+    -fx-fill: -tm-text;
 }
 
 .runtime-log-area {
@@ -534,6 +739,24 @@
 
 .runtime-log-area .text {
     -fx-fill: -tm-log-text;
+}
+
+.job-progress-window .job-progress-activities-area {
+    -fx-background-color: -tm-bg-soft;
+    -fx-control-inner-background: -tm-bg-soft;
+    -fx-text-fill: -tm-text;
+    -fx-prompt-text-fill: -tm-text-muted;
+    -fx-highlight-fill: -tm-accent-c;
+    -fx-highlight-text-fill: -tm-accent-on;
+    -fx-border-color: -tm-border-strong;
+}
+
+.job-progress-window .job-progress-activities-area .content {
+    -fx-background-color: -tm-bg-soft;
+}
+
+.job-progress-window .job-progress-activities-area .text {
+    -fx-fill: -tm-text;
 }
 
 #filteredLogArea,

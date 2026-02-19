@@ -4,10 +4,19 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.transcribemate.v2.fx.modules.core.AbstractModuleComponent;
 import com.transcribemate.v2.fx.modules.core.ModuleFlowSpec;
 import com.transcribemate.v2.fx.modules.core.ModuleUiSchemaSpec;
+import com.transcribemate.v2.fx.wizard.ModuleWizardSpec;
+import com.transcribemate.v2.fx.wizard.ModuleWizardStepSpec;
 
+import java.util.List;
 import java.util.Set;
 
+/**
+ * Frontend module definition for YouTube dubbing workflows.
+ */
 public class YoutubeDubModuleComponent extends AbstractModuleComponent {
+    /**
+     * Registers module identity, flow guidance and schema selection.
+     */
     public YoutubeDubModuleComponent() {
         super(
                 "youtube_dub",
@@ -50,6 +59,7 @@ public class YoutubeDubModuleComponent extends AbstractModuleComponent {
 
     @Override
     public void applyDefaults(ModuleUiContext ui) {
+        // Dubbing module enforces translated output and a default target language pair.
         ui.selectSourceMode("youtube");
         ui.selectOutputMode("video_dub");
         ui.setDiarizationEnabled(false);
@@ -59,6 +69,7 @@ public class YoutubeDubModuleComponent extends AbstractModuleComponent {
 
     @Override
     public void enforceConstraints(ModuleUiContext ui, boolean keepCurrentTab) {
+        // Preserve hard module constraints when users switch from other modules.
         ui.selectSourceMode("youtube");
         ui.selectOutputMode("video_dub");
         ui.setDiarizationEnabled(false);
@@ -75,9 +86,25 @@ public class YoutubeDubModuleComponent extends AbstractModuleComponent {
             ObjectNode translation,
             ObjectNode diarization
     ) {
+        // Normalize payload to match YouTube dubbing backend expectations.
         source.put("mode", "youtube");
         output.put("mode", "video_dub");
         translation.put("enabled", true);
         diarization.put("enabled", false);
+    }
+
+    @Override
+    public ModuleWizardSpec wizardSpec() {
+        // Wizard includes dedicated dubbing settings step before final start.
+        return new ModuleWizardSpec(
+                id(),
+                "YouTube Dub Wizard",
+                List.of(
+                        new ModuleWizardStepSpec("import_youtube", "YouTube source", "Enter YouTube URL, quality and playlist mode.", "import_youtube"),
+                        new ModuleWizardStepSpec("dub", "Dub settings", "Configure target language and dubbing preferences.", "configure_dub"),
+                        new ModuleWizardStepSpec("output", "Output options", "Set output prefix and related output options.", "configure_output"),
+                        new ModuleWizardStepSpec("preflight_start", "Preflight and start", "Run preflight gate and confirm job start.", "preflight_start")
+                )
+        );
     }
 }

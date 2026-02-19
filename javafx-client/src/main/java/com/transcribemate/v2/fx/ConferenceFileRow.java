@@ -3,12 +3,21 @@ package com.transcribemate.v2.fx;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 
+/**
+ * JavaFX table row model for conference file metadata.
+ *
+ * Values are normalized to non-null strings to keep in-table editing simple and
+ * avoid null handling in cell factories.
+ */
 public final class ConferenceFileRow {
     private final StringProperty filePath = new SimpleStringProperty("");
     private final StringProperty speaker = new SimpleStringProperty("");
     private final StringProperty description = new SimpleStringProperty("");
     private final StringProperty lectureDate = new SimpleStringProperty("");
 
+    /**
+     * Creates one editable conference metadata row.
+     */
     public ConferenceFileRow(String filePath, String speaker, String description, String lectureDate) {
         this.filePath.set(filePath == null ? "" : filePath);
         this.speaker.set(speaker == null ? "" : speaker);
