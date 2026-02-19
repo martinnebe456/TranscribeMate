@@ -4,10 +4,19 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.transcribemate.v2.fx.modules.core.AbstractModuleComponent;
 import com.transcribemate.v2.fx.modules.core.ModuleFlowSpec;
 import com.transcribemate.v2.fx.modules.core.ModuleUiSchemaSpec;
+import com.transcribemate.v2.fx.wizard.ModuleWizardSpec;
+import com.transcribemate.v2.fx.wizard.ModuleWizardStepSpec;
 
+import java.util.List;
 import java.util.Set;
 
+/**
+ * Frontend module definition for transcript extraction from YouTube sources.
+ */
 public class YoutubeTranscriptModuleComponent extends AbstractModuleComponent {
+    /**
+     * Registers module identity, flow card text and schema visibility.
+     */
     public YoutubeTranscriptModuleComponent() {
         super(
                 "youtube_transcribe",
@@ -53,6 +62,7 @@ public class YoutubeTranscriptModuleComponent extends AbstractModuleComponent {
 
     @Override
     public void applyDefaults(ModuleUiContext ui) {
+        // YouTube transcript mode keeps originals and disables diarization by default.
         ui.selectSourceMode("youtube");
         ui.selectOutputMode("txt_only");
         ui.setDiarizationEnabled(false);
@@ -61,6 +71,7 @@ public class YoutubeTranscriptModuleComponent extends AbstractModuleComponent {
 
     @Override
     public void enforceConstraints(ModuleUiContext ui, boolean keepCurrentTab) {
+        // Keep module-required source/output selection fixed.
         ui.selectSourceMode("youtube");
         ui.selectOutputMode("txt_only");
         ui.setDiarizationEnabled(false);
@@ -76,9 +87,25 @@ public class YoutubeTranscriptModuleComponent extends AbstractModuleComponent {
             ObjectNode translation,
             ObjectNode diarization
     ) {
+        // Final payload normalization for backend contract.
         source.put("mode", "youtube");
         output.put("mode", "txt_only");
         translation.put("enabled", false);
         diarization.put("enabled", false);
+    }
+
+    @Override
+    public ModuleWizardSpec wizardSpec() {
+        // Guided wizard focuses on YouTube import, transcription tuning and start gate.
+        return new ModuleWizardSpec(
+                id(),
+                "YouTube Transcript Wizard",
+                List.of(
+                        new ModuleWizardStepSpec("import_youtube", "YouTube source", "Enter YouTube URL, quality and playlist mode.", "import_youtube"),
+                        new ModuleWizardStepSpec("transcription", "Transcription settings", "Set model and language defaults for this run.", "configure_transcription"),
+                        new ModuleWizardStepSpec("output", "Output options", "Set output prefix and related output options.", "configure_output"),
+                        new ModuleWizardStepSpec("preflight_start", "Preflight and start", "Run preflight gate and confirm job start.", "preflight_start")
+                )
+        );
     }
 }

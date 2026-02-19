@@ -14,7 +14,13 @@ import java.util.Map;
 import java.util.Set;
 import java.util.Collections;
 
+/**
+ * Central registry of frontend module components.
+ *
+ * Registry preserves explicit module ordering used by selectors and navigation.
+ */
 public final class ModuleRegistry {
+    // Ordered list drives UI module order consistently across views.
     private static final List<ModuleComponent> ORDERED_COMPONENTS = List.of(
             new OfflineTranscribeModuleComponent(),
             new YoutubeTranscriptModuleComponent(),
@@ -24,6 +30,7 @@ public final class ModuleRegistry {
             new YoutubeDubModuleComponent()
     );
 
+    // Immutable lookup maps exposed to callers.
     private static final Map<String, ModuleComponent> BY_ID;
     private static final Map<String, String> LABEL_TO_ID;
 
@@ -41,6 +48,9 @@ public final class ModuleRegistry {
     private ModuleRegistry() {
     }
 
+    /**
+     * Returns supported module ids in configured insertion order.
+     */
     public static Set<String> supportedModuleIds() {
         return BY_ID.keySet();
     }
@@ -57,6 +67,9 @@ public final class ModuleRegistry {
         return LABEL_TO_ID;
     }
 
+    /**
+     * Resolves module by id with offline module as defensive fallback.
+     */
     public static ModuleComponent get(String moduleId) {
         ModuleComponent component = BY_ID.get(moduleId);
         if (component != null) {

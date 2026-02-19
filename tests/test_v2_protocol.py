@@ -1,9 +1,12 @@
+"""Protocol-level validation tests for JSON-line request/response helpers."""
+
 import pytest
 
 from transcribemate.v2.backend.protocol import ProtocolError, ResponseMessage, RpcError, parse_request_line
 
 
 def test_parse_request_line_ok():
+    """Valid request line should parse id/method/params fields."""
     msg = parse_request_line('{"type":"request","id":"1","method":"ping","params":{}}')
     assert msg.request_id == "1"
     assert msg.method == "ping"
@@ -11,11 +14,13 @@ def test_parse_request_line_ok():
 
 
 def test_parse_request_line_rejects_non_request():
+    """Non-request payloads must be rejected by request parser."""
     with pytest.raises(ProtocolError):
         parse_request_line('{"type":"event","event":"x"}')
 
 
 def test_parse_request_line_requires_id_and_method():
+    """Request parser requires both request id and method."""
     with pytest.raises(ProtocolError):
         parse_request_line('{"type":"request","method":"ping"}')
     with pytest.raises(ProtocolError):
@@ -23,6 +28,7 @@ def test_parse_request_line_requires_id_and_method():
 
 
 def test_response_message_error_payload():
+    """Error responses should serialize structured error payload fields."""
     resp = ResponseMessage(
         request_id="abc",
         ok=False,

@@ -22,6 +22,10 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.StringJoiner;
 
+/**
+ * Detached monitoring window polling backend metrics and rendering short rolling
+ * CPU/RAM/GPU/VRAM trends plus GPU diagnostics.
+ */
 public final class SystemMonitorWindow {
     private static final int MAX_POINTS = 120;
     private static final DecimalFormat DF = new DecimalFormat("0.0");
@@ -52,6 +56,9 @@ public final class SystemMonitorWindow {
     private final Timeline pollingTimeline;
     private int tick = 0;
 
+    /**
+     * Builds monitor UI and polling timer. Actual polling starts in {@link #show()}.
+     */
     public SystemMonitorWindow(BackendClient backendClient) {
         this.backendClient = backendClient;
         this.stage = new Stage();
@@ -113,6 +120,9 @@ public final class SystemMonitorWindow {
         stage.setOnHidden(event -> pollingTimeline.stop());
     }
 
+    /**
+     * Applies one of known app theme classes to this window root.
+     */
     public void applyThemeClass(String themeClass) {
         root.getStyleClass().removeAll("theme-light", "theme-dark", "theme-dracula");
         if (themeClass != null && !themeClass.isBlank()) {
@@ -122,6 +132,9 @@ public final class SystemMonitorWindow {
         }
     }
 
+    /**
+     * Shows window and ensures polling loop is active.
+     */
     public void show() {
         stage.show();
         stage.toFront();
@@ -131,11 +144,17 @@ public final class SystemMonitorWindow {
         }
     }
 
+    /**
+     * Stops polling and hides window.
+     */
     public void close() {
         pollingTimeline.stop();
         stage.hide();
     }
 
+    /**
+     * Requests latest system metrics from backend and routes update to FX thread.
+     */
     private void pollMetrics() {
         if (backendClient == null) {
             return;
@@ -149,6 +168,9 @@ public final class SystemMonitorWindow {
                 });
     }
 
+    /**
+     * Applies one metrics snapshot to charts and labels.
+     */
     private void updateMetrics(JsonNode metrics) {
         double cpu = optionalDouble(metrics.path("cpu_percent"));
         double ram = optionalDouble(metrics.path("ram_percent"));
@@ -220,6 +242,9 @@ public final class SystemMonitorWindow {
         updatedLabel.setText("Updated: " + LocalDateTime.now().format(TS_FMT));
     }
 
+    /**
+     * Appends a point to bounded history series (max {@link #MAX_POINTS} samples).
+     */
     private static void addPoint(XYChart.Series<Number, Number> series, int x, double value) {
         double safeValue = Double.isNaN(value) ? 0.0 : Math.max(0.0, Math.min(100.0, value));
         series.getData().add(new XYChart.Data<>(x, safeValue));
@@ -243,6 +268,9 @@ public final class SystemMonitorWindow {
         return Double.isNaN(value) ? "n/a" : DF.format(value) + suffix;
     }
 
+    /**
+     * Formats active GPU process summaries for quick triage.
+     */
     private static String formatGpuApps(JsonNode appsNode) {
         if (appsNode == null || !appsNode.isArray() || appsNode.isEmpty()) {
             return "GPU Apps: none";
@@ -278,6 +306,9 @@ public final class SystemMonitorWindow {
         return joiner.toString();
     }
 
+    /**
+     * Computes percentage of total VRAM currently consumed by compute processes.
+     */
     private static double computeAppsVramPercent(JsonNode appsNode, double vramTotalGb) {
         if (appsNode == null || !appsNode.isArray() || appsNode.isEmpty() || Double.isNaN(vramTotalGb) || vramTotalGb <= 0.0) {
             return Double.NaN;

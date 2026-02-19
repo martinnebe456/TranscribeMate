@@ -3,18 +3,30 @@ package com.transcribemate.v2.fx;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.StringProperty;
 
+/**
+ * JavaFX table row model for one workspace project.
+ *
+ * The row intentionally stores only StringProperty values to keep table bindings
+ * straightforward and editable without additional converters.
+ */
 public final class ProjectRow {
+    // Keep properties always non-null so cell rendering/editing can rely on empty-string fallback.
     private final StringProperty projectId = new SimpleStringProperty("");
     private final StringProperty projectName = new SimpleStringProperty("");
     private final StringProperty status = new SimpleStringProperty("");
     private final StringProperty updated = new SimpleStringProperty("");
+    private final StringProperty size = new SimpleStringProperty("");
     private final StringProperty path = new SimpleStringProperty("");
 
-    public ProjectRow(String projectId, String projectName, String status, String updated, String path) {
+    /**
+     * Creates a project row and normalizes null inputs to empty strings.
+     */
+    public ProjectRow(String projectId, String projectName, String status, String updated, String size, String path) {
         this.projectId.set(projectId == null ? "" : projectId);
         this.projectName.set(projectName == null ? "" : projectName);
         this.status.set(status == null ? "" : status);
         this.updated.set(updated == null ? "" : updated);
+        this.size.set(size == null ? "" : size);
         this.path.set(path == null ? "" : path);
     }
 
@@ -76,5 +88,17 @@ public final class ProjectRow {
 
     public StringProperty pathProperty() {
         return path;
+    }
+
+    public String getSize() {
+        return size.get();
+    }
+
+    public void setSize(String value) {
+        size.set(value == null ? "" : value);
+    }
+
+    public StringProperty sizeProperty() {
+        return size;
     }
 }
