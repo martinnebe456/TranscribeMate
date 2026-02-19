@@ -10,7 +10,6 @@ from typing import Callable
 
 from ...core.files import (
     cleanup_workdir,
-    copy_originals_to_final,
     is_audio_file,
     list_videos,
     sanitize_filename,
@@ -89,30 +88,16 @@ class PipelineOrchestrator:
         out_root = Path(self.request.output.out_dir).expanduser().resolve()
         out_root.mkdir(parents=True, exist_ok=True)
 
-        module_bucket = sanitize_filename(self.request.module or "offline_transcribe").lower() or "offline_transcribe"
-        final_base_dir = out_root / "transcribemate_outputs" / module_bucket
-        transcripts_dir = final_base_dir / "transcripts"
-        subtitles_src_final_dir = final_base_dir / "subtitles_source"
-        subtitles_trans_final_dir = final_base_dir / "subtitles_translated"
-        videos_final_dir = final_base_dir / "videos"
-        originals_dir = final_base_dir / "originals"
-        summaries_dir = final_base_dir / "summaries"
-
-        output_dirs = [
-            transcripts_dir,
-            subtitles_src_final_dir,
-            subtitles_trans_final_dir,
-            videos_final_dir,
-            originals_dir,
-        ]
-        if self.request.text_export.summary_pack:
-            output_dirs.append(summaries_dir)
-
-        for directory in output_dirs:
-            directory.mkdir(parents=True, exist_ok=True)
+        # Project-first layout: all generated artifacts go directly into output root.
+        final_base_dir = out_root
+        transcripts_dir = final_base_dir
+        subtitles_src_final_dir = final_base_dir
+        subtitles_trans_final_dir = final_base_dir
+        videos_final_dir = final_base_dir
+        summaries_dir = final_base_dir
+        final_base_dir.mkdir(parents=True, exist_ok=True)
 
         workdir: Path | None = None
-        downloaded_files: list[Path] = []
         completed = 0
 
         try:
@@ -126,7 +111,7 @@ class PipelineOrchestrator:
             self._log(f"[INFO] Workdir: {workdir}")
             self._log(f"[INFO] Outputs: {final_base_dir}")
 
-            videos, downloaded_files = self._collect_inputs(downloads_dir)
+            videos, _ = self._collect_inputs(downloads_dir)
             self._total_items = len(videos)
             if self._total_items == 0:
                 raise RuntimeError("No media files were found.")
@@ -517,10 +502,6 @@ class PipelineOrchestrator:
                 completed += 1
                 self._emit_progress(step="item_done", step_pct=100.0, indeterminate=False)
 
-            if self.request.source.mode == "youtube" and self.request.output.keep_originals:
-                self._set_step("copy_originals")
-                copy_originals_to_final(downloaded_files, originals_dir, self._log_legacy)
-
             self._set_step("done")
             self._emit_progress(step="done", step_pct=100.0, indeterminate=False)
 
@@ -551,7 +532,23 @@ class PipelineOrchestrator:
             )
             videos = list_videos(out_dir)
             self._log(f"[INFO] Downloaded media files: {len(videos)}")
-            return videos, list(videos)
+
+            project_input_raw = str(self.request.project.input_dir or "").strip()
+            if not project_input_raw:
+                return videos, list(videos)
+
+            project_input_dir = Path(project_input_raw).expanduser().resolve()
+            project_input_dir.mkdir(parents=True, exist_ok=True)
+            persisted: list[Path] = []
+            for source in videos:
+                target = unique_path(project_input_dir, source.name)
+                shutil.copy2(source, target)
+                persisted.append(target)
+            self._log(
+                "[INFO] Downloaded media persisted into project input: "
+                f"{project_input_dir} ({len(persisted)} file(s))"
+            )
+            return persisted, list(persisted)
 
         if self.request.source.files:
             videos = [Path(path).expanduser() for path in self.request.source.files]

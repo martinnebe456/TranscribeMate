@@ -27,6 +27,12 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
+/*
+BackendClient is responsible for managing the lifecycle and communication with the backend server process. 
+It starts the backend, sends requests, receives responses and events, and handles shutdown. 
+Communication is done via JSON messages over the backend's standard input and output streams. 
+The client also provides a simple event listener mechanism for handling asynchronous events from the backend.
+*/
 public final class BackendClient implements AutoCloseable {
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
@@ -39,6 +45,7 @@ public final class BackendClient implements AutoCloseable {
     private Process process;
     private BufferedWriter stdin;
     private ExecutorService ioExecutor;
+    private volatile boolean closing;
 
     private BackendClient(List<String> command, String workDir) {
         this.command = command;
@@ -129,8 +136,8 @@ public final class BackendClient implements AutoCloseable {
             candidates.add(Paths.get(userHome, "AppData", "Local", "TranscribeMate", "runtime", "python", "python.exe"));
             candidates.add(Paths.get(userHome, "AppData", "Local", "TranscribeMate", "runtime", "venv", "Scripts", "python.exe"));
             // Linux/macOS fallback.
-            candidates.add(Paths.get(userHome, ".local", "share", "TranscribeMate", "runtime", "python", "bin", "python"));
-            candidates.add(Paths.get(userHome, ".local", "share", "TranscribeMate", "runtime", "venv", "bin", "python"));
+            //candidates.add(Paths.get(userHome, ".local", "share", "TranscribeMate", "runtime", "python", "bin", "python"));
+            //candidates.add(Paths.get(userHome, ".local", "share", "TranscribeMate", "runtime", "venv", "bin", "python"));
         }
 
         for (Path candidate : candidates) {
@@ -328,15 +335,23 @@ public final class BackendClient implements AutoCloseable {
     }
 
     private void failPending(String reason) {
-        AppFileLogger.log("WARN", "backend.client", reason);
+        String safeReason = reason == null ? "Backend request channel closed." : reason;
+        if (closing) {
+            AppFileLogger.log("INFO", "backend.client", safeReason);
+            pending.clear();
+            return;
+        }
+
+        AppFileLogger.log("WARN", "backend.client", safeReason);
         for (Map.Entry<String, CompletableFuture<JsonNode>> entry : pending.entrySet()) {
-            entry.getValue().completeExceptionally(new IllegalStateException(reason));
+            entry.getValue().completeExceptionally(new IllegalStateException(safeReason));
         }
         pending.clear();
     }
 
     @Override
     public void close() {
+        closing = true;
         try {
             if (process != null && process.isAlive()) {
                 try {

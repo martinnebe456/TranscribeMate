@@ -4,7 +4,10 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.transcribemate.v2.fx.modules.core.AbstractModuleComponent;
 import com.transcribemate.v2.fx.modules.core.ModuleFlowSpec;
 import com.transcribemate.v2.fx.modules.core.ModuleUiSchemaSpec;
+import com.transcribemate.v2.fx.wizard.ModuleWizardSpec;
+import com.transcribemate.v2.fx.wizard.ModuleWizardStepSpec;
 
+import java.util.List;
 import java.util.Set;
 
 public class YoutubeSubtitlesModuleComponent extends AbstractModuleComponent {
@@ -82,5 +85,19 @@ public class YoutubeSubtitlesModuleComponent extends AbstractModuleComponent {
         if (translation != null) {
             // Translation remains user-controlled for subtitle rendering module.
         }
+    }
+
+    @Override
+    public ModuleWizardSpec wizardSpec() {
+        return new ModuleWizardSpec(
+                id(),
+                "YouTube Subtitles Wizard",
+                List.of(
+                        new ModuleWizardStepSpec("import_youtube", "YouTube source", "Enter YouTube URL, quality and playlist mode.", "import_youtube"),
+                        new ModuleWizardStepSpec("subtitles", "Subtitle settings", "Configure subtitle mode, translation and target language.", "configure_subtitles"),
+                        new ModuleWizardStepSpec("output", "Output options", "Set output prefix and related output options.", "configure_output"),
+                        new ModuleWizardStepSpec("preflight_start", "Preflight and start", "Run preflight gate and confirm job start.", "preflight_start")
+                )
+        );
     }
 }
