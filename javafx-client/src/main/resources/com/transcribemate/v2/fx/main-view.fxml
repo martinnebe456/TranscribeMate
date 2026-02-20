@@ -236,6 +236,7 @@ The controller for this view is specified as MainController, which will handle t
                       <Button fx:id="filesImportButton" text="Import to input" onAction="#onImportFilesToProject" styleClass="accent-btn"/>
                       <Button fx:id="filesRefreshButton" text="Refresh" onAction="#onRefreshProjectFiles"/>
                       <Button fx:id="filesOpenSelectedButton" text="Open selected" onAction="#onOpenSelectedProjectFile"/>
+                      <Button fx:id="filesAiSummaryButton" text="AI Summary..." onAction="#onFilesAiSummary"/>
                       <Button fx:id="filesOpenProjectFolderButton" text="Open project folder" onAction="#onOpenProjectFolder"/>
                       <Button fx:id="filesSaveEditorButton" text="Save editor" onAction="#onSaveProjectFileEditor"/>
                       <Button fx:id="filesHistoryButton" text="Open history" onAction="#onOpenEditedFileHistory"/>
@@ -249,7 +250,19 @@ The controller for this view is specified as MainController, which will handle t
                     </children>
                   </HBox>
                   <Label fx:id="filesDropHintLabel" text="Tip: drag and drop files/folders here to import into project input." styleClass="small-label"/>
-                  <TableView fx:id="projectFilesTable" prefHeight="250.0">
+                  <ScrollPane fitToWidth="true" prefViewportHeight="280.0" styleClass="project-gallery-scroll">
+                    <content>
+                      <VBox fx:id="filesGalleryHost" spacing="8.0">
+                        <children>
+                          <Label text="Input" styleClass="small-label"/>
+                          <FlowPane fx:id="filesInputGalleryBox" hgap="10.0" vgap="10.0"/>
+                          <Label text="Output" styleClass="small-label"/>
+                          <FlowPane fx:id="filesOutputGalleryBox" hgap="10.0" vgap="10.0"/>
+                        </children>
+                      </VBox>
+                    </content>
+                  </ScrollPane>
+                  <TableView fx:id="projectFilesTable" prefHeight="0.0" visible="false" managed="false">
                     <columns>
                       <TableColumn fx:id="projectFileRelativePathColumn" text="Path" prefWidth="520.0"/>
                       <TableColumn fx:id="projectFileTypeColumn" text="Type" prefWidth="90.0"/>
@@ -257,7 +270,7 @@ The controller for this view is specified as MainController, which will handle t
                       <TableColumn fx:id="projectFileModifiedColumn" text="Modified" prefWidth="170.0"/>
                     </columns>
                   </TableView>
-                  <Label fx:id="fileEditorStatusLabel" text="Preview/editor: select a text file (.txt/.srt/.json/.md) from the table." styleClass="small-label"/>
+                  <Label fx:id="fileEditorStatusLabel" text="Preview/editor: select a text file (.txt/.srt/.json/.md) from the gallery." styleClass="small-label"/>
                   <SplitPane dividerPositions="0.62" VBox.vgrow="ALWAYS">
                     <items>
                       <TextArea fx:id="projectFileEditorArea" prefRowCount="14" wrapText="false"/>
@@ -792,14 +805,20 @@ The controller for this view is specified as MainController, which will handle t
                           <Label fx:id="settingsSummaryLangLabel" text="Summary language" GridPane.rowIndex="2" GridPane.columnIndex="0"/>
                           <ComboBox fx:id="summaryLangBox" GridPane.rowIndex="2" GridPane.columnIndex="1" prefWidth="220.0"/>
 
-                          <Label fx:id="settingsTargetLangLabel" text="Translation target" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
-                          <ComboBox fx:id="targetLangBox" GridPane.rowIndex="3" GridPane.columnIndex="1" prefWidth="220.0"/>
+                          <Label fx:id="settingsSummaryAiLabel" text="AI summary" GridPane.rowIndex="3" GridPane.columnIndex="0"/>
+                          <CheckBox fx:id="summaryAiBox" text="Generate AI summary for transcript TXT outputs" GridPane.rowIndex="3" GridPane.columnIndex="1" GridPane.columnSpan="2"/>
 
-                          <Label fx:id="settingsBatchSizeLabel" text="Batch size" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
-                          <Spinner fx:id="batchSizeSpinner" GridPane.rowIndex="4" GridPane.columnIndex="1" prefWidth="120.0" editable="true"/>
+                          <Label fx:id="settingsSummaryModelTierLabel" text="AI summary model tier" GridPane.rowIndex="4" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="summaryModelTierBox" GridPane.rowIndex="4" GridPane.columnIndex="1" prefWidth="220.0"/>
 
-                          <Label fx:id="settingsTextOptionsLabel" text="Text options" GridPane.rowIndex="5" GridPane.columnIndex="0"/>
-                          <HBox fx:id="settingsTextOptionsBox" spacing="10.0" GridPane.rowIndex="5" GridPane.columnIndex="1" GridPane.columnSpan="2">
+                          <Label fx:id="settingsTargetLangLabel" text="Translation target" GridPane.rowIndex="5" GridPane.columnIndex="0"/>
+                          <ComboBox fx:id="targetLangBox" GridPane.rowIndex="5" GridPane.columnIndex="1" prefWidth="220.0"/>
+
+                          <Label fx:id="settingsBatchSizeLabel" text="Batch size" GridPane.rowIndex="6" GridPane.columnIndex="0"/>
+                          <Spinner fx:id="batchSizeSpinner" GridPane.rowIndex="6" GridPane.columnIndex="1" prefWidth="120.0" editable="true"/>
+
+                          <Label fx:id="settingsTextOptionsLabel" text="Text options" GridPane.rowIndex="7" GridPane.columnIndex="0"/>
+                          <HBox fx:id="settingsTextOptionsBox" spacing="10.0" GridPane.rowIndex="7" GridPane.columnIndex="1" GridPane.columnSpan="2">
                             <children>
                               <CheckBox fx:id="cleanTextBox" text="Clean text"/>
                               <CheckBox fx:id="exportMdBox" text="Markdown"/>
@@ -808,8 +827,8 @@ The controller for this view is specified as MainController, which will handle t
                             </children>
                           </HBox>
 
-                          <Label fx:id="settingsSplitMinutesLabel" text="Split minutes" GridPane.rowIndex="6" GridPane.columnIndex="0"/>
-                          <Spinner fx:id="splitMinutesSpinner" GridPane.rowIndex="6" GridPane.columnIndex="1" prefWidth="120.0" editable="true"/>
+                          <Label fx:id="settingsSplitMinutesLabel" text="Split minutes" GridPane.rowIndex="8" GridPane.columnIndex="0"/>
+                          <Spinner fx:id="splitMinutesSpinner" GridPane.rowIndex="8" GridPane.columnIndex="1" prefWidth="120.0" editable="true"/>
                         </GridPane>
                         <Label fx:id="settingsSpeakerModuleHintLabel" text="Speaker Transcript uses diarization settings in the Diarization tab. Unrelated options are hidden here." wrapText="true" styleClass="small-label" managed="false" visible="false"/>
                       </VBox>

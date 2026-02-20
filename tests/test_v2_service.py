@@ -55,11 +55,13 @@ def test_service_ping_and_capabilities():
     assert "run_pipeline" in caps["methods"]
     assert "refresh_model_cache" in caps["methods"]
     assert "preflight_check" in caps["methods"]
+    assert "summarize_transcript" in caps["methods"]
     assert "get_system_metrics" in caps["methods"]
     assert "offline_transcribe" in caps["modules"]
     assert "youtube_dub" in caps["modules"]
     assert "local_cluster_fast" in caps["diarization_backends"]
     assert "local_cluster_accurate" in caps["diarization_backends"]
+    assert caps["summary_ai_tiers"] == ["low", "medium", "high"]
     assert "user_data_dir" in paths
     assert "python_executable" in health
     assert "nvidia_driver_model" in health
@@ -102,6 +104,27 @@ def test_preflight_requires_torch_for_translation_modes(monkeypatch):
 
     svc = BackendService(emit_event=lambda _: None)
     result = svc.handle_request("preflight_check", _payload(output_mode="srt_only"))
+
+    assert result["ok"] is False
+    torch_checks = [item for item in result["checks"] if item["name"] == "torch"]
+    assert torch_checks
+    assert torch_checks[-1]["status"] == "fail"
+
+
+def test_preflight_requires_torch_for_ai_summary(monkeypatch):
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "torch":
+            raise ModuleNotFoundError("No module named 'torch'")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    payload = _payload(output_mode="txt_only")
+    payload["text"] = {"summary_ai_enabled": True, "summary_ai_tier": "medium"}
+    svc = BackendService(emit_event=lambda _: None)
+    result = svc.handle_request("preflight_check", payload)
 
     assert result["ok"] is False
     torch_checks = [item for item in result["checks"] if item["name"] == "torch"]
@@ -195,6 +218,122 @@ def test_apply_speaker_mapping_updates_sidecar_and_transcripts(tmp_path):
     assert md_path.is_file()
     assert "Karel: Hello" in txt_path.read_text(encoding="utf-8")
     assert "Marketa: World" in txt_path.read_text(encoding="utf-8")
+
+
+def test_summarize_transcript_emits_summary_events(tmp_path, monkeypatch):
+    events = []
+    svc = BackendService(emit_event=lambda event: events.append(event))
+
+    project_root = tmp_path / "project"
+    output_dir = project_root / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    transcript = output_dir / "meeting.txt"
+    transcript.write_text("Hello world", encoding="utf-8")
+
+    def fake_summarize_transcript_file(**kwargs):
+        progress = kwargs.get("progress")
+        log = kwargs.get("log")
+        if progress is not None:
+            progress("prepare", 20.0, 20.0, False)
+            progress("synthesize", 80.0, 80.0, False)
+        if log is not None:
+            log("[INFO] fake summary log")
+        output_path = kwargs["output_dir"] / "meeting.summary.cs.md"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("## TL;DR\n\n- Done", encoding="utf-8")
+        if progress is not None:
+            progress("done", 100.0, 100.0, False)
+        return output_path
+
+    monkeypatch.setattr(
+        "transcribemate.v2.backend.service.summarize_transcript_file",
+        fake_summarize_transcript_file,
+    )
+
+    result = svc.handle_request(
+        "summarize_transcript",
+        {
+            "operation_id": "op-001",
+            "transcript_path": str(transcript),
+            "summary_lang": "cs",
+            "summary_ai_tier": "low",
+            "project": {
+                "project_id": "project-001",
+                "name": "Project 001",
+                "root_dir": str(project_root),
+            },
+        },
+    )
+
+    assert result["status"] == "completed"
+    assert result["operation_id"] == "op-001"
+    assert Path(result["output_path"]).is_file()
+    event_names = [event.event for event in events]
+    assert "summary.started" in event_names
+    assert "summary.progress" in event_names
+    assert "summary.log" in event_names
+    assert "summary.completed" in event_names
+
+
+def test_summarize_transcript_validates_path_extension_and_active_job(tmp_path):
+    svc = BackendService(emit_event=lambda _: None)
+    project_root = tmp_path / "project"
+    output_dir = project_root / "output"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    valid_txt = output_dir / "valid.txt"
+    valid_txt.write_text("hello", encoding="utf-8")
+    invalid_ext = output_dir / "invalid.md"
+    invalid_ext.write_text("hello", encoding="utf-8")
+    outside_path = project_root / "input" / "outside.txt"
+    outside_path.parent.mkdir(parents=True, exist_ok=True)
+    outside_path.write_text("hello", encoding="utf-8")
+
+    base_params = {
+        "operation_id": "op-validate",
+        "summary_lang": "auto",
+        "summary_ai_tier": "medium",
+        "project": {
+            "project_id": "project-001",
+            "name": "Project 001",
+            "root_dir": str(project_root),
+        },
+    }
+
+    with pytest.raises(RequestValidationError):
+        svc.handle_request(
+            "summarize_transcript",
+            {
+                **base_params,
+                "transcript_path": str(invalid_ext),
+            },
+        )
+
+    with pytest.raises(RequestValidationError):
+        svc.handle_request(
+            "summarize_transcript",
+            {
+                **base_params,
+                "transcript_path": str(outside_path),
+            },
+        )
+
+    active_request = PipelineRequest.from_payload(_payload(output_mode="txt_only"))
+    svc._jobs["active"] = JobRecord(
+        job_id="active",
+        request=active_request,
+        created_at="2026-02-17T10:00:00+00:00",
+        status="running",
+    )
+    with pytest.raises(RequestValidationError) as exc:
+        svc.handle_request(
+            "summarize_transcript",
+            {
+                **base_params,
+                "transcript_path": str(valid_txt),
+            },
+        )
+    assert exc.value.code == "job_limit_reached"
 
 
 def test_list_jobs_supports_module_filter():

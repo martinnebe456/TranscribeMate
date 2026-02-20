@@ -16,7 +16,7 @@ class OfflineTranscribeComponent(StaticModuleComponent):
                 source_mode="local",
                 output_mode="txt_only",
                 runtime_features=("local_media", "faster_whisper", "text_export"),
-                python_packages=("faster_whisper", "safetensors"),
+                python_packages=("faster_whisper", "safetensors", "transformers"),
                 ui_schema={
                     "show_tabs": ["run", "logs", "jobs", "settings"],
                     "show_sections": [
@@ -38,6 +38,8 @@ class OfflineTranscribeComponent(StaticModuleComponent):
                         "settings.model_options",
                         "settings.source_lang",
                         "settings.summary_lang",
+                        "settings.summary_ai",
+                        "settings.summary_model_tier",
                         "settings.batch_size",
                         "settings.text_options",
                         "settings.split_minutes",

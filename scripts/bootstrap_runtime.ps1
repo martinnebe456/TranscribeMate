@@ -110,6 +110,53 @@ function Update-InstallerProgress([int]$Percent, [string]$Message) {
     Write-Log "[$clampedPercent%] $Message"
 }
 
+function Convert-ToProcessArgument([object]$Value) {
+    if ($null -eq $Value) {
+        return '""'
+    }
+
+    $text = [string]$Value
+    if ([string]::IsNullOrEmpty($text)) {
+        return '""'
+    }
+    if ($text -notmatch '[\s"]') {
+        return $text
+    }
+
+    $builder = New-Object System.Text.StringBuilder
+    [void]$builder.Append('"')
+
+    $backslashCount = 0
+    foreach ($char in $text.ToCharArray()) {
+        if ($char -eq '\') {
+            $backslashCount++
+            continue
+        }
+
+        if ($char -eq '"') {
+            if ($backslashCount -gt 0) {
+                [void]$builder.Append(('\' * ($backslashCount * 2)))
+                $backslashCount = 0
+            }
+            [void]$builder.Append('\"')
+            continue
+        }
+
+        if ($backslashCount -gt 0) {
+            [void]$builder.Append(('\' * $backslashCount))
+            $backslashCount = 0
+        }
+        [void]$builder.Append($char)
+    }
+
+    if ($backslashCount -gt 0) {
+        [void]$builder.Append(('\' * ($backslashCount * 2)))
+    }
+
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
 function Invoke-RuntimePythonWithRetry(
     [string]$PythonExe,
     [string[]]$CommandArgs,
@@ -125,9 +172,15 @@ function Invoke-RuntimePythonWithRetry(
         $exitCode = -1
         $timedOut = $false
         try {
+            $quotedArgs = @()
+            foreach ($arg in $CommandArgs) {
+                $quotedArgs += (Convert-ToProcessArgument -Value $arg)
+            }
+            $argumentLine = ($quotedArgs -join " ")
+
             $proc = Start-Process `
                 -FilePath $PythonExe `
-                -ArgumentList $CommandArgs `
+                -ArgumentList $argumentLine `
                 -NoNewWindow `
                 -PassThru `
                 -RedirectStandardOutput $stdoutFile `
@@ -797,6 +850,9 @@ function Ensure-EmbeddedPythonRuntime([string]$RuntimeRoot) {
             "--no-warn-script-location"
         )
         [void](Invoke-RuntimePythonWithRetry -PythonExe $pythonExe -CommandArgs $pipBootstrapArgs -Description "pip bootstrap install" -Retries 2 -TimeoutSeconds 900)
+        if (-not (Test-PipAvailable -PythonExe $pythonExe)) {
+            throw "pip bootstrap finished but pip is still unavailable."
+        }
     }
     else {
         Write-Log "pip already present in embedded runtime."
