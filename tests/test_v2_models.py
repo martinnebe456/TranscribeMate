@@ -11,7 +11,15 @@ def _base_payload():
         "transcription": {"model": "large-v3", "auto_model": False, "prefer_gpu": False, "source_lang": "auto", "batch_size": 16},
         "translation": {"enabled": False, "target_lang": "en→cs"},
         "subtitles": {"mode": "soft", "font": "Arial", "size": 24, "color": "#fff", "outline_color": "#000", "outline_width": 2},
-        "text": {"clean_text": False, "export_md": False, "summary_pack": False, "split_minutes": 0, "summary_lang": "auto"},
+        "text": {
+            "clean_text": False,
+            "export_md": False,
+            "summary_pack": False,
+            "split_minutes": 0,
+            "summary_lang": "auto",
+            "summary_ai_enabled": False,
+            "summary_ai_tier": "medium",
+        },
         "diarization": {
             "enabled": False,
             "backend": "local_cluster_accurate",
@@ -35,6 +43,8 @@ def test_pipeline_request_parses_valid_payload():
     assert req.translation.target_lang == "en→cs"
     assert req.translation.enabled is False
     assert req.translation_needed is False
+    assert req.text_export.summary_ai_enabled is False
+    assert req.text_export.summary_ai_tier == "medium"
 
 
 def test_pipeline_request_rejects_invalid_output_mode():
@@ -94,6 +104,13 @@ def test_pipeline_request_normalizes_diarization_accuracy_profile():
 def test_pipeline_request_rejects_invalid_diarization_accuracy_profile():
     payload = _base_payload()
     payload["diarization"]["accuracy_profile"] = "ultra"
+    with pytest.raises(RequestValidationError):
+        PipelineRequest.from_payload(payload)
+
+
+def test_pipeline_request_rejects_invalid_summary_ai_tier():
+    payload = _base_payload()
+    payload["text"]["summary_ai_tier"] = "ultra"
     with pytest.raises(RequestValidationError):
         PipelineRequest.from_payload(payload)
 

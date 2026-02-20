@@ -489,6 +489,9 @@ public class MainController {
     private Button filesOpenSelectedButton;
 
     @FXML
+    private Button filesAiSummaryButton;
+
+    @FXML
     private Button filesOpenProjectFolderButton;
 
     @FXML
@@ -505,6 +508,15 @@ public class MainController {
 
     @FXML
     private Label filesDropHintLabel;
+
+    @FXML
+    private VBox filesGalleryHost;
+
+    @FXML
+    private FlowPane filesInputGalleryBox;
+
+    @FXML
+    private FlowPane filesOutputGalleryBox;
 
     @FXML
     private TableView<WorkspaceFileRow> projectFilesTable;
@@ -736,6 +748,18 @@ public class MainController {
 
     @FXML
     private Label settingsSummaryLangLabel;
+
+    @FXML
+    private CheckBox summaryAiBox;
+
+    @FXML
+    private Label settingsSummaryAiLabel;
+
+    @FXML
+    private ComboBox<String> summaryModelTierBox;
+
+    @FXML
+    private Label settingsSummaryModelTierLabel;
 
     @FXML
     private ComboBox<String> targetLangBox;
@@ -1137,6 +1161,9 @@ public class MainController {
     private Path activeProjectRoot;
     private Path activeEditedFilePath;
     private Path lastDiarizationSidecarPath;
+    private WorkspaceFileRow selectedWorkspaceFileRow;
+    private String activeSummaryOperationId = "";
+    private String activeSummaryOutputPath = "";
     private String loadedEditedFileText = "";
     private boolean editorDirty;
     private boolean editorAutoSaving;
@@ -1172,6 +1199,15 @@ public class MainController {
     private PauseTransition editorAutosavePause;
     private SystemMonitorWindow monitorWindow;
     private JobProgressWindow jobProgressWindow;
+    private Stage filesSummaryStage;
+    private Label filesSummarySelectedFileLabel;
+    private ComboBox<String> filesSummaryLangPicker;
+    private ComboBox<String> filesSummaryTierPicker;
+    private Label filesSummaryStatusLabel;
+    private ProgressBar filesSummaryProgressBar;
+    private TextArea filesSummaryLogArea;
+    private Button filesSummaryStartButton;
+    private Button filesSummaryOpenOutputButton;
     private Stage projectWorkspaceStage;
     private Label projectWorkspaceTitleLabel;
     private Button projectWorkspacePreflightButton;
@@ -1624,6 +1660,10 @@ public class MainController {
         if (jobProgressWindow != null) {
             jobProgressWindow.close();
             jobProgressWindow = null;
+        }
+        if (filesSummaryStage != null) {
+            filesSummaryStage.hide();
+            filesSummaryStage = null;
         }
         if (monitorWindow != null) {
             monitorWindow.close();
@@ -2475,12 +2515,22 @@ public class MainController {
 
     @FXML
     private void onOpenSelectedProjectFile() {
-        WorkspaceFileRow selected = projectFilesTable == null ? null : projectFilesTable.getSelectionModel().getSelectedItem();
+        WorkspaceFileRow selected = currentSelectedWorkspaceFile();
         if (selected == null) {
             addUserLog("WARN", "Select file first.");
             return;
         }
         openPath(selected.getAbsolutePath());
+    }
+
+    @FXML
+    private void onFilesAiSummary() {
+        WorkspaceFileRow selected = currentSelectedWorkspaceFile();
+        if (!isAiSummaryEligibleFile(selected)) {
+            addUserLog("WARN", "AI summary supports only selected output .txt transcript files.");
+            return;
+        }
+        showFilesSummaryWindow(selected);
     }
 
     @FXML
@@ -2803,6 +2853,23 @@ public class MainController {
         summaryLangPicker.setMaxWidth(Double.MAX_VALUE);
         summaryLangPicker.getSelectionModel().select(safeValue(summaryLangBox));
 
+        CheckBox summaryAiToggle = new CheckBox("Enable AI summary");
+        summaryAiToggle.setSelected(summaryAiBox != null && summaryAiBox.isSelected());
+
+        ComboBox<String> summaryTierPicker = new ComboBox<>(FXCollections.observableArrayList(
+                summaryModelTierBox == null
+                        ? List.of("low", "medium", "high")
+                        : summaryModelTierBox.getItems()
+        ));
+        summaryTierPicker.setMaxWidth(Double.MAX_VALUE);
+        summaryTierPicker.getSelectionModel().select(
+                summaryModelTierBox == null ? "medium" : safeValue(summaryModelTierBox)
+        );
+        summaryTierPicker.setDisable(!summaryAiToggle.isSelected());
+        summaryAiToggle.selectedProperty().addListener((obs, oldVal, newVal) ->
+                summaryTierPicker.setDisable(newVal == null || !newVal)
+        );
+
         VBox content = new VBox(
                 8.0,
                 new Label("Model"),
@@ -2810,7 +2877,10 @@ public class MainController {
                 new Label("Source language"),
                 sourceLangPicker,
                 new Label("Summary language"),
-                summaryLangPicker
+                summaryLangPicker,
+                summaryAiToggle,
+                new Label("Summary model tier"),
+                summaryTierPicker
         );
         dialog.getDialogPane().setContent(content);
         applyThemeToDialog(dialog);
@@ -2823,6 +2893,13 @@ public class MainController {
         selectComboValue(modelField, safeValue(modelPicker));
         selectComboValue(sourceLangBox, safeValue(sourceLangPicker));
         selectComboValue(summaryLangBox, safeValue(summaryLangPicker));
+        if (summaryAiBox != null) {
+            summaryAiBox.setSelected(summaryAiToggle.isSelected());
+        }
+        if (summaryModelTierBox != null) {
+            selectComboValue(summaryModelTierBox, safeValue(summaryTierPicker));
+            summaryModelTierBox.setDisable(summaryAiBox == null || !summaryAiBox.isSelected());
+        }
         addUserLog("INFO", "Wizard settings updated: transcription.");
         return true;
     }
@@ -3756,6 +3833,10 @@ public class MainController {
         String query = filesSearchField == null ? "" : trimToEmpty(filesSearchField.getText()).toLowerCase(Locale.ROOT);
         boolean searchContent = filesSearchContentBox != null && filesSearchContentBox.isSelected();
         filteredWorkspaceFileRows.setPredicate(row -> matchesWorkspaceFileFilter(row, query, searchContent));
+        if (selectedWorkspaceFileRow != null && !filteredWorkspaceFileRows.contains(selectedWorkspaceFileRow)) {
+            onWorkspaceFileSelectionChanged(null);
+        }
+        refreshFilesGallery();
         if (filesDropHintLabel != null) {
             filesDropHintLabel.setText(
                     query.isBlank()
@@ -3763,6 +3844,145 @@ public class MainController {
                             : "Filtered files: " + filteredWorkspaceFileRows.size() + " of " + workspaceFileRows.size()
             );
         }
+        updateFilesSummaryButtonState();
+    }
+
+    private void refreshFilesGallery() {
+        if (filesInputGalleryBox == null || filesOutputGalleryBox == null) {
+            return;
+        }
+        filesInputGalleryBox.getChildren().clear();
+        filesOutputGalleryBox.getChildren().clear();
+
+        boolean hasInput = false;
+        boolean hasOutput = false;
+        for (WorkspaceFileRow row : filteredWorkspaceFileRows) {
+            if (row == null) {
+                continue;
+            }
+            Node card = buildWorkspaceFileGalleryCard(row);
+            if (isInputWorkspacePath(row)) {
+                filesInputGalleryBox.getChildren().add(card);
+                hasInput = true;
+            } else if (isOutputWorkspacePath(row)) {
+                filesOutputGalleryBox.getChildren().add(card);
+                hasOutput = true;
+            }
+        }
+
+        if (!hasInput) {
+            filesInputGalleryBox.getChildren().add(buildFilesGalleryPlaceholder("No input files."));
+        }
+        if (!hasOutput) {
+            filesOutputGalleryBox.getChildren().add(buildFilesGalleryPlaceholder("No output files."));
+        }
+    }
+
+    private Node buildWorkspaceFileGalleryCard(WorkspaceFileRow row) {
+        VBox card = new VBox(4.0);
+        card.getStyleClass().add("project-gallery-card");
+        if (sameWorkspaceFile(selectedWorkspaceFileRow, row)) {
+            card.getStyleClass().add("project-gallery-card-active");
+        }
+        card.setPadding(new Insets(10.0));
+        card.setMinWidth(320.0);
+        card.setPrefWidth(340.0);
+        card.setMaxWidth(360.0);
+        card.setFocusTraversable(true);
+
+        String relative = trimToEmpty(row.getRelativePath());
+        String fileName = relative;
+        int slash = relative.lastIndexOf('/');
+        if (slash >= 0 && slash + 1 < relative.length()) {
+            fileName = relative.substring(slash + 1);
+        }
+
+        Label title = new Label(fileName);
+        title.getStyleClass().add("section-title");
+        title.setWrapText(true);
+
+        Label path = new Label(relative);
+        path.getStyleClass().add("small-label");
+        path.setWrapText(true);
+
+        Label meta = new Label(
+                trimToEmpty(row.getType()) + " | " + trimToEmpty(row.getSize()) + " | " + trimToEmpty(row.getModified())
+        );
+        meta.getStyleClass().add("small-label");
+        meta.setWrapText(true);
+
+        card.getChildren().addAll(title, path, meta);
+        card.setOnMouseClicked(event -> {
+            onWorkspaceFileSelectionChanged(row);
+            if (event.getClickCount() >= 2) {
+                openPath(row.getAbsolutePath());
+            }
+        });
+        card.setOnKeyPressed(event -> {
+            if (event.getCode() == KeyCode.ENTER || event.getCode() == KeyCode.SPACE) {
+                onWorkspaceFileSelectionChanged(row);
+                event.consume();
+            }
+        });
+        return card;
+    }
+
+    private Node buildFilesGalleryPlaceholder(String message) {
+        Label label = new Label(trimToEmpty(message));
+        label.getStyleClass().add("small-label");
+        return label;
+    }
+
+    private boolean isInputWorkspacePath(WorkspaceFileRow row) {
+        String relative = trimToEmpty(row == null ? "" : row.getRelativePath()).toLowerCase(Locale.ROOT);
+        return relative.equals("input") || relative.startsWith("input/");
+    }
+
+    private boolean isOutputWorkspacePath(WorkspaceFileRow row) {
+        String relative = trimToEmpty(row == null ? "" : row.getRelativePath()).toLowerCase(Locale.ROOT);
+        return relative.equals("output") || relative.startsWith("output/");
+    }
+
+    private boolean sameWorkspaceFile(WorkspaceFileRow left, WorkspaceFileRow right) {
+        if (left == null || right == null) {
+            return false;
+        }
+        String leftPath = trimToEmpty(left.getAbsolutePath());
+        String rightPath = trimToEmpty(right.getAbsolutePath());
+        return !leftPath.isBlank() && Objects.equals(leftPath, rightPath);
+    }
+
+    private WorkspaceFileRow currentSelectedWorkspaceFile() {
+        if (selectedWorkspaceFileRow != null) {
+            return selectedWorkspaceFileRow;
+        }
+        if (projectFilesTable != null) {
+            return projectFilesTable.getSelectionModel().getSelectedItem();
+        }
+        return null;
+    }
+
+    private boolean isAiSummaryEligibleFile(WorkspaceFileRow row) {
+        if (row == null) {
+            return false;
+        }
+        String relative = trimToEmpty(row.getRelativePath()).toLowerCase(Locale.ROOT);
+        return relative.startsWith("output/") && relative.endsWith(".txt");
+    }
+
+    private void updateFilesSummaryButtonState() {
+        if (filesAiSummaryButton == null) {
+            return;
+        }
+        boolean running = controllerRunning;
+        boolean hasActiveProject = activeProjectRoot != null;
+        boolean hasActiveSummary = !trimToEmpty(activeSummaryOperationId).isBlank();
+        filesAiSummaryButton.setDisable(
+                running
+                        || !hasActiveProject
+                        || hasActiveSummary
+                        || !isAiSummaryEligibleFile(currentSelectedWorkspaceFile())
+        );
     }
 
     private boolean matchesWorkspaceFileFilter(WorkspaceFileRow row, String query, boolean searchContent) {
@@ -4330,6 +4550,7 @@ public class MainController {
 
     private void refreshProjectFiles() {
         workspaceFileRows.clear();
+        selectedWorkspaceFileRow = null;
         activeEditedFilePath = null;
         loadedEditedFileText = "";
         editorDirty = false;
@@ -4349,27 +4570,50 @@ public class MainController {
             return;
         }
 
-        try (Stream<Path> stream = Files.walk(activeProjectRoot)) {
-            stream.filter(Files::isRegularFile)
-                    .sorted(Comparator.comparing(path -> activeProjectRoot.relativize(path).toString().toLowerCase(Locale.ROOT)))
-                    .forEach(path -> workspaceFileRows.add(new WorkspaceFileRow(
-                            activeProjectRoot.relativize(path).toString().replace('\\', '/'),
-                            fileType(path),
-                            formatBytes(safeSize(path)),
-                            formatFileTime(path),
-                            path.toAbsolutePath().normalize().toString()
-                    )));
-        } catch (Exception ex) {
-            addTechnicalLog("WARN", "Project file refresh failed: " + ex.getMessage());
+        List<Path> candidates = new ArrayList<>();
+        for (Path root : List.of(activeProjectRoot.resolve("input"), activeProjectRoot.resolve("output"))) {
+            if (!Files.isDirectory(root)) {
+                continue;
+            }
+            try (Stream<Path> stream = Files.walk(root)) {
+                stream.filter(Files::isRegularFile).forEach(candidates::add);
+            } catch (Exception ex) {
+                addTechnicalLog("WARN", "Project file refresh failed in " + root + ": " + ex.getMessage());
+            }
+        }
+
+        candidates.sort((left, right) -> {
+            try {
+                int byModified = Files.getLastModifiedTime(right).compareTo(Files.getLastModifiedTime(left));
+                if (byModified != 0) {
+                    return byModified;
+                }
+            } catch (Exception ignored) {
+                // Keep deterministic fallback order.
+            }
+            String leftRel = activeProjectRoot.relativize(left).toString().replace('\\', '/').toLowerCase(Locale.ROOT);
+            String rightRel = activeProjectRoot.relativize(right).toString().replace('\\', '/').toLowerCase(Locale.ROOT);
+            return leftRel.compareTo(rightRel);
+        });
+
+        for (Path path : candidates) {
+            workspaceFileRows.add(new WorkspaceFileRow(
+                    activeProjectRoot.relativize(path).toString().replace('\\', '/'),
+                    fileType(path),
+                    formatBytes(safeSize(path)),
+                    formatFileTime(path),
+                    path.toAbsolutePath().normalize().toString()
+            ));
         }
 
         if (fileEditorStatusLabel != null) {
-            fileEditorStatusLabel.setText("Preview/editor: select a text file (.txt/.srt/.json/.md) from the table.");
+            fileEditorStatusLabel.setText("Preview/editor: select a text file (.txt/.srt/.json/.md) from the gallery.");
         }
         refreshWorkspaceFileFilter();
         if (projectFilesTable != null) {
             projectFilesTable.getSelectionModel().clearSelection();
         }
+        updateFilesSummaryButtonState();
         onWorkspaceFileSelectionChanged(null);
         refreshDashboardData();
         setRunning(controllerRunning);
@@ -5003,10 +5247,12 @@ public class MainController {
     }
 
     private void onWorkspaceFileSelectionChanged(WorkspaceFileRow selected) {
+        selectedWorkspaceFileRow = selected;
         boolean running = controllerRunning;
         if (filesOpenSelectedButton != null) {
             filesOpenSelectedButton.setDisable(running || selected == null);
         }
+        updateFilesSummaryButtonState();
         updateEditorButtonsState();
 
         // Prevent losing edits when changing selection.
@@ -5024,8 +5270,9 @@ public class MainController {
                 projectSidecarPreviewArea.setText("");
             }
             if (fileEditorStatusLabel != null) {
-                fileEditorStatusLabel.setText("Preview/editor: select a text file (.txt/.srt/.json/.md) from the table.");
+                fileEditorStatusLabel.setText("Preview/editor: select a text file (.txt/.srt/.json/.md) from the gallery.");
             }
+            refreshFilesGallery();
             updateEditorButtonsState();
             return;
         }
@@ -5043,6 +5290,7 @@ public class MainController {
             if (projectSidecarPreviewArea != null) {
                 projectSidecarPreviewArea.setText("");
             }
+            refreshFilesGallery();
             updateEditorButtonsState();
             return;
         }
@@ -5059,6 +5307,7 @@ public class MainController {
             loadedEditedFileText = "";
             editorDirty = false;
             loadRelatedSidecarPreview(path);
+            refreshFilesGallery();
             updateEditorButtonsState();
             return;
         }
@@ -5075,6 +5324,7 @@ public class MainController {
             loadedEditedFileText = "";
             editorDirty = false;
             loadRelatedSidecarPreview(path);
+            refreshFilesGallery();
             updateEditorButtonsState();
             return;
         }
@@ -5093,6 +5343,7 @@ public class MainController {
             activeEditedFilePath = path;
             editorDirty = false;
             loadRelatedSidecarPreview(path);
+            refreshFilesGallery();
             updateEditorButtonsState();
         } catch (Exception ex) {
             addTechnicalLog("WARN", "Unable to read project file: " + ex.getMessage());
@@ -5109,6 +5360,7 @@ public class MainController {
             activeEditedFilePath = null;
             loadedEditedFileText = "";
             editorDirty = false;
+            refreshFilesGallery();
             updateEditorButtonsState();
         }
     }
@@ -6329,6 +6581,273 @@ public class MainController {
         );
     }
 
+    private void ensureFilesSummaryWindow() {
+        if (filesSummaryStage != null) {
+            return;
+        }
+        Stage owner = getStage();
+        filesSummaryStage = new Stage();
+        if (owner != null) {
+            filesSummaryStage.initOwner(owner);
+        }
+        filesSummaryStage.initModality(Modality.WINDOW_MODAL);
+        filesSummaryStage.setTitle("AI Summary");
+
+        Label title = new Label("Generate AI Summary");
+        title.getStyleClass().add("section-title");
+
+        filesSummarySelectedFileLabel = new Label("Selected file: -");
+        filesSummarySelectedFileLabel.getStyleClass().add("small-label");
+        filesSummarySelectedFileLabel.setWrapText(true);
+
+        filesSummaryLangPicker = new ComboBox<>(FXCollections.observableArrayList(summaryLangBox.getItems()));
+        filesSummaryLangPicker.setMaxWidth(Double.MAX_VALUE);
+        filesSummaryLangPicker.getSelectionModel().select(safeValue(summaryLangBox));
+
+        filesSummaryTierPicker = new ComboBox<>(FXCollections.observableArrayList(
+                summaryModelTierBox == null
+                        ? List.of("low", "medium", "high")
+                        : summaryModelTierBox.getItems()
+        ));
+        filesSummaryTierPicker.setMaxWidth(Double.MAX_VALUE);
+        filesSummaryTierPicker.getSelectionModel().select(
+                summaryModelTierBox == null ? "medium" : safeValue(summaryModelTierBox)
+        );
+
+        filesSummaryStatusLabel = new Label("Ready.");
+        filesSummaryStatusLabel.getStyleClass().add("small-label");
+
+        filesSummaryProgressBar = new ProgressBar(0.0);
+        filesSummaryProgressBar.setMaxWidth(Double.MAX_VALUE);
+
+        filesSummaryLogArea = new TextArea();
+        filesSummaryLogArea.setEditable(false);
+        filesSummaryLogArea.setWrapText(true);
+        filesSummaryLogArea.setPrefRowCount(12);
+
+        filesSummaryStartButton = new Button("Start");
+        filesSummaryStartButton.getStyleClass().add("accent-btn");
+        filesSummaryStartButton.setOnAction(event -> startFilesSummaryOperation());
+
+        filesSummaryOpenOutputButton = new Button("Open output");
+        filesSummaryOpenOutputButton.setDisable(true);
+        filesSummaryOpenOutputButton.setOnAction(event -> {
+            if (!trimToEmpty(activeSummaryOutputPath).isBlank()) {
+                openPath(activeSummaryOutputPath);
+            }
+        });
+
+        Button closeButton = new Button("Close");
+        closeButton.setOnAction(event -> filesSummaryStage.hide());
+
+        HBox actions = new HBox(8.0, filesSummaryStartButton, filesSummaryOpenOutputButton, closeButton);
+
+        VBox root = new VBox(
+                8.0,
+                title,
+                filesSummarySelectedFileLabel,
+                new Label("Summary language"),
+                filesSummaryLangPicker,
+                new Label("Model tier"),
+                filesSummaryTierPicker,
+                filesSummaryStatusLabel,
+                filesSummaryProgressBar,
+                new Label("Logs"),
+                filesSummaryLogArea,
+                actions
+        );
+        root.setPadding(new Insets(12.0));
+        root.getStyleClass().addAll("app-shell", "card-pane", themeClassFromName(currentTheme));
+
+        Scene scene = new Scene(root, 760, 560);
+        scene.getStylesheets().add(getClass().getResource("/com/transcribemate/v2/fx/styles.css").toExternalForm());
+        filesSummaryStage.setScene(scene);
+    }
+
+    private void showFilesSummaryWindow(WorkspaceFileRow selected) {
+        ensureFilesSummaryWindow();
+        if (selected != null && filesSummarySelectedFileLabel != null) {
+            filesSummarySelectedFileLabel.setText("Selected file: " + trimToEmpty(selected.getRelativePath()));
+        }
+        if (filesSummaryLangPicker != null) {
+            selectComboValue(filesSummaryLangPicker, safeValue(summaryLangBox));
+        }
+        if (filesSummaryTierPicker != null && summaryModelTierBox != null) {
+            selectComboValue(filesSummaryTierPicker, safeValue(summaryModelTierBox));
+        }
+        if (filesSummaryStatusLabel != null) {
+            filesSummaryStatusLabel.setText("Ready.");
+        }
+        if (filesSummaryProgressBar != null) {
+            filesSummaryProgressBar.setProgress(0.0);
+        }
+        if (filesSummaryLogArea != null) {
+            filesSummaryLogArea.clear();
+        }
+        if (filesSummaryOpenOutputButton != null) {
+            filesSummaryOpenOutputButton.setDisable(true);
+        }
+        if (filesSummaryStartButton != null) {
+            filesSummaryStartButton.setDisable(false);
+        }
+        activeSummaryOperationId = "";
+        activeSummaryOutputPath = "";
+        updateFilesSummaryButtonState();
+        applyThemeToStage(filesSummaryStage);
+        filesSummaryStage.show();
+        filesSummaryStage.toFront();
+    }
+
+    private void startFilesSummaryOperation() {
+        WorkspaceFileRow selected = currentSelectedWorkspaceFile();
+        if (!isAiSummaryEligibleFile(selected)) {
+            if (filesSummaryStatusLabel != null) {
+                filesSummaryStatusLabel.setText("Select one output .txt transcript file.");
+            }
+            return;
+        }
+        if (backendClient == null) {
+            addTechnicalLog("ERROR", "Backend is not initialized.");
+            return;
+        }
+        ProjectWorkspace activeWorkspace = projectsById.get(activeProjectId);
+        if (activeWorkspace == null || activeProjectRoot == null) {
+            addUserLog("WARN", "Project is required.");
+            return;
+        }
+
+        activeSummaryOperationId = UUID.randomUUID().toString();
+        activeSummaryOutputPath = "";
+        if (filesSummaryStartButton != null) {
+            filesSummaryStartButton.setDisable(true);
+        }
+        if (filesSummaryOpenOutputButton != null) {
+            filesSummaryOpenOutputButton.setDisable(true);
+        }
+        if (filesSummaryStatusLabel != null) {
+            filesSummaryStatusLabel.setText("Starting...");
+        }
+        if (filesSummaryProgressBar != null) {
+            filesSummaryProgressBar.setProgress(0.0);
+        }
+        if (filesSummaryLogArea != null) {
+            filesSummaryLogArea.clear();
+        }
+        appendFilesSummaryLog("Request submitted for: " + trimToEmpty(selected.getRelativePath()));
+        updateFilesSummaryButtonState();
+
+        ObjectNode params = mapper.createObjectNode();
+        params.put("operation_id", activeSummaryOperationId);
+        params.put("transcript_path", trimToEmpty(selected.getAbsolutePath()));
+        params.put("summary_lang", filesSummaryLangPicker == null ? safeValue(summaryLangBox) : safeValue(filesSummaryLangPicker));
+        params.put("summary_ai_tier", filesSummaryTierPicker == null ? "medium" : safeValue(filesSummaryTierPicker));
+        params.set("project", buildProjectContextParamsNode(activeWorkspace, activeProjectRoot));
+
+        backendClient.sendRequest("summarize_transcript", params)
+                .thenAccept(result -> Platform.runLater(() -> {
+                    if (!Objects.equals(trimToEmpty(result.path("operation_id").asText("")), trimToEmpty(activeSummaryOperationId))) {
+                        return;
+                    }
+                    String outputPath = trimToEmpty(result.path("output_path").asText(""));
+                    if (!outputPath.isBlank()) {
+                        markFilesSummaryCompleted(outputPath);
+                    }
+                }))
+                .exceptionally(ex -> {
+                    Platform.runLater(() -> {
+                        if (trimToEmpty(activeSummaryOperationId).isBlank()) {
+                            return;
+                        }
+                        markFilesSummaryFailed(rootMessage(ex));
+                    });
+                    return null;
+                });
+    }
+
+    private ObjectNode buildProjectContextParamsNode(ProjectWorkspace workspace, Path root) {
+        ObjectNode project = mapper.createObjectNode();
+        if (workspace == null || root == null) {
+            return project;
+        }
+        Path projectRoot = root.toAbsolutePath().normalize();
+        project.put("project_id", workspace.projectId());
+        project.put("name", workspace.name());
+        project.put("root_dir", projectRoot.toString());
+        project.put("input_dir", projectRoot.resolve("input").toString());
+        project.put("output_dir", projectRoot.resolve("output").toString());
+        project.put("jobs_dir", projectRoot.resolve("jobs").toString());
+        project.put("logs_dir", projectRoot.resolve("logs").toString());
+        project.put("timeline_path", projectRoot.resolve("jobs").resolve("timeline.jsonl").toString());
+        return project;
+    }
+
+    private void appendFilesSummaryLog(String line) {
+        if (filesSummaryLogArea == null) {
+            return;
+        }
+        String text = trimToEmpty(line);
+        if (text.isBlank()) {
+            return;
+        }
+        filesSummaryLogArea.appendText(text + "\n");
+        filesSummaryLogArea.setScrollTop(Double.MAX_VALUE);
+    }
+
+    private void updateFilesSummaryProgress(String step, double overallPct, boolean indeterminate) {
+        if (filesSummaryStatusLabel != null) {
+            filesSummaryStatusLabel.setText(step + " (" + String.format(Locale.ROOT, "%.0f", overallPct) + "%)");
+        }
+        if (filesSummaryProgressBar != null) {
+            if (indeterminate) {
+                filesSummaryProgressBar.setProgress(ProgressBar.INDETERMINATE_PROGRESS);
+            } else {
+                filesSummaryProgressBar.setProgress(Math.max(0.0, Math.min(1.0, overallPct / 100.0)));
+            }
+        }
+    }
+
+    private void markFilesSummaryCompleted(String outputPath) {
+        activeSummaryOutputPath = trimToEmpty(outputPath);
+        if (filesSummaryStatusLabel != null) {
+            filesSummaryStatusLabel.setText("Completed.");
+        }
+        if (filesSummaryProgressBar != null) {
+            filesSummaryProgressBar.setProgress(1.0);
+        }
+        if (filesSummaryStartButton != null) {
+            filesSummaryStartButton.setDisable(false);
+        }
+        if (filesSummaryOpenOutputButton != null) {
+            filesSummaryOpenOutputButton.setDisable(activeSummaryOutputPath.isBlank());
+        }
+        appendFilesSummaryLog("Summary ready: " + activeSummaryOutputPath);
+        addUserLog("SUCCESS", "AI summary completed: " + activeSummaryOutputPath);
+        activeSummaryOperationId = "";
+        refreshProjectFiles();
+        updateFilesSummaryButtonState();
+    }
+
+    private void markFilesSummaryFailed(String error) {
+        if (filesSummaryStatusLabel != null) {
+            filesSummaryStatusLabel.setText("Failed.");
+        }
+        if (filesSummaryProgressBar != null) {
+            filesSummaryProgressBar.setProgress(0.0);
+        }
+        if (filesSummaryStartButton != null) {
+            filesSummaryStartButton.setDisable(false);
+        }
+        if (filesSummaryOpenOutputButton != null) {
+            filesSummaryOpenOutputButton.setDisable(true);
+        }
+        String message = trimToEmpty(error);
+        appendFilesSummaryLog("ERROR: " + (message.isBlank() ? "Unknown error." : message));
+        addTechnicalLog("ERROR", "AI summary failed: " + (message.isBlank() ? "Unknown error." : message));
+        activeSummaryOperationId = "";
+        activeSummaryOutputPath = "";
+        updateFilesSummaryButtonState();
+    }
+
     @FXML
     private void onRefreshJobs() {
         refreshJobs(true);
@@ -6661,6 +7180,11 @@ public class MainController {
         ));
         summaryLangBox.getSelectionModel().select("auto");
 
+        if (summaryModelTierBox != null) {
+            summaryModelTierBox.setItems(FXCollections.observableArrayList("low", "medium", "high"));
+            summaryModelTierBox.getSelectionModel().select("medium");
+        }
+
         targetLangBox.setItems(FXCollections.observableArrayList(
                 "en->cs", "en->sk", "en->de", "en->pl", "en->fr", "en->es", "en->it", "en->ru", "en->uk", "en->pt"
         ));
@@ -6748,6 +7272,12 @@ public class MainController {
         cleanTextBox.setSelected(false);
         exportMdBox.setSelected(false);
         summaryPackBox.setSelected(false);
+        if (summaryAiBox != null) {
+            summaryAiBox.setSelected(false);
+        }
+        if (summaryModelTierBox != null) {
+            summaryModelTierBox.setDisable(summaryAiBox == null || !summaryAiBox.isSelected());
+        }
         notifyDoneBox.setSelected(true);
         keepOriginalsBox.setSelected(false);
         translateSubtitlesBox.setSelected(true);
@@ -6765,6 +7295,15 @@ public class MainController {
 
         subtitleColorPicker.setValue(javafx.scene.paint.Color.WHITE);
         subtitleOutlineColorPicker.setValue(javafx.scene.paint.Color.BLACK);
+
+        if (summaryAiBox != null) {
+            summaryAiBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
+                if (summaryModelTierBox != null) {
+                    summaryModelTierBox.setDisable(newVal == null || !newVal);
+                }
+                updateFilesSummaryButtonState();
+            });
+        }
     }
 
     private void setupTables() {
@@ -7672,6 +8211,14 @@ public class MainController {
         setNodeVisibleManaged(settingsSummaryLangLabel, schema.allowsField("settings.summary_lang"));
         setNodeVisibleManaged(summaryLangBox, schema.allowsField("settings.summary_lang"));
 
+        boolean showSummaryAi = schema.allowsField("settings.summary_ai");
+        setNodeVisibleManaged(settingsSummaryAiLabel, showSummaryAi);
+        setNodeVisibleManaged(summaryAiBox, showSummaryAi);
+
+        boolean showSummaryModelTier = schema.allowsField("settings.summary_model_tier");
+        setNodeVisibleManaged(settingsSummaryModelTierLabel, showSummaryModelTier);
+        setNodeVisibleManaged(summaryModelTierBox, showSummaryModelTier);
+
         setNodeVisibleManaged(settingsTargetLangLabel, schema.allowsField("settings.target_lang"));
         setNodeVisibleManaged(targetLangBox, schema.allowsField("settings.target_lang"));
 
@@ -7796,6 +8343,8 @@ public class MainController {
         preferences.putBoolean(prefix + "prefer_gpu", useGpuBox.isSelected());
         preferences.put(prefix + "source_lang", safeValue(sourceLangBox));
         preferences.put(prefix + "summary_lang", safeValue(summaryLangBox));
+        preferences.putBoolean(prefix + "summary_ai_enabled", summaryAiBox != null && summaryAiBox.isSelected());
+        preferences.put(prefix + "summary_ai_tier", summaryModelTierBox == null ? "medium" : safeValue(summaryModelTierBox));
         preferences.put(prefix + "target_lang", safeValue(targetLangBox));
         preferences.putInt(prefix + "batch_size", valueOf(batchSizeSpinner));
         preferences.putBoolean(prefix + "clean_text", cleanTextBox.isSelected());
@@ -7873,6 +8422,16 @@ public class MainController {
 
         selectComboValue(sourceLangBox, preferences.get(prefix + "source_lang", safeValue(sourceLangBox)));
         selectComboValue(summaryLangBox, preferences.get(prefix + "summary_lang", safeValue(summaryLangBox)));
+        if (summaryAiBox != null) {
+            summaryAiBox.setSelected(preferences.getBoolean(prefix + "summary_ai_enabled", summaryAiBox.isSelected()));
+        }
+        if (summaryModelTierBox != null) {
+            selectComboValue(
+                    summaryModelTierBox,
+                    preferences.get(prefix + "summary_ai_tier", safeValue(summaryModelTierBox))
+            );
+            summaryModelTierBox.setDisable(summaryAiBox == null || !summaryAiBox.isSelected());
+        }
         selectComboValue(targetLangBox, preferences.get(prefix + "target_lang", safeValue(targetLangBox)));
 
         batchSizeSpinner.getValueFactory().setValue(
@@ -8016,6 +8575,8 @@ public class MainController {
         node.put("prefer_gpu", useGpuBox.isSelected());
         node.put("source_lang", safeValue(sourceLangBox));
         node.put("summary_lang", safeValue(summaryLangBox));
+        node.put("summary_ai_enabled", summaryAiBox != null && summaryAiBox.isSelected());
+        node.put("summary_ai_tier", summaryModelTierBox == null ? "medium" : safeValue(summaryModelTierBox));
         node.put("target_lang", safeValue(targetLangBox));
         node.put("batch_size", valueOf(batchSizeSpinner));
         node.put("clean_text", cleanTextBox.isSelected());
@@ -8074,6 +8635,13 @@ public class MainController {
         useGpuBox.setSelected(nodeBool(node, "prefer_gpu", useGpuBox.isSelected()));
         selectComboValue(sourceLangBox, nodeText(node, "source_lang", safeValue(sourceLangBox)));
         selectComboValue(summaryLangBox, nodeText(node, "summary_lang", safeValue(summaryLangBox)));
+        if (summaryAiBox != null) {
+            summaryAiBox.setSelected(nodeBool(node, "summary_ai_enabled", summaryAiBox.isSelected()));
+        }
+        if (summaryModelTierBox != null) {
+            selectComboValue(summaryModelTierBox, nodeText(node, "summary_ai_tier", safeValue(summaryModelTierBox)));
+            summaryModelTierBox.setDisable(summaryAiBox == null || !summaryAiBox.isSelected());
+        }
         selectComboValue(targetLangBox, nodeText(node, "target_lang", safeValue(targetLangBox)));
         batchSizeSpinner.getValueFactory().setValue(nodeInt(node, "batch_size", valueOf(batchSizeSpinner)));
         cleanTextBox.setSelected(nodeBool(node, "clean_text", cleanTextBox.isSelected()));
@@ -8307,6 +8875,7 @@ public class MainController {
         if (jobProgressWindow != null) {
             jobProgressWindow.applyThemeClass(themeCssClass);
         }
+        applyThemeToStage(filesSummaryStage);
         applyThemeToStage(projectWorkspaceStage);
         if (isLauncherController()) {
             for (ProjectWorkspaceHost host : new ArrayList<>(openProjectWorkspaceHosts.values())) {
@@ -8456,6 +9025,8 @@ public class MainController {
         text.put("summary_pack", summaryPackBox.isSelected());
         text.put("split_minutes", valueOf(splitMinutesSpinner));
         text.put("summary_lang", safeValue(summaryLangBox));
+        text.put("summary_ai_enabled", summaryAiBox != null && summaryAiBox.isSelected());
+        text.put("summary_ai_tier", summaryModelTierBox == null ? "medium" : safeValue(summaryModelTierBox));
         text.put("speaker", trimToEmpty(speakerField.getText()));
         text.put("topic", trimToEmpty(topicField.getText()));
 
@@ -8717,6 +9288,46 @@ public class MainController {
                     if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
                         jobProgressWindow.markCancelRequested();
                     }
+                }
+                case "summary.started" -> {
+                    String operationId = trimToEmpty(payload.path("operation_id").asText(""));
+                    if (!operationId.equals(trimToEmpty(activeSummaryOperationId))) {
+                        return;
+                    }
+                    appendFilesSummaryLog("Summary started.");
+                    updateFilesSummaryProgress("started", 0.0, false);
+                }
+                case "summary.progress" -> {
+                    String operationId = trimToEmpty(payload.path("operation_id").asText(""));
+                    if (!operationId.equals(trimToEmpty(activeSummaryOperationId))) {
+                        return;
+                    }
+                    String step = trimToEmpty(payload.path("step").asText("running"));
+                    double overall = payload.path("overall_pct").asDouble(0.0);
+                    boolean indeterminate = payload.path("indeterminate").asBoolean(false);
+                    updateFilesSummaryProgress(step, overall, indeterminate);
+                }
+                case "summary.log" -> {
+                    String operationId = trimToEmpty(payload.path("operation_id").asText(""));
+                    if (!operationId.equals(trimToEmpty(activeSummaryOperationId))) {
+                        return;
+                    }
+                    appendFilesSummaryLog(payload.path("line").asText(""));
+                }
+                case "summary.completed" -> {
+                    String operationId = trimToEmpty(payload.path("operation_id").asText(""));
+                    if (!operationId.equals(trimToEmpty(activeSummaryOperationId))) {
+                        return;
+                    }
+                    String outputPath = trimToEmpty(payload.path("output_path").asText(""));
+                    markFilesSummaryCompleted(outputPath);
+                }
+                case "summary.failed" -> {
+                    String operationId = trimToEmpty(payload.path("operation_id").asText(""));
+                    if (!operationId.equals(trimToEmpty(activeSummaryOperationId))) {
+                        return;
+                    }
+                    markFilesSummaryFailed(payload.path("error").asText("Summary failed."));
                 }
                 case "backend.stderr" -> addTechnicalLog("DEBUG", payload.path("message").asText(""));
                 case "backend.io_error", "backend.protocol_error" ->
@@ -9520,13 +10131,40 @@ public class MainController {
             filesRefreshButton.setDisable(running || activeProjectRoot == null);
         }
         if (filesOpenSelectedButton != null) {
-            filesOpenSelectedButton.setDisable(running || projectFilesTable == null || projectFilesTable.getSelectionModel().getSelectedItem() == null);
+            filesOpenSelectedButton.setDisable(running || currentSelectedWorkspaceFile() == null);
+        }
+        if (filesAiSummaryButton != null) {
+            filesAiSummaryButton.setDisable(
+                    running
+                            || activeProjectRoot == null
+                            || !isAiSummaryEligibleFile(currentSelectedWorkspaceFile())
+                            || !trimToEmpty(activeSummaryOperationId).isBlank()
+            );
         }
         if (filesOpenProjectFolderButton != null) {
             filesOpenProjectFolderButton.setDisable(running || activeProjectRoot == null);
         }
         if (filesHistoryButton != null) {
             filesHistoryButton.setDisable(running || activeEditedFilePath == null || activeProjectRoot == null);
+        }
+        if (filesGalleryHost != null) {
+            filesGalleryHost.setDisable(running);
+        }
+        if (filesInputGalleryBox != null) {
+            filesInputGalleryBox.setDisable(running);
+        }
+        if (filesOutputGalleryBox != null) {
+            filesOutputGalleryBox.setDisable(running);
+        }
+        if (filesSummaryStartButton != null) {
+            filesSummaryStartButton.setDisable(
+                    running
+                            || !isAiSummaryEligibleFile(currentSelectedWorkspaceFile())
+                            || !trimToEmpty(activeSummaryOperationId).isBlank()
+            );
+        }
+        if (filesSummaryOpenOutputButton != null) {
+            filesSummaryOpenOutputButton.setDisable(running || trimToEmpty(activeSummaryOutputPath).isBlank());
         }
         if (projectFilesTable != null) {
             projectFilesTable.setDisable(running);
@@ -9602,6 +10240,7 @@ public class MainController {
         }
         refreshDashboardProjectGallery();
         updateEditorButtonsState();
+        updateFilesSummaryButtonState();
         updateSpeakerMappingButtonState(running);
         updateWizardState();
         refreshWorkspaceSettingsUi();

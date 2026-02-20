@@ -22,10 +22,11 @@ from ...core.models import force_refresh_models
 from ...core.paths import config_path, ffmpeg_path, log_path, user_data_dir
 from ...core.i18n import LANG_CODES, TRANSLATION_MODELS
 from ...pipeline.diarize import apply_speaker_mapping_to_sidecar_file, ensure_local_diarization_runtime
+from ...pipeline.summarize import summarize_transcript_file, supported_summary_tiers
 from ...core.version import APP_VERSION
 from .components import get_module_component, list_module_components, supported_module_ids
 from .diarization import supported_backends
-from .models import PipelineRequest, PipelineRunResult, RequestValidationError
+from .models import PipelineRequest, PipelineRunResult, ProjectContextSpec, RequestValidationError
 from .pipeline import PipelineCancelledError
 from .protocol import EventMessage
 
@@ -98,6 +99,8 @@ class BackendService:
             return self._preflight_check(params)
         if route == "apply_speaker_mapping":
             return self._apply_speaker_mapping(params)
+        if route == "summarize_transcript":
+            return self._summarize_transcript(params)
         if route == "get_system_metrics":
             return self._get_system_metrics()
         raise RequestValidationError(
@@ -131,6 +134,7 @@ class BackendService:
                 "get_paths",
                 "preflight_check",
                 "apply_speaker_mapping",
+                "summarize_transcript",
                 "get_system_metrics",
             ],
             "output_modes": ["conference", "video_subs", "video_dub", "srt_only", "txt_only"],
@@ -139,6 +143,7 @@ class BackendService:
             "translation_targets": sorted(TRANSLATION_MODELS.keys()),
             "translation_lang_codes": dict(LANG_CODES),
             "diarization_backends": supported_backends(),
+            "summary_ai_tiers": list(supported_summary_tiers()),
         }
 
     def _health(self) -> dict:
@@ -243,11 +248,19 @@ class BackendService:
         out_dir = os.path.expanduser(request.output.out_dir)
         try:
             os.makedirs(out_dir, exist_ok=True)
-            test_file = os.path.join(out_dir, ".tm_v2_write_test")
+            test_file = os.path.join(out_dir, f".tm_v2_write_test_{uuid.uuid4().hex}")
             with open(test_file, "w", encoding="utf-8") as fh:
                 fh.write("ok")
-            os.remove(test_file)
             add_check("output_dir", "pass", f"Output directory writable: {out_dir}")
+            try:
+                os.remove(test_file)
+            except Exception as cleanup_exc:
+                add_check(
+                    "output_dir_cleanup",
+                    "warn",
+                    f"Output probe file cleanup failed: {cleanup_exc}",
+                    level="warn",
+                )
         except Exception as exc:
             add_check("output_dir", "fail", f"Output directory not writable: {out_dir} ({exc})", level="error")
 
@@ -277,7 +290,11 @@ class BackendService:
                     level="error",
                 )
 
-        torch_required = bool(request.translation_needed or request.diarization.enabled)
+        torch_required = bool(
+            request.translation_needed
+            or request.diarization.enabled
+            or request.text_export.summary_ai_enabled
+        )
         gpu_diag = _gather_gpu_runtime_diagnostics()
         torch_ok = bool(gpu_diag.get("torch_ok", False))
         torch_error = str(gpu_diag.get("torch_error", "") or "")
@@ -296,7 +313,7 @@ class BackendService:
                 "fail",
                 (
                     "Torch import failed but is required for this run "
-                    "(translation and/or local diarization): "
+                    "(translation, local diarization and/or AI summary): "
                     f"{torch_error or 'unknown error'}"
                 ),
                 level="error",
@@ -435,6 +452,165 @@ class BackendService:
             "speaker_map": speaker_map,
             "rewritten_paths": rewritten_paths,
             "rewritten_count": len(rewritten_paths),
+        }
+
+    def _summarize_transcript(self, params: dict) -> dict:
+        params = params or {}
+        operation_id = str(params.get("operation_id") or "").strip()
+        if not operation_id:
+            raise RequestValidationError(
+                "summarize_transcript requires 'operation_id'.",
+                details={"operation_id": operation_id},
+            )
+
+        transcript_raw = str(params.get("transcript_path") or "").strip()
+        if not transcript_raw:
+            raise RequestValidationError(
+                "summarize_transcript requires 'transcript_path'.",
+                details={"transcript_path": transcript_raw},
+            )
+
+        summary_lang = str(params.get("summary_lang") or "auto").strip() or "auto"
+        summary_ai_tier = str(params.get("summary_ai_tier") or "medium").strip().lower() or "medium"
+        if summary_ai_tier not in supported_summary_tiers():
+            raise RequestValidationError(
+                "summary_ai_tier must be one of: low, medium, high",
+                details={
+                    "summary_ai_tier": summary_ai_tier,
+                    "supported": list(supported_summary_tiers()),
+                },
+            )
+
+        project_raw = params.get("project") or {}
+        if not isinstance(project_raw, dict):
+            raise RequestValidationError("project must be an object.")
+        project = ProjectContextSpec.from_payload(project_raw)
+
+        with self._lock:
+            active = self._first_active_job_locked()
+        if active is not None:
+            raise RequestValidationError(
+                "Cannot run summarize_transcript while pipeline job is active.",
+                code="job_limit_reached",
+                details={
+                    "active_job_id": active.job_id,
+                    "active_job_status": active.status,
+                },
+            )
+
+        transcript_path = Path(os.path.expanduser(transcript_raw)).expanduser().resolve()
+        if not transcript_path.is_file():
+            raise RequestValidationError(
+                "Transcript file not found.",
+                code="not_found",
+                details={"transcript_path": str(transcript_path)},
+            )
+        if transcript_path.suffix.lower() != ".txt":
+            raise RequestValidationError(
+                "summarize_transcript supports only '.txt' transcript files.",
+                details={"transcript_path": str(transcript_path)},
+            )
+
+        output_root = Path(project.output_dir).expanduser().resolve()
+        if not self._path_within_root(transcript_path, output_root):
+            raise RequestValidationError(
+                "summarize_transcript accepts only files from project output directory.",
+                details={
+                    "transcript_path": str(transcript_path),
+                    "project_output_dir": str(output_root),
+                },
+            )
+
+        summary_output_dir = output_root / "summaries"
+        self._emit_event(
+            EventMessage(
+                event="summary.started",
+                payload={
+                    "operation_id": operation_id,
+                    "transcript_path": str(transcript_path),
+                    "summary_lang": summary_lang,
+                    "summary_ai_tier": summary_ai_tier,
+                },
+            )
+        )
+
+        def _emit_summary_log(line: str):
+            text = str(line or "").strip()
+            if not text:
+                return
+            self._emit_event(
+                EventMessage(
+                    event="summary.log",
+                    payload={
+                        "operation_id": operation_id,
+                        "line": text,
+                    },
+                )
+            )
+
+        def _emit_summary_progress(
+            step: str,
+            overall_pct: float | None,
+            step_pct: float | None,
+            indeterminate: bool,
+        ):
+            self._emit_event(
+                EventMessage(
+                    event="summary.progress",
+                    payload={
+                        "operation_id": operation_id,
+                        "step": str(step or ""),
+                        "overall_pct": None if overall_pct is None else round(float(overall_pct), 2),
+                        "step_pct": None if step_pct is None else round(float(step_pct), 2),
+                        "indeterminate": bool(indeterminate),
+                    },
+                )
+            )
+
+        try:
+            output_path = summarize_transcript_file(
+                transcript_path=transcript_path,
+                output_dir=summary_output_dir,
+                summary_lang=summary_lang,
+                summary_ai_tier=summary_ai_tier,
+                log=_emit_summary_log,
+                progress=_emit_summary_progress,
+                stop_flag=None,
+            )
+        except Exception as exc:
+            message = str(exc) or f"{type(exc).__name__}"
+            self._emit_event(
+                EventMessage(
+                    event="summary.failed",
+                    payload={
+                        "operation_id": operation_id,
+                        "error": message,
+                    },
+                )
+            )
+            raise RequestValidationError(
+                f"AI summary failed: {message}",
+                code="summary_failed",
+                details={
+                    "operation_id": operation_id,
+                    "transcript_path": str(transcript_path),
+                    "summary_ai_tier": summary_ai_tier,
+                },
+            ) from exc
+
+        self._emit_event(
+            EventMessage(
+                event="summary.completed",
+                payload={
+                    "operation_id": operation_id,
+                    "output_path": str(output_path),
+                },
+            )
+        )
+        return {
+            "operation_id": operation_id,
+            "output_path": str(output_path),
+            "status": "completed",
         }
 
     def _get_system_metrics(self) -> dict:
@@ -927,6 +1103,16 @@ class BackendService:
         if root_dir:
             return Path(root_dir).expanduser() / "logs"
         return None
+
+    @staticmethod
+    def _path_within_root(path: Path, root: Path) -> bool:
+        try:
+            resolved_path = Path(path).expanduser().resolve()
+            resolved_root = Path(root).expanduser().resolve()
+            resolved_path.relative_to(resolved_root)
+            return True
+        except Exception:
+            return False
 
 
 def _utc_now() -> str:

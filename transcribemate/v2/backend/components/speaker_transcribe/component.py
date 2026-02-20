@@ -16,7 +16,7 @@ class SpeakerTranscriptComponent(StaticModuleComponent):
                 source_mode="local",
                 output_mode="conference",
                 runtime_features=("local_media", "faster_whisper", "diarization"),
-                python_packages=("faster_whisper", "speechbrain", "torchaudio", "scikit-learn"),
+                python_packages=("faster_whisper", "speechbrain", "torchaudio", "scikit-learn", "transformers"),
                 ui_schema={
                     "show_tabs": ["run", "diarization", "logs", "jobs", "settings"],
                     "show_sections": [
@@ -37,8 +37,13 @@ class SpeakerTranscriptComponent(StaticModuleComponent):
                         "settings.model",
                         "settings.model_options",
                         "settings.source_lang",
+                        "settings.summary_lang",
+                        "settings.summary_ai",
+                        "settings.summary_model_tier",
                         "settings.batch_size",
                         "settings.speaker_hint",
+                        "settings.text_options",
+                        "settings.split_minutes",
                         "diarization.backend",
                         "diarization.accuracy",
                         "diarization.minmax",
