@@ -27,7 +27,7 @@ python -m pip install -r requirements-diarization.txt
 ## Run (Dev)
 - Backend:
 ```powershell
-./run_v2_backend.ps1
+./scripts/run_v2_backend.ps1
 ```
 or
 ```powershell
@@ -36,7 +36,7 @@ python -m transcribemate.v2.backend.server --stdio
 
 - Frontend:
 ```powershell
-./run_v2_frontend.ps1
+./scripts/run_v2_frontend.ps1
 ```
 or
 ```powershell
@@ -52,7 +52,7 @@ python -m pytest
 
 ## Release Build (Windows ZIP)
 ```powershell
-./build_v2_release.ps1
+./scripts/build_v2_release.ps1
 ```
 
 Useful options:

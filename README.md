@@ -62,10 +62,10 @@ This branch is V2-only (JavaFX + Python). Legacy Tkinter/PyInstaller and Inno in
 - Users (Windows):
   - Download release ZIP, extract, run `TranscribeMate.exe`, complete mandatory first-launch runtime setup.
 - Developers:
-  - Run frontend: `./run_v2_frontend.ps1`
-  - Run backend: `./run_v2_backend.ps1`
+  - Run frontend: `./scripts/run_v2_frontend.ps1`
+  - Run backend: `./scripts/run_v2_backend.ps1`
   - Run tests: `python -m pytest -q`
-  - Build release ZIP: `./build_v2_release.ps1`
+  - Build release ZIP: `./scripts/build_v2_release.ps1`
 
 ## Release & CI
 - Distribution format: Windows ZIP (portable), no installer.

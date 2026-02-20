@@ -13,13 +13,13 @@ This guide describes the current repository state (V2-only stack).
 
 ## Entry points
 - Frontend (JavaFX):
-  - `./run_v2_frontend.ps1`
+  - `./scripts/run_v2_frontend.ps1`
   - or `cd javafx-client && mvn javafx:run`
 - Backend (Python):
-  - `./run_v2_backend.ps1`
+  - `./scripts/run_v2_backend.ps1`
   - or `python -m transcribemate.v2.backend.server --stdio`
 - Release build (Windows ZIP):
-  - `./build_v2_release.ps1`
+  - `./scripts/build_v2_release.ps1`
 
 ## Code map
 - `javafx-client/src/main/java/com/transcribemate/v2/fx/`
@@ -71,7 +71,7 @@ This guide describes the current repository state (V2-only stack).
 ## Build/packaging note
 - Legacy Tkinter/PyInstaller flow was removed from this branch.
 - Inno installer flow is removed.
-- `build_v2_release.ps1` builds Java app-image via `jpackage` and then creates a distributable ZIP package.
+- `scripts/build_v2_release.ps1` builds Java app-image via `jpackage` and then creates a distributable ZIP package.
 - Build output includes `dist_release/checksums.txt` with SHA256 for ZIP verification.
 - ZIP distribution entry point is `TranscribeMate.exe` inside extracted package.
 - Runtime bootstrap (embedded Python + deps + models + FFmpeg) runs on first app launch.

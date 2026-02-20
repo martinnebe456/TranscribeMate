@@ -79,7 +79,9 @@ Nainstaluj Maven nebo pouzij Maven wrapper.
 "@
 }
 
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$candidateRoot = Split-Path -Parent $scriptDir
+$root = if (Test-Path (Join-Path $candidateRoot "javafx-client")) { $candidateRoot } else { $scriptDir }
 $frontend = Join-Path $root "javafx-client"
 
 if (-not (Test-Path $frontend)) {

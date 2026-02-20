@@ -27,7 +27,7 @@ jobs:
       - name: Build app-image + ZIP + checksum
         shell: pwsh
         run: |
-          ./build_v2_release.ps1
+          ./scripts/build_v2_release.ps1
 
       - name: Verify checksums.txt
         shell: pwsh

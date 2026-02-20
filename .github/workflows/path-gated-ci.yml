@@ -35,10 +35,10 @@ jobs:
               - 'tests/**'
               - 'requirements*.txt'
               - 'scripts/run_v2_backend.py'
-              - 'run_v2_backend.ps1'
+              - 'scripts/run_v2_backend.ps1'
             frontend:
               - 'javafx-client/**'
-              - 'run_v2_frontend.ps1'
+              - 'scripts/run_v2_frontend.ps1'
             docs_contract:
               - 'docs/**'
               - 'README.md'
