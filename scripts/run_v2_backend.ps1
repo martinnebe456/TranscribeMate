@@ -1,7 +1,11 @@
 $ErrorActionPreference = "Stop"
 
 # Prefer project venv interpreter when available, otherwise fallback to PATH Python.
-$python = ".\.venv\Scripts\python.exe"
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$candidateRoot = Split-Path -Parent $scriptDir
+$root = if (Test-Path (Join-Path $candidateRoot "transcribemate")) { $candidateRoot } else { $scriptDir }
+
+$python = Join-Path $root ".venv\Scripts\python.exe"
 if (-not (Test-Path $python)) {
     $python = "python"
 }
@@ -11,4 +15,10 @@ $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 
 Write-Host "[TM] Backend command: $python -m transcribemate.v2.backend.server --stdio"
-& $python -m transcribemate.v2.backend.server --stdio
+Push-Location $root
+try {
+    & $python -m transcribemate.v2.backend.server --stdio
+}
+finally {
+    Pop-Location
+}

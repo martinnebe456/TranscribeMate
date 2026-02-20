@@ -12,7 +12,7 @@ mvn javafx:run
 
 From repository root you can also run:
 ```powershell
-./run_v2_frontend.ps1
+./scripts/run_v2_frontend.ps1
 ```
 
 ## UI structure (V2 shell)

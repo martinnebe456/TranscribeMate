@@ -51,9 +51,10 @@ jobs:
         shell: pwsh
         run: |
           $files = @(
-            "build_v2_release.ps1",
-            "run_v2_backend.ps1",
-            "run_v2_frontend.ps1"
+            "scripts/build_v2_release.ps1",
+            "scripts/run_v2_backend.ps1",
+            "scripts/run_v2_frontend.ps1",
+            "scripts/setup_build_and_run.ps1"
           )
           if (Test-Path "scripts") {
             $files += (Get-ChildItem -Path "scripts" -Filter "*.ps1" -File | Select-Object -ExpandProperty FullName)

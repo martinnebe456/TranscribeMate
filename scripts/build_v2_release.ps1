@@ -34,7 +34,7 @@ TranscribeMate v2 release build script.
 
 Usage:
 
-  .\build_v2_release.ps1 [-SkipFrontendBuild] [-AppVersion <version>] [-CodeSignThumbprint <thumbprint>] [-CodeSignTimestampUrl <url>] [-RequireCodeSigning] [-SkipZipCreation] [-Help]
+  .\scripts\build_v2_release.ps1 [-SkipFrontendBuild] [-AppVersion <version>] [-CodeSignThumbprint <thumbprint>] [-CodeSignTimestampUrl <url>] [-RequireCodeSigning] [-SkipZipCreation] [-Help]
 
 Parameters:
 
@@ -61,11 +61,11 @@ Parameters:
 
 Example:
     
-    .\build_v2_release.ps1 -AppVersion "26.02.18.005"
+    .\scripts\build_v2_release.ps1 -AppVersion "26.02.18.005"
     
-    .\build_v2_release.ps1
+    .\scripts\build_v2_release.ps1
     
-    .\build_v2_release.ps1 -SkipZipCreation
+    .\scripts\build_v2_release.ps1 -SkipZipCreation
 
 ==================================================================
 "@
@@ -297,7 +297,7 @@ function Remove-PathWithRetry(
 Reason: $lastError
 
 Close all running TranscribeMate app windows/processes and close any Explorer window opened inside this folder.
-Then run build_v2_release.ps1 again.
+Then run .\scripts\build_v2_release.ps1 again.
 "@
     throw $hint
 }
@@ -350,7 +350,7 @@ Destination: $DestinationPath
 Reason: $lastError
 
 Close running TranscribeMate instances and close any Explorer window opened inside dist/TranscribeMate.
-If antivirus is scanning files, wait a moment and run build_v2_release.ps1 again.
+If antivirus is scanning files, wait a moment and run .\scripts\build_v2_release.ps1 again.
 "@
     throw $hint
 }
@@ -439,8 +439,10 @@ function Validate-BundledBackend([string]$BundledBackendDir) {
 # Main build pipeline
 # ============================================================================
 # Resolve key repository/output paths relative to this script location so the
-# script can be launched from any working directory.
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
+# script can be launched from repo root or scripts/ subfolder.
+$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$candidateRoot = Split-Path -Parent $scriptDir
+$root = if (Test-Path (Join-Path $candidateRoot "javafx-client")) { $candidateRoot } else { $scriptDir }
 $frontendDir = Join-Path $root "javafx-client"
 $distDir = Join-Path $root "dist"
 $appImageDir = Join-Path $distDir "TranscribeMate"
