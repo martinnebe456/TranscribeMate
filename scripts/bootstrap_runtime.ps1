@@ -456,6 +456,28 @@ function Test-TorchCudaReady([string]$PythonExe) {
     return ([bool]$diag.torch_ok -and [bool]$diag.torch_cuda_available)
 }
 
+function Test-TorchCpuReady([string]$PythonExe) {
+    $diag = Get-RuntimeDiagnostics -PythonExe $PythonExe
+    if ($null -eq $diag) {
+        return $false
+    }
+
+    if (-not [bool]$diag.torch_ok) {
+        return $false
+    }
+
+    if ([bool]$diag.torch_cuda_available) {
+        return $false
+    }
+
+    $torchVersion = Get-InstalledPipPackageVersion -PythonExe $PythonExe -PackageName "torch"
+    if (-not [string]::IsNullOrWhiteSpace($torchVersion) -and $torchVersion.Contains("+cu")) {
+        return $false
+    }
+
+    return $true
+}
+
 function Get-RuntimeDiagnostics([string]$PythonExe) {
     $checkScriptPath = Join-Path ([IO.Path]::GetTempPath()) ("tm-runtime-diag-{0}.py" -f ([guid]::NewGuid().ToString("N")))
     $checkCode = @'
@@ -582,6 +604,49 @@ function Write-RuntimeDiagnostics([string]$PythonExe, [string]$Prefix = "Runtime
     }
     if (-not [bool]$diag.ctranslate2_ok -and -not [string]::IsNullOrWhiteSpace([string]$diag.ctranslate2_error)) {
         Write-Log "$Prefix ctranslate2 error: $([string]$diag.ctranslate2_error)" "WARN"
+    }
+}
+
+function Ensure-CpuTorchRuntime([string]$PythonExe) {
+    Write-RuntimeDiagnostics -PythonExe $PythonExe -Prefix "Pre-CPU install diagnostics"
+
+    if (Test-TorchCpuReady -PythonExe $PythonExe) {
+        Write-Log "CPU Torch runtime is already available."
+        return
+    }
+
+    Write-Log "Installing CPU Torch runtime from official CPU wheel index."
+    $pipCpuArgs = @(
+        "-m",
+        "pip",
+        "install",
+        "--disable-pip-version-check",
+        "--no-warn-script-location",
+        "--retries",
+        "5",
+        "--timeout",
+        "120",
+        "--upgrade",
+        "--force-reinstall",
+        "--index-url",
+        "https://download.pytorch.org/whl/cpu",
+        "--prefer-binary",
+        "--no-deps",
+        "torch",
+        "torchaudio"
+    )
+
+    $ok = Invoke-RuntimePythonWithRetry `
+        -PythonExe $PythonExe `
+        -CommandArgs $pipCpuArgs `
+        -Description "CPU torch install" `
+        -Retries 2 `
+        -TimeoutSeconds 5400 `
+        -IgnoreFailure
+
+    Write-RuntimeDiagnostics -PythonExe $PythonExe -Prefix "Post-CPU install diagnostics"
+    if (-not $ok) {
+        Write-Log "CPU Torch install finished with warnings. Current runtime diagnostics will decide final profile." "WARN"
     }
 }
 
@@ -876,23 +941,74 @@ sys.exit(0 if payload["ok"] else 1)
     }
 }
 
+function Assert-DirectoryHasContent([string]$DirectoryPath, [string]$Description) {
+    $label = if ([string]::IsNullOrWhiteSpace($Description)) { "Directory" } else { $Description }
+    if ([string]::IsNullOrWhiteSpace($DirectoryPath)) {
+        throw "$label path is empty."
+    }
+    if (-not (Test-Path -Path $DirectoryPath -PathType Container)) {
+        throw "$label is missing: $DirectoryPath"
+    }
+    try {
+        $firstEntry = Get-ChildItem -Path $DirectoryPath -Force -ErrorAction Stop | Select-Object -First 1
+        if ($null -eq $firstEntry) {
+            throw "$label is empty: $DirectoryPath"
+        }
+    }
+    catch {
+        throw "$label is empty: $DirectoryPath"
+    }
+}
+
 function Write-RuntimeReadyMarker(
+    [string]$AppDataDir,
     [string]$RuntimeRoot,
     [string]$BackendRoot,
     [string]$PythonExe,
-    [string]$AppVersion
+    [string]$AppVersion,
+    [string]$TorchProfile,
+    [string]$WhisperModelPath,
+    [string]$TranslationModelPath,
+    [string]$FfmpegPath,
+    [string]$FfprobePath
 ) {
     if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
         return
     }
 
     try {
+        $requiredPaths = @(
+            "runtime/python/python.exe",
+            "assets/ffmpeg.exe",
+            "assets/ffprobe.exe",
+            "cache/whisper/models/large-v3",
+            "cache/huggingface/hub/models--Helsinki-NLP--opus-mt-en-cs"
+        )
+        $normalizedTorchProfile = ([string]$TorchProfile).Trim().ToLowerInvariant()
+        if ($normalizedTorchProfile -ne "cuda" -and $normalizedTorchProfile -ne "cpu") {
+            $normalizedTorchProfile = "cpu"
+        }
+
         $markerPath = Join-Path $RuntimeRoot "runtime-ready.json"
         $payload = [ordered]@{
+            schema_version = 2
+            bootstrap_complete = $true
             ready_utc = (Get-Date).ToUniversalTime().ToString("o")
             backend_root = $BackendRoot
             python_exe = $PythonExe
             app_version = $AppVersion
+            torch_profile = $normalizedTorchProfile
+            components = [ordered]@{
+                app_data_dir = $AppDataDir
+                required_paths = $requiredPaths
+                ffmpeg = $FfmpegPath
+                ffprobe = $FfprobePath
+            }
+            models = [ordered]@{
+                default_pack = @("large-v3", "Helsinki-NLP/opus-mt-en-cs")
+                whisper_model_path = $WhisperModelPath
+                translation_model_path = $TranslationModelPath
+            }
         }
         $json = $payload | ConvertTo-Json -Depth 4
         Set-Content -Path $markerPath -Value $json -Encoding UTF8
@@ -920,6 +1036,11 @@ try {
     $appDataDir = Join-Path $localAppData "TranscribeMate"
     $runtimeRoot = Join-Path $appDataDir "runtime"
     $assetsDir = Join-Path $appDataDir "assets"
+    $whisperModelDir = Join-Path $appDataDir "cache\whisper\models\large-v3"
+    $translationModelDir = Join-Path $appDataDir "cache\huggingface\hub\models--Helsinki-NLP--opus-mt-en-cs"
+    $ffmpegValidationPath = Join-Path $assetsDir "ffmpeg.exe"
+    $ffprobeValidationPath = Join-Path $assetsDir "ffprobe.exe"
+    $torchProfile = "cpu"
     if (-not [string]::IsNullOrWhiteSpace($LogFile)) {
         $script:LogFilePath = $LogFile
     }
@@ -1065,8 +1186,28 @@ try {
     )
     [void](Invoke-RuntimePythonWithRetry -PythonExe $runtimePython -CommandArgs $pipHfXetArgs -Description "hf_xet install" -Retries 2 -TimeoutSeconds 1200 -IgnoreFailure)
 
-    Update-InstallerProgress -Percent 70 -Message "Checking NVIDIA GPU runtime support."
-    Ensure-CudaTorchRuntime -PythonExe $runtimePython
+    Update-InstallerProgress -Percent 70 -Message "Detecting NVIDIA GPU and selecting Torch runtime profile."
+    $gpuProbe = Get-NvidiaGpuProbe
+    if ([bool]$gpuProbe.detected) {
+        Update-InstallerProgress -Percent 72 -Message "NVIDIA GPU detected. Attempting CUDA Torch runtime."
+        Ensure-CudaTorchRuntime -PythonExe $runtimePython
+        if (Test-TorchCudaReady -PythonExe $runtimePython) {
+            $torchProfile = "cuda"
+            Write-Log "Torch runtime profile resolved to CUDA."
+        }
+        else {
+            Update-InstallerProgress -Percent 74 -Message "CUDA runtime unavailable. Falling back to CPU Torch."
+            Ensure-CpuTorchRuntime -PythonExe $runtimePython
+            $torchProfile = "cpu"
+            Write-Log "Torch runtime profile resolved to CPU (CUDA fallback failed)."
+        }
+    }
+    else {
+        Update-InstallerProgress -Percent 72 -Message "NVIDIA GPU not detected. Installing CPU Torch runtime."
+        Ensure-CpuTorchRuntime -PythonExe $runtimePython
+        $torchProfile = "cpu"
+        Write-Log "Torch runtime profile resolved to CPU (no NVIDIA GPU detected)."
+    }
 
     if ($WithModels) {
         Update-InstallerProgress -Percent 75 -Message "Downloading default AI models."
@@ -1082,9 +1223,10 @@ if backend_root not in sys.path:
     sys.path.insert(0, backend_root)
 
 from transcribemate.core.models import configure_model_environment
-from transcribemate.core.models import whisper_cache_dir
+from transcribemate.core.models import whisper_cache_dir, huggingface_cache_dir
 from faster_whisper import WhisperModel
 from faster_whisper.utils import download_model as download_whisper_model
+from huggingface_hub import snapshot_download
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from pathlib import Path
 
@@ -1101,16 +1243,31 @@ download_whisper_model(
 WhisperModel(str(target_model_dir), device="cpu", compute_type="int8", local_files_only=True)
 
 model_name = "Helsinki-NLP/opus-mt-en-cs"
-AutoTokenizer.from_pretrained(model_name)
+hf_cache_root = Path(huggingface_cache_dir())
+translation_model_dir = hf_cache_root / "hub" / "models--Helsinki-NLP--opus-mt-en-cs"
+translation_model_dir.mkdir(parents=True, exist_ok=True)
+snapshot_download(
+    repo_id=model_name,
+    local_dir=str(translation_model_dir),
+    local_files_only=False,
+)
+AutoTokenizer.from_pretrained(str(translation_model_dir), local_files_only=True)
 try:
-    AutoModelForSeq2SeqLM.from_pretrained(model_name, use_safetensors=True)
+    AutoModelForSeq2SeqLM.from_pretrained(
+        str(translation_model_dir),
+        local_files_only=True,
+        use_safetensors=True
+    )
 except Exception:
-    AutoModelForSeq2SeqLM.from_pretrained(model_name)
+    AutoModelForSeq2SeqLM.from_pretrained(str(translation_model_dir), local_files_only=True)
 
 print("Model prefetch complete.")
 '@
             Set-Content -Path $prefetchScriptPath -Value $prefetchScript -Encoding UTF8
             Invoke-RuntimePython @($prefetchScriptPath)
+            Assert-DirectoryHasContent -DirectoryPath $whisperModelDir -Description "Whisper model directory"
+            Assert-DirectoryHasContent -DirectoryPath $translationModelDir -Description "Translation model directory"
+            Write-Log "Model prefetch validation passed."
         }
         finally {
             if (-not [string]::IsNullOrWhiteSpace($prefetchScriptPath) -and (Test-Path $prefetchScriptPath)) {
@@ -1164,18 +1321,30 @@ print("Model prefetch complete.")
     }
 
     Update-InstallerProgress -Percent 96 -Message "Running runtime validation checks."
-    $ffmpegValidationPath = Join-Path $assetsDir "ffmpeg.exe"
     Invoke-RuntimeSanityChecks `
         -PythonExe $runtimePython `
         -BackendRoot $BackendRoot `
         -FfmpegExePath $ffmpegValidationPath `
         -RequireFfmpeg:$DownloadFfmpeg
 
+    if (Test-TorchCudaReady -PythonExe $runtimePython) {
+        $torchProfile = "cuda"
+    }
+    elseif (Test-TorchCpuReady -PythonExe $runtimePython) {
+        $torchProfile = "cpu"
+    }
+
     Write-RuntimeReadyMarker `
+        -AppDataDir $appDataDir `
         -RuntimeRoot $runtimeRoot `
         -BackendRoot $BackendRoot `
         -PythonExe $runtimePython `
-        -AppVersion $appVersion
+        -AppVersion $appVersion `
+        -TorchProfile $torchProfile `
+        -WhisperModelPath $whisperModelDir `
+        -TranslationModelPath $translationModelDir `
+        -FfmpegPath $ffmpegValidationPath `
+        -FfprobePath $ffprobeValidationPath
 
     Update-InstallerProgress -Percent 100 -Message "Runtime bootstrap completed successfully."
 }

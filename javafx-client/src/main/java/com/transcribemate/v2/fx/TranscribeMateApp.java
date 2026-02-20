@@ -7,14 +7,9 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Locale;
+import java.util.List;
 
 public class TranscribeMateApp extends Application {
-    private static final String APP_NAME = "TranscribeMate";
-    private static final String RUNTIME_READY_MARKER_NAME = "runtime-ready.json";
-
     private BackendClient backendClient;
     private MainController controller;
 
@@ -22,16 +17,21 @@ public class TranscribeMateApp extends Application {
     public void start(Stage stage) throws Exception {
         AppFileLogger.log("INFO", "app.start", "Application start requested.");
         try {
-            boolean mandatoryRuntimeSetup = isMandatoryRuntimeSetupRequiredOnLaunch();
-            String backendStartupError = null;
-            if (!mandatoryRuntimeSetup) {
+            RuntimeInstallChecker.RuntimeCheckResult runtimeCheck = RuntimeInstallChecker.evaluate();
+            if (runtimeCheck.isReady()) {
                 try {
                     backendClient = BackendClient.auto();
                     backendClient.start();
                 } catch (Exception ex) {
                     backendClient = null;
-                    backendStartupError = ex.getMessage();
                     AppFileLogger.logException("backend.start", ex);
+                    String reason = ex.getMessage() == null ? "Backend process failed to start." : ex.getMessage();
+                    runtimeCheck = RuntimeInstallChecker.repairRequired(
+                            runtimeCheck.appDataDir(),
+                            "backend_start_failed",
+                            "Backend startup failed. Runtime repair is required before continuing.",
+                            List.of("backend_start_error: " + reason)
+                    );
                 }
             }
 
@@ -40,10 +40,8 @@ public class TranscribeMateApp extends Application {
             controller = loader.getController();
             controller.initBackend(backendClient);
 
-            if (mandatoryRuntimeSetup) {
-                controller.reportBackendStartupFailure("Mandatory first-launch runtime setup is required.");
-            } else if (backendStartupError != null && !backendStartupError.isBlank()) {
-                controller.reportBackendStartupFailure(backendStartupError);
+            if (!runtimeCheck.isReady()) {
+                controller.reportBackendStartupFailure(runtimeCheck.reasonMessage());
             }
 
             Scene scene = new Scene(root, 1460, 920);
@@ -59,8 +57,9 @@ public class TranscribeMateApp extends Application {
             stage.setFullScreen(false);
             AppFileLogger.log("INFO", "app.start", "Primary stage displayed.");
 
-            if (mandatoryRuntimeSetup) {
-                Platform.runLater(() -> controller.startMandatoryRuntimeSetupOnLaunch());
+            RuntimeInstallChecker.RuntimeCheckResult startupRuntimeCheck = runtimeCheck;
+            if (!startupRuntimeCheck.isReady()) {
+                Platform.runLater(() -> controller.startMandatoryRuntimeSetupOnLaunch(startupRuntimeCheck));
             }
         } catch (Exception ex) {
             AppFileLogger.logException("app.start", ex);
@@ -95,48 +94,5 @@ public class TranscribeMateApp extends Application {
         });
         AppFileLogger.log("INFO", "app.main", "Launching JavaFX runtime.");
         launch(args);
-    }
-
-    private static boolean isMandatoryRuntimeSetupRequiredOnLaunch() {
-        String projectRoot = System.getenv("TM_PROJECT_ROOT");
-        if (projectRoot != null && !projectRoot.isBlank()) {
-            // Dev mode: do not enforce first-launch bootstrap automatically.
-            return false;
-        }
-
-        Path runtimeRoot = resolveRuntimeRoot();
-        Path markerPath = runtimeRoot.resolve(RUNTIME_READY_MARKER_NAME);
-        if (!Files.isRegularFile(markerPath)) {
-            return true;
-        }
-
-        Path pythonExe = resolveManagedRuntimePython(runtimeRoot);
-        return !Files.isRegularFile(pythonExe);
-    }
-
-    private static Path resolveManagedRuntimePython(Path runtimeRoot) {
-        String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        if (osName.contains("win")) {
-            return runtimeRoot.resolve("python").resolve("python.exe");
-        }
-        return runtimeRoot.resolve("python").resolve("bin").resolve("python");
-    }
-
-    private static Path resolveRuntimeRoot() {
-        String localAppData = System.getenv("LOCALAPPDATA");
-        if (localAppData != null && !localAppData.isBlank()) {
-            return Path.of(localAppData, APP_NAME, "runtime");
-        }
-
-        String userHome = System.getProperty("user.home", "");
-        if (userHome == null || userHome.isBlank()) {
-            return Path.of(System.getProperty("user.dir", "."), APP_NAME, "runtime");
-        }
-
-        String osName = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        if (osName.contains("win")) {
-            return Path.of(userHome, "AppData", "Local", APP_NAME, "runtime");
-        }
-        return Path.of(userHome, ".local", "share", APP_NAME, "runtime");
     }
 }
