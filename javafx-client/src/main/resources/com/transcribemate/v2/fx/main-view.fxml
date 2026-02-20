@@ -53,6 +53,7 @@ The controller for this view is specified as MainController, which will handle t
           <VBox spacing="2.0">
             <children>
               <Label fx:id="appTitleLabel" text="TranscribeMate" styleClass="title"/>
+              <Label text="by NEBEHAY Martin" styleClass="app-credit"/>
               <Label text="V2 Studio - transcription, translation, subtitle and speaker workflows" styleClass="subtitle"/>
             </children>
           </VBox>

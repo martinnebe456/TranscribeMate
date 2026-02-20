@@ -110,6 +110,11 @@
     -fx-text-fill: -tm-text-muted;
 }
 
+.app-credit {
+    -fx-font-size: 11px;
+    -fx-text-fill: -tm-text-muted;
+}
+
 .small-label {
     -fx-text-fill: -tm-text-muted;
 }
