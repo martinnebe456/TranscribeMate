@@ -98,6 +98,8 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
 
@@ -1442,57 +1444,114 @@ public class MainController {
         addUserLog("WARN", "Use 'Repair runtime' and restart the app.");
     }
 
-    public void startMandatoryRuntimeSetupOnLaunch() {
+    public void startMandatoryRuntimeSetupOnLaunch(RuntimeInstallChecker.RuntimeCheckResult runtimeCheck) {
         if (runtimeBootstrapRunning) {
             return;
         }
 
+        RuntimeInstallChecker.RuntimeCheckResult check = runtimeCheck;
+        if (check == null) {
+            check = RuntimeInstallChecker.repairRequired(
+                    resolveRuntimeAppDataDir(),
+                    "runtime_check_missing",
+                    "Runtime check state is unavailable.",
+                    List.of()
+            );
+        }
+
+        boolean firstRunRequired = check.isFirstRunRequired();
         RuntimeBootstrapTarget target = resolveRuntimeBootstrapTarget();
         if (target == null) {
             addTechnicalLog(
                     "ERROR",
-                    "Mandatory online runtime setup is unavailable. Missing bootstrap_runtime.ps1 or backend bundle."
+                    "Mandatory runtime setup/repair is unavailable. Missing bootstrap_runtime.ps1 or backend bundle."
+            );
+            if (firstRunRequired) {
+                runMandatoryRuntimeRollbackAndExit(check.appDataDir(), "Mandatory first-launch setup cannot start.");
+                return;
+            }
+            Platform.exit();
+            return;
+        }
+
+        statusLabel.setText(firstRunRequired ? "Runtime setup required" : "Runtime repair required");
+        stepLabel.setText(firstRunRequired ? "first launch" : "runtime repair");
+        progressBar.setProgress(0.0);
+        resetEtaDisplay();
+        addUserLog(
+                "WARN",
+                firstRunRequired
+                        ? "First launch requires online runtime setup before the app can be used."
+                        : "Runtime check failed. Mandatory runtime repair is required before the app can be used."
+        );
+
+        ButtonType startButton = new ButtonType(
+                firstRunRequired ? "Start setup" : "Start repair",
+                ButtonBar.ButtonData.OK_DONE
+        );
+        ButtonType exitButton = new ButtonType("Exit application", ButtonBar.ButtonData.CANCEL_CLOSE);
+
+        Alert runtimeDialog = new Alert(Alert.AlertType.CONFIRMATION);
+        runtimeDialog.setTitle(firstRunRequired ? "First Launch Setup Required" : "Runtime Repair Required");
+        runtimeDialog.setHeaderText(firstRunRequired
+                ? "Online runtime setup is required"
+                : "Runtime installation is incomplete and must be repaired");
+        StringBuilder body = new StringBuilder();
+        body.append(firstRunRequired
+                ? "Before TranscribeMate can run, it must verify and install required runtime components.\n\n"
+                : "TranscribeMate detected missing runtime components. Repair is required before continuing.\n\n");
+        body.append("What will be checked and installed:\n")
+                .append("- %LOCALAPPDATA%/TranscribeMate runtime folder\n")
+                .append("- Embedded Python runtime and backend dependencies\n")
+                .append("- Default AI model pack (Whisper large-v3, Helsinki-NLP/opus-mt-en-cs)\n")
+                .append("- FFmpeg tools\n")
+                .append("- NVIDIA GPU detection and CUDA Torch provisioning (fallback to CPU runtime)\n\n")
+                .append("Runtime location:\n")
+                .append(target.appDataDir())
+                .append("\n");
+
+        if (!trimToEmpty(check.reasonMessage()).isBlank()) {
+            body.append("\nDetected reason: ").append(check.reasonMessage()).append("\n");
+        }
+
+        if (!check.missingArtifacts().isEmpty()) {
+            body.append("\nMissing or invalid artifacts:\n");
+            for (String item : check.missingArtifacts()) {
+                String normalized = trimToEmpty(item);
+                if (!normalized.isBlank()) {
+                    body.append("- ").append(normalized).append("\n");
+                }
+            }
+        }
+
+        body.append(
+                "\nYou can cancel later during setup. If setup is not completed, the application will close."
+        );
+        runtimeDialog.setContentText(body.toString());
+        runtimeDialog.getButtonTypes().setAll(startButton, exitButton);
+        Stage owner = getStage();
+        if (owner != null) {
+            runtimeDialog.initOwner(owner);
+        }
+        applyThemeToDialog(runtimeDialog);
+
+        Optional<ButtonType> choice = runtimeDialog.showAndWait();
+        if (choice.isPresent() && choice.get() == startButton) {
+            showRuntimeBootstrapWindow(
+                    target,
+                    true,
+                    !firstRunRequired,
+                    firstRunRequired
             );
             return;
         }
 
-        statusLabel.setText("Runtime setup required");
-        stepLabel.setText("first launch");
-        progressBar.setProgress(0.0);
-        resetEtaDisplay();
-        addUserLog("WARN", "First launch requires online runtime setup before the app can be used.");
-
-        ButtonType startSetupButton = new ButtonType("Start setup", ButtonBar.ButtonData.OK_DONE);
-        ButtonType notNowButton = new ButtonType("Not now", ButtonBar.ButtonData.CANCEL_CLOSE);
-
-        Alert firstLaunchDialog = new Alert(Alert.AlertType.CONFIRMATION);
-        firstLaunchDialog.setTitle("First Launch Setup Required");
-        firstLaunchDialog.setHeaderText("Online runtime setup is required");
-        firstLaunchDialog.setContentText(
-                "This is the first launch of TranscribeMate.\n\n"
-                        + "The application now needs to download and install:\n"
-                        + "- Embedded Python runtime\n"
-                        + "- Backend dependencies (including AI packages)\n"
-                        + "- Default AI models\n"
-                        + "- FFmpeg tools\n\n"
-                        + "Without this step, TranscribeMate will not work correctly.\n\n"
-                        + "Start online setup now?"
-        );
-        firstLaunchDialog.getButtonTypes().setAll(startSetupButton, notNowButton);
-        Stage owner = getStage();
-        if (owner != null) {
-            firstLaunchDialog.initOwner(owner);
-        }
-        applyThemeToDialog(firstLaunchDialog);
-
-        Optional<ButtonType> choice = firstLaunchDialog.showAndWait();
-        if (choice.isPresent() && choice.get() == startSetupButton) {
-            showRuntimeBootstrapWindow(target, true, false);
+        addUserLog("WARN", "Mandatory runtime setup/repair was declined by user.");
+        if (firstRunRequired) {
+            runMandatoryRuntimeRollbackAndExit(target.appDataDir(), "Mandatory first-launch setup was declined.");
             return;
         }
-
-        addUserLog("WARN", "Online runtime setup was not started. The app will not function correctly until setup is completed.");
-        addUserLog("INFO", "Use the 'Repair runtime' button to continue setup when ready.");
+        Platform.exit();
     }
 
     public void installShortcuts(Scene scene) {
@@ -3559,7 +3618,7 @@ public class MainController {
     }
 
     private void updateEditorButtonsState() {
-        boolean running = startButton != null && startButton.isDisabled();
+        boolean running = controllerRunning;
         boolean editable = activeEditedFilePath != null && projectFileEditorArea != null && projectFileEditorArea.isEditable();
         if (filesSaveEditorButton != null) {
             filesSaveEditorButton.setDisable(running || !editable || !editorDirty);
@@ -3738,7 +3797,7 @@ public class MainController {
             return;
         }
         PreflightCheckRow selected = preflightChecksTable == null ? null : preflightChecksTable.getSelectionModel().getSelectedItem();
-        boolean running = startButton != null && startButton.isDisabled();
+        boolean running = controllerRunning;
         boolean enabled = selected != null && !trimToEmpty(selected.getSuggestedFix()).isBlank();
         applyPreflightFixButton.setDisable(running || !enabled);
     }
@@ -3793,7 +3852,7 @@ public class MainController {
 
     private void updateWizardState() {
         boolean projectReady = activeProjectRoot != null && !trimToEmpty(activeProjectId).isBlank();
-        boolean running = startButton != null && startButton.isDisabled();
+        boolean running = controllerRunning;
         WizardActivityDefinition activity = resolveWizardActivitySelection();
         boolean activityReady = activity != null && Objects.equals(trimToEmpty(wizardActivityId), activity.id());
         boolean sourceReady = wizardSourceImported;
@@ -3984,7 +4043,7 @@ public class MainController {
 
     private void refreshWorkspaceSettingsUi() {
         Path workspaceRoot = workspaceRootPath();
-        boolean running = startButton != null && startButton.isDisabled();
+        boolean running = controllerRunning;
         if (settingsWorkspaceRootField != null) {
             settingsWorkspaceRootField.setText(workspaceRoot == null ? "" : workspaceRoot.toString());
         }
@@ -4253,7 +4312,7 @@ public class MainController {
         }
         refreshActiveProjectLabels();
         onProjectSelectionChanged(projectTable == null ? null : projectTable.getSelectionModel().getSelectedItem());
-        setRunning(startButton != null && startButton.isDisabled());
+        setRunning(controllerRunning);
     }
 
     private void refreshActiveProjectLabels() {
@@ -4313,7 +4372,7 @@ public class MainController {
         }
         onWorkspaceFileSelectionChanged(null);
         refreshDashboardData();
-        setRunning(startButton != null && startButton.isDisabled());
+        setRunning(controllerRunning);
     }
 
     private void refreshDashboardData() {
@@ -4340,7 +4399,7 @@ public class MainController {
             }
             onDashboardRecentSelectionChanged(null);
             if (dashboardOpenWizardButton != null) {
-                boolean running = startButton != null && startButton.isDisabled();
+                boolean running = controllerRunning;
                 dashboardOpenWizardButton.setDisable(running || activeProjectRoot == null);
             }
             return;
@@ -4383,7 +4442,7 @@ public class MainController {
                         : dashboardRecentFilesTable.getSelectionModel().getSelectedItem()
         );
         if (dashboardOpenWizardButton != null) {
-            boolean running = startButton != null && startButton.isDisabled();
+            boolean running = controllerRunning;
             dashboardOpenWizardButton.setDisable(running || activeProjectRoot == null);
         }
     }
@@ -4924,7 +4983,7 @@ public class MainController {
 
     private void onProjectSelectionChanged(ProjectRow selected) {
         boolean hasSelection = selected != null;
-        boolean running = startButton != null && startButton.isDisabled();
+        boolean running = controllerRunning;
         if (projectSelectButton != null) {
             projectSelectButton.setDisable(running || !hasSelection);
         }
@@ -4937,14 +4996,14 @@ public class MainController {
     }
 
     private void onDashboardRecentSelectionChanged(WorkspaceFileRow selected) {
-        boolean running = startButton != null && startButton.isDisabled();
+        boolean running = controllerRunning;
         if (dashboardOpenSelectedRecentButton != null) {
             dashboardOpenSelectedRecentButton.setDisable(running || selected == null);
         }
     }
 
     private void onWorkspaceFileSelectionChanged(WorkspaceFileRow selected) {
-        boolean running = startButton != null && startButton.isDisabled();
+        boolean running = controllerRunning;
         if (filesOpenSelectedButton != null) {
             filesOpenSelectedButton.setDisable(running || selected == null);
         }
@@ -6142,7 +6201,7 @@ public class MainController {
             return;
         }
 
-        showRuntimeBootstrapWindow(target, false, true);
+        showRuntimeBootstrapWindow(target, false, true, false);
     }
 
     @FXML
@@ -7354,7 +7413,7 @@ public class MainController {
         String projectId = trimToEmpty(activeProjectId);
         ProjectWorkspace activeWorkspace = projectsById.get(projectId);
         boolean hasProject = activeWorkspace != null && activeProjectRoot != null;
-        boolean running = startButton != null && startButton.isDisabled();
+        boolean running = controllerRunning;
         if (settingsScopeValueLabel != null) {
             if (hasProject) {
                 settingsScopeValueLabel.setText("Active project: " + activeWorkspace.name() + " (" + projectId + ")");
@@ -7378,7 +7437,7 @@ public class MainController {
             moduleFlowLabel.setText(details);
         }
         moduleFlowActionKey = actionKey == null ? "" : actionKey;
-        boolean running = startButton != null && startButton.isDisabled();
+        boolean running = controllerRunning;
         boolean hasActiveProject = activeProjectRoot != null && !trimToEmpty(activeProjectId).isBlank();
         if (moduleFlowActionButton != null) {
             moduleFlowActionButton.setText(actionText == null ? "Action" : actionText);
@@ -7497,7 +7556,7 @@ public class MainController {
         if (modulePreviousButton == null) {
             return;
         }
-        boolean running = startButton != null && startButton.isDisabled();
+        boolean running = controllerRunning;
         boolean hasPrevious = !trimToEmpty(previousModule).isBlank()
                 && !Objects.equals(normalizeModuleId(previousModule), activeModule);
         modulePreviousButton.setDisable(running || !hasPrevious);
@@ -9974,7 +10033,12 @@ public class MainController {
     /**
      * Opens runtime bootstrap dialog and executes bootstrap PowerShell process.
      */
-    private void showRuntimeBootstrapWindow(RuntimeBootstrapTarget target, boolean mandatoryLaunch, boolean repairMode) {
+    private void showRuntimeBootstrapWindow(
+            RuntimeBootstrapTarget target,
+            boolean blockingLaunch,
+            boolean repairMode,
+            boolean fullRollbackOnFailure
+    ) {
         runtimeBootstrapRunning = true;
         if (installRuntimeButton != null) {
             installRuntimeButton.setDisable(true);
@@ -10017,6 +10081,7 @@ public class MainController {
 
         Button openLogButton = new Button("Open bootstrap log");
         openLogButton.setOnAction(event -> openPath(target.logFilePath().toString()));
+        Button cancelSetupButton = new Button(repairMode ? "Cancel repair" : "Cancel setup");
         Button closeButton = new Button("Close");
         closeButton.setDisable(true);
         Button closeAppButton = new Button("Close application");
@@ -10024,7 +10089,7 @@ public class MainController {
         closeAppButton.setManaged(false);
         closeAppButton.setDisable(true);
 
-        HBox actions = new HBox(8.0, openLogButton, closeButton, closeAppButton);
+        HBox actions = new HBox(8.0, openLogButton, cancelSetupButton, closeButton, closeAppButton);
         VBox content = new VBox(10.0, headline, intro, status, progressBarLocal, liveLogArea, actions);
         content.setPadding(new Insets(12.0));
         content.getStyleClass().addAll("app-shell", themeClassFromName(currentTheme));
@@ -10048,6 +10113,28 @@ public class MainController {
             dialog.close();
             Platform.exit();
         });
+        AtomicBoolean cancelledByUser = new AtomicBoolean(false);
+        AtomicReference<Process> bootstrapProcessRef = new AtomicReference<>();
+        cancelSetupButton.setOnAction(event -> {
+            if (!runtimeBootstrapRunning) {
+                return;
+            }
+
+            cancelledByUser.set(true);
+            cancelSetupButton.setDisable(true);
+            status.setText("Cancellation requested. Stopping bootstrap process...");
+            appendBootstrapLogLine(liveLogArea, "INFO: User requested cancellation.");
+            addUserLog("WARN", repairMode ? "Runtime repair cancellation requested." : "Runtime setup cancellation requested.");
+
+            Process runningProcess = bootstrapProcessRef.get();
+            if (runningProcess != null && runningProcess.isAlive()) {
+                try {
+                    runningProcess.destroyForcibly();
+                } catch (Exception ex) {
+                    addTechnicalLog("WARN", "Could not terminate runtime bootstrap process: " + rootMessage(ex));
+                }
+            }
+        });
         dialog.setOnCloseRequest(event -> {
             if (runtimeBootstrapRunning) {
                 event.consume();
@@ -10070,6 +10157,10 @@ public class MainController {
                     } catch (Exception ignored) {
                         // Best effort only.
                     }
+                }
+
+                if (cancelledByUser.get()) {
+                    throw new IllegalStateException("Runtime bootstrap cancelled before process startup.");
                 }
 
                 List<String> command = new ArrayList<>();
@@ -10098,6 +10189,10 @@ public class MainController {
                 processBuilder.environment().putIfAbsent("PYTHONIOENCODING", "utf-8");
 
                 Process process = processBuilder.start();
+                bootstrapProcessRef.set(process);
+                if (cancelledByUser.get() && process.isAlive()) {
+                    process.destroyForcibly();
+                }
                 try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
                     String line;
                     while ((line = reader.readLine()) != null) {
@@ -10116,12 +10211,18 @@ public class MainController {
                 }
 
                 exitCode = process.waitFor();
+                if (cancelledByUser.get() && exitCode == 0) {
+                    exitCode = 130;
+                }
             } catch (Exception ex) {
-                processError = ex;
+                if (!cancelledByUser.get()) {
+                    processError = ex;
+                }
             }
 
             int finalExitCode = exitCode;
             Exception finalProcessError = processError;
+            boolean finalCancelledByUser = cancelledByUser.get();
             Platform.runLater(() -> {
                 runtimeBootstrapRunning = false;
                 if (installRuntimeButton != null) {
@@ -10139,8 +10240,27 @@ public class MainController {
                 if (settingsModuleBox != null) {
                     settingsModuleBox.setDisable(false);
                 }
+                cancelSetupButton.setDisable(true);
                 closeButton.setDisable(false);
                 dialog.setOnCloseRequest(null);
+
+                if (finalCancelledByUser) {
+                    status.setText(repairMode ? "Runtime repair cancelled by user." : "Runtime setup cancelled by user.");
+                    addTechnicalLog(
+                            "WARN",
+                            (repairMode ? "Runtime repair" : "Runtime setup")
+                                    + " was cancelled by user. Log: " + target.logFilePath()
+                    );
+                    if (blockingLaunch) {
+                        dialog.close();
+                        if (fullRollbackOnFailure) {
+                            runMandatoryRuntimeRollbackAndExit(target.appDataDir(), "Mandatory first-launch setup was cancelled.");
+                        } else {
+                            Platform.exit();
+                        }
+                    }
+                    return;
+                }
 
                 if (finalProcessError != null) {
                     status.setText(repairMode ? "Runtime repair failed to start." : "Runtime setup failed to start.");
@@ -10150,21 +10270,33 @@ public class MainController {
                             (repairMode ? "Runtime repair failed to start: " : "Online runtime setup failed to start: ")
                                     + rootMessage(finalProcessError)
                     );
+                    if (blockingLaunch) {
+                        dialog.close();
+                        if (fullRollbackOnFailure) {
+                            runMandatoryRuntimeRollbackAndExit(target.appDataDir(), "Mandatory first-launch setup failed.");
+                        } else {
+                            Platform.exit();
+                        }
+                    }
                     return;
                 }
 
                 if (finalExitCode == 0) {
                     progressBarLocal.setProgress(1.0);
-                    status.setText(mandatoryLaunch || repairMode
+                    status.setText(blockingLaunch || repairMode
                             ? "Runtime setup completed successfully. Restart the app."
                             : "Runtime setup completed successfully.");
+                    if (blockingLaunch) {
+                        closeButton.setDisable(true);
+                        dialog.setOnCloseRequest(event -> event.consume());
+                    }
                     closeAppButton.setDisable(false);
                     closeAppButton.setVisible(true);
                     closeAppButton.setManaged(true);
                     addUserLog("SUCCESS", repairMode
                             ? "Runtime repair completed successfully."
                             : "Online runtime setup completed successfully.");
-                    if (mandatoryLaunch || repairMode || backendClient == null) {
+                    if (blockingLaunch || repairMode || backendClient == null) {
                         addUserLog("INFO", "Use 'Close application' and start TranscribeMate again.");
                     }
                     return;
@@ -10176,8 +10308,80 @@ public class MainController {
                         (repairMode ? "Runtime repair failed" : "Online runtime setup failed")
                                 + " (exit " + finalExitCode + "). Log: " + target.logFilePath()
                 );
+                if (blockingLaunch) {
+                    dialog.close();
+                    if (fullRollbackOnFailure) {
+                        runMandatoryRuntimeRollbackAndExit(target.appDataDir(), "Mandatory first-launch setup failed.");
+                    } else {
+                        Platform.exit();
+                    }
+                }
             });
         });
+    }
+
+    private void runMandatoryRuntimeRollbackAndExit(Path appDataDir, String reason) {
+        Path rollbackRoot = appDataDir == null
+                ? resolveRuntimeAppDataDir().toAbsolutePath().normalize()
+                : appDataDir.toAbsolutePath().normalize();
+        String details = trimToEmpty(reason);
+        if (!details.isBlank()) {
+            addTechnicalLog("WARN", details + " Starting rollback of: " + rollbackRoot);
+        }
+        addUserLog("WARN", "Rolling back incomplete first-launch runtime files...");
+
+        CompletableFuture.runAsync(() -> {
+            boolean deleted = deleteDirectoryWithRetries(rollbackRoot, 5);
+            Platform.runLater(() -> {
+                if (deleted) {
+                    addTechnicalLog("INFO", "Rollback completed: " + rollbackRoot);
+                } else {
+                    addTechnicalLog("WARN", "Rollback could not fully remove: " + rollbackRoot);
+                }
+                Platform.exit();
+            });
+        });
+    }
+
+    private boolean deleteDirectoryWithRetries(Path root, int maxAttempts) {
+        if (root == null) {
+            return true;
+        }
+        if (!Files.exists(root)) {
+            return true;
+        }
+
+        for (int attempt = 1; attempt <= Math.max(1, maxAttempts); attempt++) {
+            try {
+                if (Files.exists(root)) {
+                    deleteDirectoryRecursively(root);
+                }
+                if (!Files.exists(root)) {
+                    return true;
+                }
+            } catch (Exception ignored) {
+                // retry below
+            }
+
+            try {
+                Thread.sleep(Math.min(1000L, 200L * attempt));
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                return !Files.exists(root);
+            }
+        }
+
+        try {
+            for (String name : List.of("runtime", "cache", "assets", "workspace")) {
+                Path candidate = root.resolve(name);
+                if (Files.exists(candidate)) {
+                    deleteDirectoryRecursively(candidate);
+                }
+            }
+        } catch (Exception ignored) {
+            // Best effort only.
+        }
+        return !Files.exists(root);
     }
 
     /**
