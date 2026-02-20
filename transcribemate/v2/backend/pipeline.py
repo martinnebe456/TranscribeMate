@@ -29,6 +29,7 @@ from ...pipeline.diarize import (
     save_speaker_sidecar,
 )
 from ...pipeline.download import download_single_or_playlist
+from ...pipeline.summarize import summarize_transcript_file
 from ...pipeline.dubbing import dub_video_with_edge_tts
 from ...pipeline.subtitles import hard_subtitles, soft_subtitles
 from ...pipeline.transcribe import faster_whisper_transcribe
@@ -95,6 +96,7 @@ class PipelineOrchestrator:
         subtitles_trans_final_dir = final_base_dir
         videos_final_dir = final_base_dir
         summaries_dir = final_base_dir
+        ai_summaries_dir = final_base_dir / "summaries"
         final_base_dir.mkdir(parents=True, exist_ok=True)
 
         workdir: Path | None = None
@@ -258,6 +260,50 @@ class PipelineOrchestrator:
                 )
                 for path in exported:
                     self._add_artifact(path, label="Transcript export")
+
+                if self.request.text_export.summary_ai_enabled:
+                    transcript_exports = [path for path in exported if path.suffix.lower() == ".txt"]
+                    if transcript_exports:
+                        self._set_step("summarize")
+                        total_summaries = len(transcript_exports)
+                        for transcript_idx, transcript_path in enumerate(transcript_exports, start=1):
+                            self._check_cancelled()
+                            self._log(
+                                "[INFO] AI summary "
+                                f"{transcript_idx}/{total_summaries}: {transcript_path.name}"
+                            )
+
+                            def _summary_progress(
+                                _step: str,
+                                overall_pct: float | None,
+                                _step_pct: float | None,
+                                indeterminate: bool,
+                            ):
+                                if indeterminate or overall_pct is None:
+                                    self._set_step_indeterminate(True)
+                                    return
+                                bounded = max(0.0, min(100.0, float(overall_pct)))
+                                mapped = (
+                                    (float(transcript_idx - 1) + (bounded / 100.0))
+                                    / float(max(total_summaries, 1))
+                                    * 100.0
+                                )
+                                self._set_step_progress(mapped)
+
+                            summary_path = summarize_transcript_file(
+                                transcript_path=transcript_path,
+                                output_dir=ai_summaries_dir,
+                                summary_lang=self.request.text_export.summary_lang,
+                                summary_ai_tier=self.request.text_export.summary_ai_tier,
+                                log=self._log_legacy,
+                                progress=_summary_progress,
+                                stop_flag=self.stop_flag,
+                            )
+                            self._add_artifact(summary_path, label="AI summary")
+                    else:
+                        self._log(
+                            "[WARN] AI summary is enabled, but no .txt transcript exports were produced."
+                        )
 
                 if self.request.diarization.enabled and sidecar_path:
                     sidecar_payload = build_speaker_sidecar(

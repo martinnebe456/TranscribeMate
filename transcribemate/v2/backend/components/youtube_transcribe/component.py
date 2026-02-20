@@ -16,7 +16,7 @@ class YoutubeTranscriptComponent(StaticModuleComponent):
                 source_mode="youtube",
                 output_mode="txt_only",
                 runtime_features=("yt_dlp_download", "faster_whisper", "text_export"),
-                python_packages=("yt_dlp", "faster_whisper"),
+                python_packages=("yt_dlp", "faster_whisper", "transformers"),
                 ui_schema={
                     "show_tabs": ["run", "logs", "jobs", "settings"],
                     "show_sections": [
@@ -41,6 +41,8 @@ class YoutubeTranscriptComponent(StaticModuleComponent):
                         "settings.model_options",
                         "settings.source_lang",
                         "settings.summary_lang",
+                        "settings.summary_ai",
+                        "settings.summary_model_tier",
                         "settings.batch_size",
                         "settings.text_options",
                         "settings.split_minutes",

@@ -51,6 +51,8 @@ public class YoutubeTranscriptModuleComponent extends AbstractModuleComponent {
                                 "settings.model_options",
                                 "settings.source_lang",
                                 "settings.summary_lang",
+                                "settings.summary_ai",
+                                "settings.summary_model_tier",
                                 "settings.batch_size",
                                 "settings.text_options",
                                 "settings.split_minutes"

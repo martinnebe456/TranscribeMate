@@ -44,8 +44,13 @@ public class YoutubeSubtitlesModuleComponent extends AbstractModuleComponent {
                                 "settings.model",
                                 "settings.model_options",
                                 "settings.source_lang",
+                                "settings.summary_lang",
+                                "settings.summary_ai",
+                                "settings.summary_model_tier",
                                 "settings.target_lang",
-                                "settings.batch_size"
+                                "settings.batch_size",
+                                "settings.text_options",
+                                "settings.split_minutes"
                         ),
                         true
                 )

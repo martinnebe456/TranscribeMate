@@ -17,7 +17,7 @@ class ConferenceModeComponent(StaticModuleComponent):
                 source_mode="local",
                 output_mode="conference",
                 runtime_features=("local_media", "conference_metadata", "text_export"),
-                python_packages=("faster_whisper",),
+                python_packages=("faster_whisper", "transformers"),
                 ui_schema={
                     "show_tabs": ["run", "advanced", "logs", "jobs", "settings"],
                     "show_sections": [
@@ -40,6 +40,8 @@ class ConferenceModeComponent(StaticModuleComponent):
                         "settings.model_options",
                         "settings.source_lang",
                         "settings.summary_lang",
+                        "settings.summary_ai",
+                        "settings.summary_model_tier",
                         "settings.batch_size",
                         "settings.text_options",
                         "settings.split_minutes",

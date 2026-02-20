@@ -13,6 +13,7 @@ ALLOWED_OUTPUT_MODES = {"conference", "video_subs", "video_dub", "srt_only", "tx
 ALLOWED_SUBTITLE_MODES = {"soft", "hard"}
 ALLOWED_DIARIZATION_BACKENDS = {"local_cluster_fast", "local_cluster_accurate"}
 ALLOWED_DIARIZATION_ACCURACY_PROFILES = {"low", "balanced", "high", "maximum"}
+ALLOWED_SUMMARY_AI_TIERS = {"low", "medium", "high"}
 ALLOWED_MODULES = {
     "offline_transcribe",
     "youtube_transcribe",
@@ -301,17 +302,30 @@ class TextExportSpec:
     summary_pack: bool = False
     split_minutes: int = 0
     summary_lang: str = "auto"
+    summary_ai_enabled: bool = False
+    summary_ai_tier: str = "medium"
     speaker: str = ""
     topic: str = ""
 
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "TextExportSpec":
+        summary_ai_tier = _normalized_str(payload.get("summary_ai_tier"), default="medium").lower()
+        if summary_ai_tier not in ALLOWED_SUMMARY_AI_TIERS:
+            raise RequestValidationError(
+                "text.summary_ai_tier must be one of: low, medium, high",
+                details={
+                    "text.summary_ai_tier": summary_ai_tier,
+                    "supported": sorted(ALLOWED_SUMMARY_AI_TIERS),
+                },
+            )
         return cls(
             clean_text=_as_bool(payload.get("clean_text"), default=False),
             export_md=_as_bool(payload.get("export_md"), default=False),
             summary_pack=_as_bool(payload.get("summary_pack"), default=False),
             split_minutes=_as_int(payload.get("split_minutes"), default=0, minimum=0, maximum=720),
             summary_lang=_normalized_str(payload.get("summary_lang"), default="auto"),
+            summary_ai_enabled=_as_bool(payload.get("summary_ai_enabled"), default=False),
+            summary_ai_tier=summary_ai_tier,
             speaker=_normalized_str(payload.get("speaker")),
             topic=_normalized_str(payload.get("topic")),
         )
@@ -605,6 +619,8 @@ class PipelineRequest:
                 "summary_pack": self.text_export.summary_pack,
                 "split_minutes": self.text_export.split_minutes,
                 "summary_lang": self.text_export.summary_lang,
+                "summary_ai_enabled": self.text_export.summary_ai_enabled,
+                "summary_ai_tier": self.text_export.summary_ai_tier,
                 "speaker": self.text_export.speaker,
                 "topic": self.text_export.topic,
             },
