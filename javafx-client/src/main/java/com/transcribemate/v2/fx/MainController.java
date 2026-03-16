@@ -233,6 +233,10 @@ public class MainController {
             Path progressFilePath,
             Path logFilePath
     ) {
+        boolean isPowerShellScript() {
+            String name = scriptPath == null ? "" : trimToEmpty(scriptPath.getFileName().toString()).toLowerCase(Locale.ROOT);
+            return name.endsWith(".ps1");
+        }
     }
 
     /**
@@ -370,6 +374,9 @@ public class MainController {
 
     @FXML
     private Button navSettingsButton;
+
+    @FXML
+    private FlowPane workspaceNavRowPane;
 
     @FXML
     private VBox dashboardPane;
@@ -1008,6 +1015,9 @@ public class MainController {
     private Button preflightButton;
 
     @FXML
+    private FlowPane actionRowPane;
+
+    @FXML
     private Button refreshModelsButton;
 
     @FXML
@@ -1256,6 +1266,7 @@ public class MainController {
         initializeWorkspace();
         applyGuidedWizardUi();
         applyRunReadOnlyPreviewMode();
+        applyUiTestShellOverrides();
 
         sourceModeBox.valueProperty().addListener((obs, oldVal, newVal) -> {
             updateSourceModeUi();
@@ -1537,12 +1548,16 @@ public class MainController {
                 ? "Before TranscribeMate can run, it must verify and install required runtime components.\n\n"
                 : "TranscribeMate detected missing runtime components. Repair is required before continuing.\n\n");
         body.append("What will be checked and installed:\n")
-                .append("- %LOCALAPPDATA%/TranscribeMate runtime folder\n")
-                .append("- Embedded Python runtime and backend dependencies\n")
+                .append("- Managed runtime folder\n")
+                .append("- Managed Python runtime and backend dependencies\n")
                 .append("- Default AI model pack (Whisper large-v3, Helsinki-NLP/opus-mt-en-cs)\n")
-                .append("- FFmpeg tools\n")
-                .append("- NVIDIA GPU detection and CUDA Torch provisioning (fallback to CPU runtime)\n\n")
-                .append("Runtime location:\n")
+                .append("- FFmpeg tools\n");
+        if (AppRuntimePaths.isMac()) {
+            body.append("- CPU-focused runtime profile for Apple Silicon (CUDA/NVIDIA path disabled)\n\n");
+        } else {
+            body.append("- NVIDIA GPU detection and CUDA Torch provisioning (fallback to CPU runtime)\n\n");
+        }
+        body.append("Runtime location:\n")
                 .append(target.appDataDir())
                 .append("\n");
 
@@ -1794,21 +1809,25 @@ public class MainController {
 
     @FXML
     private void onCreateProject() {
-        TextInputDialog dialog = new TextInputDialog("");
-        dialog.setTitle("Create Project");
-        dialog.setHeaderText("Create new workspace project");
-        dialog.setContentText("Project name:");
-        Stage owner = getStage();
-        if (owner != null) {
-            dialog.initOwner(owner);
-        }
-        applyThemeToDialog(dialog);
-        Optional<String> result = dialog.showAndWait();
-        if (result.isEmpty()) {
-            return;
+        String projectNameInput = resolveUiTestProjectNameOverride();
+        if (projectNameInput == null) {
+            TextInputDialog dialog = new TextInputDialog("");
+            dialog.setTitle("Create Project");
+            dialog.setHeaderText("Create new workspace project");
+            dialog.setContentText("Project name:");
+            Stage owner = getStage();
+            if (owner != null) {
+                dialog.initOwner(owner);
+            }
+            applyThemeToDialog(dialog);
+            Optional<String> result = dialog.showAndWait();
+            if (result.isEmpty()) {
+                return;
+            }
+            projectNameInput = result.get();
         }
 
-        String projectName = sanitizeProjectName(result.get());
+        String projectName = sanitizeProjectName(projectNameInput);
         if (projectName.isBlank()) {
             addUserLog("WARN", "Project name cannot be empty.");
             return;
@@ -1833,12 +1852,22 @@ public class MainController {
             setActiveProject(projectId, true, false);
             refreshProjectsView();
             refreshProjectFiles();
-            openProjectWindowForProject(projectId, false, PROJECT_SECTION_OVERVIEW);
+            if (!AppRuntimePaths.isUiTestMode()) {
+                openProjectWindowForProject(projectId, false, PROJECT_SECTION_OVERVIEW);
+            }
             addUserLog("SUCCESS", "Project created: " + projectName);
         } catch (Exception ex) {
             addTechnicalLog("ERROR", "Failed to create project: " + ex.getMessage());
             addUserLog("ERROR", "Project creation failed.");
         }
+    }
+
+    private String resolveUiTestProjectNameOverride() {
+        if (!AppRuntimePaths.isUiTestMode()) {
+            return null;
+        }
+        String value = trimToEmpty(System.getProperty("tm.uiTestProjectName", ""));
+        return value.isBlank() ? null : value;
     }
 
     @FXML
@@ -5396,8 +5425,7 @@ public class MainController {
                 // Fall back to default app data workspace root.
             }
         }
-        Path appDataPath = currentAppDataPath();
-        return appDataPath.resolve(WORKSPACE_DIR_NAME);
+        return AppRuntimePaths.resolveDefaultWorkspaceRoot(currentAppDataPath());
     }
 
     private Path workspaceMetaPath() {
@@ -7268,7 +7296,10 @@ public class MainController {
         diarizationMaxSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(0, 32, 0));
 
         autoModelBox.setSelected(false);
-        useGpuBox.setSelected(true);
+        useGpuBox.setText(AppRuntimePaths.isMac()
+                ? "Prefer GPU (CUDA/NVIDIA only; macOS uses CPU-only in this release)"
+                : "Prefer GPU (CUDA/NVIDIA)");
+        useGpuBox.setSelected(!AppRuntimePaths.isMac());
         cleanTextBox.setSelected(false);
         exportMdBox.setSelected(false);
         summaryPackBox.setSelected(false);
@@ -7506,6 +7537,17 @@ public class MainController {
         setNodeVisibleManaged(wizardOutputButton, false);
         setNodeVisibleManaged(wizardPreflightButton, false);
         setNodeVisibleManaged(wizardRunButton, false);
+    }
+
+    private void applyUiTestShellOverrides() {
+        if (!AppRuntimePaths.isUiTestMode()) {
+            return;
+        }
+        setNodeVisibleManaged(actionRowPane, true);
+        setNodeVisibleManaged(workspaceNavRowPane, true);
+        setNodeVisibleManaged(startButton, true);
+        setNodeVisibleManaged(preflightButton, true);
+        setNodeVisibleManaged(autoPreflightBox, true);
     }
 
     private void applyRunReadOnlyPreviewMode() {
@@ -9078,6 +9120,9 @@ public class MainController {
             ObjectNode translation,
             ObjectNode diarization
     ) {
+        if (AppRuntimePaths.isUiTestMode()) {
+            return;
+        }
         ModuleComponent component = getActiveModuleComponent();
         if (component != null) {
             component.applyPayloadOverrides(source, output, translation, diarization);
@@ -9940,9 +9985,13 @@ public class MainController {
 
     private String resolveLocalVersion() {
         List<Path> candidates = new ArrayList<>();
-        String projectRoot = trimToEmpty(System.getenv("TM_PROJECT_ROOT"));
-        if (!projectRoot.isBlank()) {
-            candidates.add(Path.of(projectRoot, "version.txt"));
+        Path projectRoot = AppRuntimePaths.resolveProjectRoot();
+        if (projectRoot != null) {
+            candidates.add(projectRoot.resolve("version.txt"));
+        }
+        Path backendRoot = AppRuntimePaths.resolveBackendRoot();
+        if (backendRoot != null) {
+            candidates.add(backendRoot.resolve("version.txt"));
         }
         candidates.add(Path.of(System.getProperty("user.dir"), "version.txt"));
 
@@ -10556,10 +10605,20 @@ public class MainController {
     private RuntimeBootstrapTarget resolveRuntimeBootstrapTarget() {
         Path appDataPath = resolveRuntimeAppDataDir();
         Set<Path> roots = new LinkedHashSet<>();
+        String bootstrapScriptName = AppRuntimePaths.bootstrapScriptFileName();
 
-        String envProjectRoot = trimToEmpty(System.getenv("TM_PROJECT_ROOT"));
-        if (!envProjectRoot.isBlank()) {
-            roots.add(Path.of(envProjectRoot));
+        Path resolvedProjectRoot = AppRuntimePaths.resolveProjectRoot();
+        if (resolvedProjectRoot != null) {
+            roots.add(resolvedProjectRoot);
+        }
+
+        Path resolvedBackendRoot = AppRuntimePaths.resolveBackendRoot();
+        if (resolvedBackendRoot != null) {
+            roots.add(resolvedBackendRoot);
+            Path backendParent = resolvedBackendRoot.getParent();
+            if (backendParent != null) {
+                roots.add(backendParent);
+            }
         }
 
         roots.add(Path.of(System.getProperty("user.dir")));
@@ -10582,8 +10641,26 @@ public class MainController {
             }
             Path normalizedRoot = rootPath.toAbsolutePath().normalize();
 
+            RuntimeBootstrapTarget directTarget = buildRuntimeBootstrapTarget(
+                    normalizedRoot.resolve(bootstrapScriptName),
+                    normalizedRoot,
+                    appDataPath
+            );
+            if (directTarget != null) {
+                return directTarget;
+            }
+
+            RuntimeBootstrapTarget macAppTarget = buildRuntimeBootstrapTarget(
+                    normalizedRoot.resolve("Contents").resolve("app").resolve("backend").resolve(bootstrapScriptName),
+                    normalizedRoot.resolve("Contents").resolve("app").resolve("backend"),
+                    appDataPath
+            );
+            if (macAppTarget != null) {
+                return macAppTarget;
+            }
+
             RuntimeBootstrapTarget bundledAppTarget = buildRuntimeBootstrapTarget(
-                    normalizedRoot.resolve("app").resolve("backend").resolve("bootstrap_runtime.ps1"),
+                    normalizedRoot.resolve("app").resolve("backend").resolve(bootstrapScriptName),
                     normalizedRoot.resolve("app").resolve("backend"),
                     appDataPath
             );
@@ -10592,7 +10669,7 @@ public class MainController {
             }
 
             RuntimeBootstrapTarget bundledTarget = buildRuntimeBootstrapTarget(
-                    normalizedRoot.resolve("backend").resolve("bootstrap_runtime.ps1"),
+                    normalizedRoot.resolve("backend").resolve(bootstrapScriptName),
                     normalizedRoot.resolve("backend"),
                     appDataPath
             );
@@ -10601,7 +10678,7 @@ public class MainController {
             }
 
             RuntimeBootstrapTarget devTarget = buildRuntimeBootstrapTarget(
-                    normalizedRoot.resolve("scripts").resolve("bootstrap_runtime.ps1"),
+                    normalizedRoot.resolve("scripts").resolve(bootstrapScriptName),
                     normalizedRoot,
                     appDataPath
             );
@@ -10652,25 +10729,11 @@ public class MainController {
     }
 
     private Path resolveRuntimeAppDataDir() {
-        String localAppData = trimToEmpty(System.getenv("LOCALAPPDATA"));
-        if (!localAppData.isBlank()) {
-            return Path.of(localAppData, APP_NAME);
-        }
-
-        String userHome = trimToEmpty(System.getProperty("user.home"));
-        if (userHome.isBlank()) {
-            return Path.of(System.getProperty("user.dir"), APP_NAME);
-        }
-
-        String osName = trimToEmpty(System.getProperty("os.name")).toLowerCase(Locale.ROOT);
-        if (osName.contains("win")) {
-            return Path.of(userHome, "AppData", "Local", APP_NAME);
-        }
-        return Path.of(userHome, ".local", "share", APP_NAME);
+        return AppRuntimePaths.resolveAppDataDir();
     }
 
     /**
-     * Opens runtime bootstrap dialog and executes bootstrap PowerShell process.
+     * Opens runtime bootstrap dialog and executes the platform-specific bootstrap process.
      */
     private void showRuntimeBootstrapWindow(
             RuntimeBootstrapTarget target,
@@ -10701,8 +10764,8 @@ public class MainController {
         headline.getStyleClass().add("section-title");
 
         Label intro = new Label(repairMode
-                ? "Reinstalling embedded Python runtime, dependencies, AI models and FFmpeg."
-                : "Installing embedded Python, dependencies, AI models and FFmpeg.");
+                ? "Reinstalling managed Python runtime, dependencies, AI models and FFmpeg."
+                : "Installing managed Python runtime, dependencies, AI models and FFmpeg.");
         intro.setWrapText(true);
         intro.getStyleClass().add("small-label");
 
@@ -10803,23 +10866,37 @@ public class MainController {
                 }
 
                 List<String> command = new ArrayList<>();
-                command.add(resolvePowerShellExecutable());
-                command.add("-NoLogo");
-                command.add("-NoProfile");
-                command.add("-NonInteractive");
-                command.add("-ExecutionPolicy");
-                command.add("Bypass");
-                command.add("-File");
-                command.add(target.scriptPath().toString());
-                command.add("-WithModels");
-                command.add("-InstallDiarization");
-                command.add("-DownloadFfmpeg");
-                command.add("-BackendRoot");
-                command.add(target.backendRoot().toString());
-                command.add("-ProgressFile");
-                command.add(target.progressFilePath().toString());
-                command.add("-LogFile");
-                command.add(target.logFilePath().toString());
+                if (target.isPowerShellScript()) {
+                    command.add(resolvePowerShellExecutable());
+                    command.add("-NoLogo");
+                    command.add("-NoProfile");
+                    command.add("-NonInteractive");
+                    command.add("-ExecutionPolicy");
+                    command.add("Bypass");
+                    command.add("-File");
+                    command.add(target.scriptPath().toString());
+                    command.add("-WithModels");
+                    command.add("-InstallDiarization");
+                    command.add("-DownloadFfmpeg");
+                    command.add("-BackendRoot");
+                    command.add(target.backendRoot().toString());
+                    command.add("-ProgressFile");
+                    command.add(target.progressFilePath().toString());
+                    command.add("-LogFile");
+                    command.add(target.logFilePath().toString());
+                } else {
+                    command.add(resolveShellExecutable());
+                    command.add(target.scriptPath().toString());
+                    command.add("--with-models");
+                    command.add("--install-diarization");
+                    command.add("--download-ffmpeg");
+                    command.add("--backend-root");
+                    command.add(target.backendRoot().toString());
+                    command.add("--progress-file");
+                    command.add(target.progressFilePath().toString());
+                    command.add("--log-file");
+                    command.add(target.logFilePath().toString());
+                }
 
                 ProcessBuilder processBuilder = new ProcessBuilder(command);
                 processBuilder.directory(target.backendRoot().toFile());
@@ -11085,6 +11162,14 @@ public class MainController {
             }
         }
         return "powershell.exe";
+    }
+
+    private String resolveShellExecutable() {
+        Path bash = Path.of("/bin/bash");
+        if (Files.isRegularFile(bash)) {
+            return bash.toString();
+        }
+        return "bash";
     }
 
     private void openPath(String path) {

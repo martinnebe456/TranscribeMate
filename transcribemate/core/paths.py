@@ -28,8 +28,18 @@ def app_root() -> Path:
 
 
 def user_data_dir() -> Path:
+    override = os.environ.get("TM_APP_DATA_DIR", "").strip()
+    if override:
+        path = Path(override).expanduser()
+        if not path.is_absolute():
+            path = path.resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
     else:
         base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     path = base / APP_NAME
@@ -103,6 +113,37 @@ def ensure_assets_on_path():
         os.environ["PATH"] = f"{assets_str}{os.pathsep}{current_path}" if current_path else assets_str
 
 
+def _common_binary_candidates(name: str) -> list[Path]:
+    candidates: list[Path] = []
+    if sys.platform == "darwin":
+        candidates.extend(
+            [
+                Path("/opt/homebrew/bin") / name,
+                Path("/usr/local/bin") / name,
+                Path("/opt/local/bin") / name,
+            ]
+        )
+    elif sys.platform != "win32":
+        candidates.extend(
+            [
+                Path.home() / ".local" / "bin" / name,
+                Path("/usr/local/bin") / name,
+                Path("/usr/bin") / name,
+            ]
+        )
+    return candidates
+
+
+def _common_binary_path(name: str) -> Optional[str]:
+    for candidate in _common_binary_candidates(name):
+        try:
+            if candidate.is_file():
+                return str(candidate)
+        except Exception:
+            continue
+    return None
+
+
 def ffmpeg_path() -> Optional[str]:
     p = bundled_bin("ffmpeg.exe")
     if p:
@@ -110,6 +151,9 @@ def ffmpeg_path() -> Optional[str]:
     p = bundled_bin("ffmpeg")
     if p:
         return str(p)
+    p = _common_binary_path("ffmpeg")
+    if p:
+        return p
     return shutil.which("ffmpeg")
 
 
@@ -120,6 +164,9 @@ def ffprobe_path() -> Optional[str]:
     p = bundled_bin("ffprobe")
     if p:
         return str(p)
+    p = _common_binary_path("ffprobe")
+    if p:
+        return p
     return shutil.which("ffprobe")
 
 

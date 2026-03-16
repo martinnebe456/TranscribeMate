@@ -6,13 +6,19 @@
 - Python backend available from repository root
 
 ## Run
-```powershell
+```bash
 mvn javafx:run
 ```
 
+When launched from `javafx-client/`, the app now auto-detects the repository root so the frontend can start the backend from the repo `.venv` without an explicit `TM_PROJECT_ROOT`.
+
 From repository root you can also run:
 ```powershell
-./scripts/run_v2_frontend.ps1
+./scripts/windows/run_v2_frontend.ps1
+```
+or
+```bash
+./scripts/macos/run_v2_frontend.sh
 ```
 
 ## UI structure (V2 shell)
@@ -34,9 +40,10 @@ Runtime resolution order:
 - `TM_BACKEND_PYTHON` (interpreter override)
 - project `.venv` (dev mode)
 - managed runtime `%LOCALAPPDATA%\TranscribeMate\runtime\python\python.exe` (packaged ZIP mode)
+- managed runtime `~/Library/Application Support/TranscribeMate/runtime/python/bin/python3` (packaged macOS mode)
 - fallback `python`
 
 Optional overrides:
 - `TM_BACKEND_CMD` full command override
 - `TM_BACKEND_PYTHON` python executable override
-- `TM_PROJECT_ROOT` backend working directory
+- `TM_PROJECT_ROOT` backend working directory override

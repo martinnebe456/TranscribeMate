@@ -18,6 +18,8 @@ javafx-client/target/
 
 # Legacy/native build outputs (kept ignored if created locally)
 build/
+.build-cache/
+artifacts/
 dist/
 dist_release/
 dist_installer/

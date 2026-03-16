@@ -10,11 +10,22 @@ from ..core.paths import ffmpeg_path
 LOGGER = logging.getLogger(__name__)
 
 
-def quality_to_format(quality: str) -> str:
+def quality_to_format(quality: str, *, allow_merge: bool = True, audio_only: bool = False) -> str:
+    if audio_only:
+        return "bestaudio[ext=m4a]/bestaudio[acodec!=none]/bestaudio/best[acodec!=none]/best"
+
     if quality == "best":
-        return "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        if allow_merge:
+            return "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best"
+        return "best[ext=mp4][vcodec!=none][acodec!=none]/best[vcodec!=none][acodec!=none]/best"
+
     height = quality.replace("p", "")
-    return f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}][ext=mp4]/best"
+    if allow_merge:
+        return f"bestvideo[height<={height}][ext=mp4]+bestaudio[ext=m4a]/best[height<={height}][ext=mp4]/best"
+    return (
+        f"best[height<={height}][ext=mp4][vcodec!=none][acodec!=none]/"
+        f"best[height<={height}][vcodec!=none][acodec!=none]/best"
+    )
 
 
 def download_single_or_playlist(
@@ -22,6 +33,7 @@ def download_single_or_playlist(
     workdir: Path,
     is_playlist: bool,
     quality: str,
+    output_mode: str,
     log,
     set_step_progress,
     stop_flag,
@@ -33,13 +45,19 @@ def download_single_or_playlist(
     outdir.mkdir(parents=True, exist_ok=True)
 
     output_tpl = str(outdir / "%(playlist_index|000)03d - %(title)s [%(id)s].%(ext)s")
-    fmt = quality_to_format(quality)
-
     ff = ffmpeg_path()
+    ffmpeg_available = bool(ff)
+    prefer_audio_only = not ffmpeg_available and output_mode not in {"video_subs", "video_dub"}
+    fmt = quality_to_format(quality, allow_merge=ffmpeg_available, audio_only=prefer_audio_only)
     ffmpeg_dir = str(Path(ff).parent) if ff else None
 
     log(f"[INFO] Download settings: quality={quality}, playlist={is_playlist}\n")
     log(f"[INFO] Download directory: {outdir}\n")
+    if not ffmpeg_available:
+        if prefer_audio_only:
+            log("[WARN] ffmpeg not found; using no-merge audio-first YouTube download fallback.\n")
+        else:
+            log("[WARN] ffmpeg not found; using single-file no-merge YouTube download fallback.\n")
 
     last_logged_pct = -10.0
 

@@ -14,7 +14,6 @@ import java.util.stream.Stream;
 
 final class AppFileLogger {
     // This is a simple file logger for the application. It is not intended to be a full-featured logging framework, but rather a best-effort solution to capture logs in a file for troubleshooting purposes.
-    private static final String APP_NAME = "TranscribeMate";    // Used for log file path and prefix.
     private static final String LOG_PREFIX = "frontend";
     private static final int MAX_LOG_FILES = 10;    // Maximum number of log files to keep. Older files will be deleted on initialization.
     private static final DateTimeFormatter FILE_TS_FMT = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
@@ -144,21 +143,7 @@ final class AppFileLogger {
     }
     // Resolves the directory where log files should be stored based on the operating system and environment variables. The method first checks the LOCALAPPDATA environment variable (common on Windows), then falls back to the user's home directory with OS-specific subdirectories. If all else fails, it uses the current working directory. This method is used during logger initialization to determine where to create log files.
     private static Path resolveLogsDir() {
-        String localAppData = trimToEmpty(System.getenv("LOCALAPPDATA"));
-        if (!localAppData.isBlank()) {
-            return Path.of(localAppData, APP_NAME, "Logs");
-        }
-
-        String userHome = trimToEmpty(System.getProperty("user.home"));
-        if (userHome.isBlank()) {
-            return Path.of(System.getProperty("user.dir"), APP_NAME, "Logs");
-        }
-
-        String osName = trimToEmpty(System.getProperty("os.name")).toLowerCase(Locale.ROOT);
-        if (osName.contains("win")) {
-            return Path.of(userHome, "AppData", "Local", APP_NAME, "Logs");
-        }
-        return Path.of(userHome, ".local", "share", APP_NAME, "Logs");
+        return AppRuntimePaths.resolveLogsDir();
     }
     // Trims the input string and returns an empty string if the input is null. This is a utility method used to safely handle potentially null or blank strings when logging messages and determining log file paths.
     private static String trimToEmpty(String value) {

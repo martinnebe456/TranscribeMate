@@ -83,7 +83,7 @@ The controller for this view is specified as MainController, which will handle t
       </HBox>
 
       <!-- Action row with main workflow buttons and utility actions -->
-      <FlowPane hgap="8.0" vgap="6.0" alignment="CENTER_LEFT" styleClass="action-row card-pane" visible="false" managed="false">
+      <FlowPane fx:id="actionRowPane" hgap="8.0" vgap="6.0" alignment="CENTER_LEFT" styleClass="action-row card-pane" visible="false" managed="false">
         <children>
           <Button fx:id="startButton" text="Start" onAction="#onStart" styleClass="primary-btn"/>
           <Button fx:id="cancelButton" text="Cancel" onAction="#onCancel"/>
@@ -95,7 +95,7 @@ The controller for this view is specified as MainController, which will handle t
       </FlowPane>
 
       <!-- Navigation row for switching between workspace panes -->
-      <FlowPane hgap="8.0" vgap="6.0" alignment="CENTER_LEFT" styleClass="workspace-nav-row card-pane" visible="false" managed="false">
+      <FlowPane fx:id="workspaceNavRowPane" hgap="8.0" vgap="6.0" alignment="CENTER_LEFT" styleClass="workspace-nav-row card-pane" visible="false" managed="false">
         <children>
           <Label text="Workspace" styleClass="small-label"/>
           <Button fx:id="navDashboardButton" text="Dashboard" onAction="#onNavDashboard" styleClass="button main-nav-btn"/>

@@ -1,0 +1,123 @@
+name: Release Desktop Builds
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build_windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build Windows app-image + ZIP
+        shell: pwsh
+        run: |
+          ./scripts/windows/build_v2_release.ps1
+
+      - name: Verify Windows ZIP output
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem dist/windows -Filter "TranscribeMate-*-win-x64.zip" | Select-Object -First 1
+          if (-not $zip) {
+            throw "Windows release ZIP was not generated."
+          }
+          Write-Host "Found Windows ZIP: $($zip.Name)"
+
+      - name: Upload Windows release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcribemate-windows-release
+          path: dist/windows/*-win-x64.zip
+          if-no-files-found: error
+
+  build_macos:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build macOS arm64 app-image + ZIP
+        run: |
+          chmod +x ./scripts/macos/bootstrap_runtime.sh
+          chmod +x ./scripts/macos/build_v2_release.sh
+          ./scripts/macos/build_v2_release.sh
+
+      - name: Verify macOS ZIP output
+        run: |
+          zip_path="$(find dist/macos -maxdepth 1 -type f -name 'TranscribeMate-*-macos-arm64.zip' | head -n 1)"
+          if [[ -z "$zip_path" ]]; then
+            echo "macOS release ZIP was not generated." >&2
+            exit 1
+          fi
+          echo "Found macOS ZIP: $(basename "$zip_path")"
+
+      - name: Upload macOS release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcribemate-macos-release
+          path: dist/macos/*-macos-arm64.zip
+          if-no-files-found: error
+
+  publish_release:
+    needs:
+      - build_windows
+      - build_macos
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: transcribemate-windows-release
+          path: dist/windows
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: transcribemate-macos-release
+          path: dist/macos
+
+      - name: Generate combined checksums.txt
+        run: |
+          mkdir -p dist
+          find dist -mindepth 2 -maxdepth 2 -type f -name '*.zip' -print0 \
+            | sort -z \
+            | while IFS= read -r -d '' file; do
+                hash="$(sha256sum "$file" | awk '{print $1}')"
+                base="$(basename "$file")"
+                printf '%s *%s\n' "$hash" "$base"
+              done > dist/checksums.txt
+          cat dist/checksums.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/windows/*.zip
+            dist/macos/*.zip
+            dist/checksums.txt
+          generate_release_notes: true
