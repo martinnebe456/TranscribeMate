@@ -109,6 +109,8 @@ This guide describes the current repository state (V2-only stack).
 - Platform scripts are organized under `scripts/windows/`, `scripts/macos/`, `scripts/linux/` and `scripts/shared/`; top-level `scripts/*` entrypoints are compatibility wrappers.
 - `scripts/windows/build_v2_release.ps1` builds the Windows app-image via `jpackage` and then creates a distributable ZIP package.
 - `scripts/macos/build_v2_release.sh` builds the macOS arm64 `.app` via `jpackage`, bundles pinned runtime assets, and then creates a distributable ZIP package.
+- Linux top-level shell wrappers already route to `scripts/linux/`, but `scripts/linux/` is currently a placeholder for a future Linux port; Linux run/bootstrap/build scripts are not implemented yet.
+- CI/release automation is host-OS scoped: the release workflow builds Windows artifacts on `windows-latest` and macOS artifacts on `macos-15`; cross-platform release packaging is not configured.
 - Release/version filenames stay on the shared `yy.MM.dd.NNN` format; the macOS build script derives a separate `jpackage`-compatible 3-segment app metadata version internally.
 - Build outputs are OS-scoped under a single root: `dist/windows`, `dist/macos`, and later `dist/linux`.
 - Each local build writes a platform-local `checksums.txt`; CI release publishing additionally writes a combined top-level `dist/checksums.txt`.
