@@ -23,10 +23,12 @@
 1. JavaFX app starts Python backend process:
    - preferred interpreter on Windows: managed runtime (`%LOCALAPPDATA%/TranscribeMate/runtime/python/python.exe`) when present
    - preferred interpreter on macOS: managed runtime (`~/Library/Application Support/TranscribeMate/runtime/python/bin/python3`) when present
+   - preferred interpreter on Linux: managed runtime (`${XDG_DATA_HOME:-~/.local/share}/TranscribeMate/runtime/python/bin/python3`) when present
    - default fallback command: `python -m transcribemate.v2.backend.server --stdio`
    - first-launch bootstrap is platform-specific:
      - Windows: `scripts/windows/bootstrap_runtime.ps1`
      - macOS: `scripts/macos/bootstrap_runtime.sh`
+     - Linux: `scripts/linux/bootstrap_runtime.sh`
 2. Frontend sends request:
    - `run_pipeline`
 3. Backend creates async job and immediately returns `job_id`.
@@ -40,6 +42,7 @@
 - Workspace root:
   - Windows: `%LOCALAPPDATA%/TranscribeMate/workspace/`
   - macOS: `~/Documents/TranscribeMate/workspace/`
+  - Linux: `${XDG_DATA_HOME:-~/.local/share}/TranscribeMate/workspace/`
 - Metadata:
   - `workspace/workspace.json` (project registry + active project pointer)
 - Per-project root:
@@ -74,6 +77,9 @@
 - macOS dev helpers:
   - `./scripts/macos/run_v2_backend.sh`
   - `./scripts/macos/run_v2_frontend.sh`
+- Linux dev helpers:
+  - `./scripts/linux/run_v2_backend.sh`
+  - `./scripts/linux/run_v2_frontend.sh`
 
 Environment variables used by frontend:
 - `TM_BACKEND_CMD` (full custom command)

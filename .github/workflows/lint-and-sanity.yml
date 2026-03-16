@@ -75,3 +75,23 @@ jobs:
           }
 
           Write-Host "PowerShell parser check passed."
+
+  shell_sanity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check
+        shell: bash
+        run: |
+          files="$(find scripts -type f -name '*.sh' | sort)"
+          if [[ -z "$files" ]]; then
+            echo "No shell scripts found."
+            exit 0
+          fi
+          while IFS= read -r file; do
+            echo "Checking $file"
+            bash -n "$file"
+          done <<< "$files"

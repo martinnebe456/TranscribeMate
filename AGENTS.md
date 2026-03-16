@@ -32,17 +32,22 @@ This guide describes the current repository state (V2-only stack).
 - Frontend (JavaFX):
   - Windows: `./scripts/windows/run_v2_frontend.ps1`
   - macOS: `./scripts/macos/run_v2_frontend.sh`
+  - Linux: `./scripts/linux/run_v2_frontend.sh`
   - compatibility wrappers: `./scripts/run_v2_frontend.ps1`, `./scripts/run_v2_frontend.sh`
   - or `cd javafx-client && mvn javafx:run`
 - Backend (Python):
   - Windows: `./scripts/windows/run_v2_backend.ps1`
   - macOS: `./scripts/macos/run_v2_backend.sh`
+  - Linux: `./scripts/linux/run_v2_backend.sh`
   - compatibility wrappers: `./scripts/run_v2_backend.ps1`, `./scripts/run_v2_backend.sh`
   - or `python -m transcribemate.v2.backend.server --stdio`
 - Release build (Windows ZIP):
   - `./scripts/windows/build_v2_release.ps1`
 - Release build (macOS arm64 ZIP):
   - `./scripts/macos/build_v2_release.sh`
+- Release build (Linux x64 TAR.GZ):
+  - `./scripts/linux/build_v2_release.sh --distro debian`
+  - `./scripts/linux/build_v2_release.sh --distro arch`
 
 ## Code map
 - `javafx-client/src/main/java/com/transcribemate/v2/fx/`
@@ -86,9 +91,11 @@ This guide describes the current repository state (V2-only stack).
 - Runtime Python packages:
   - Windows: `runtime/python/Lib/site-packages/`
   - macOS: `runtime/python/lib/python*/site-packages/`
+  - Linux: `runtime/python/lib/python*/site-packages/`
 - Managed runtime interpreter:
   - Windows: `runtime/python/python.exe`
   - macOS: `runtime/python/bin/python3`
+  - Linux: `runtime/python/bin/python3`
 - Output root: `<out_dir>/transcribemate_outputs/`
 
 ## Tests
@@ -109,17 +116,23 @@ This guide describes the current repository state (V2-only stack).
 - Platform scripts are organized under `scripts/windows/`, `scripts/macos/`, `scripts/linux/` and `scripts/shared/`; top-level `scripts/*` entrypoints are compatibility wrappers.
 - `scripts/windows/build_v2_release.ps1` builds the Windows app-image via `jpackage` and then creates a distributable ZIP package.
 - `scripts/macos/build_v2_release.sh` builds the macOS arm64 `.app` via `jpackage`, bundles pinned runtime assets, and then creates a distributable ZIP package.
-- Linux top-level shell wrappers already route to `scripts/linux/`, but `scripts/linux/` is currently a placeholder for a future Linux port; Linux run/bootstrap/build scripts are not implemented yet.
-- CI/release automation is host-OS scoped: the release workflow builds Windows artifacts on `windows-latest` and macOS artifacts on `macos-15`; cross-platform release packaging is not configured.
+- `scripts/linux/build_v2_release.sh --distro debian|arch` builds Linux x64 app-images via `jpackage`, bundles pinned runtime assets, and then creates distro-scoped TAR.GZ packages.
+- Runtime policy is now platform-scoped: Windows release keeps CUDA/NVIDIA GPU provisioning; macOS release stays CPU-focused; Linux release is CPU-only and normalizes `prefer_gpu` to `false`.
+- CI/release automation is host-OS scoped: the release workflow builds Windows artifacts on `windows-latest`, macOS artifacts on `macos-15`, and Linux Debian/Arch artifacts on `ubuntu-latest` via distro containers.
+- GitHub releases are merge-driven now: merged PRs into `DEV` create automatic prereleases tagged `dev-<yy.MM.dd.NNN>`, and merged PRs into `main` create automatic official releases tagged `v<yy.MM.dd.NNN>`.
+- Release CI generates one shared version per merge from the PR `merged_at` timestamp in UTC plus the GitHub Actions `run_number`, then passes it explicitly into all 4 OS build scripts so artifact versions stay aligned.
 - Release/version filenames stay on the shared `yy.MM.dd.NNN` format; the macOS build script derives a separate `jpackage`-compatible 3-segment app metadata version internally.
-- Build outputs are OS-scoped under a single root: `dist/windows`, `dist/macos`, and later `dist/linux`.
+- Build outputs are OS-scoped under a single root: `dist/windows`, `dist/macos`, `dist/linux`.
 - Each local build writes a platform-local `checksums.txt`; CI release publishing additionally writes a combined top-level `dist/checksums.txt`.
 - ZIP distribution entry points:
   - Windows: `TranscribeMate.exe`
   - macOS: `TranscribeMate.app`
+- TAR.GZ distribution entry points:
+  - Linux: `TranscribeMate/bin/TranscribeMate`
 - Runtime bootstrap is platform-specific on first app launch:
   - Windows: `scripts/windows/bootstrap_runtime.ps1`
   - macOS: `scripts/macos/bootstrap_runtime.sh`
+  - Linux: `scripts/linux/bootstrap_runtime.sh`
 - macOS dev-mode note:
   - when `TM_PROJECT_ROOT` is set and bundled runtime assets are absent, `scripts/macos/bootstrap_runtime.sh` now uses a development fallback (project `.venv` + app-data FFmpeg install) instead of requiring release-bundled assets.
   - direct `mvn javafx:run` from `javafx-client/` should now auto-detect the repository backend and `.venv`; helper scripts still set `TM_PROJECT_ROOT` explicitly for predictable dev runs.

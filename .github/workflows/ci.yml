@@ -13,6 +13,9 @@ jobs:
   frontend:
     uses: ./.github/workflows/ci-frontend.yml
 
+  linux_packaging:
+    uses: ./.github/workflows/ci-linux-packaging.yml
+
   lint_and_sanity:
     uses: ./.github/workflows/lint-and-sanity.yml
 

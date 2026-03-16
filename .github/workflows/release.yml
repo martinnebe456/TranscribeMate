@@ -1,21 +1,71 @@
 name: Release Desktop Builds
 
 on:
-  workflow_dispatch:
-  push:
-    tags:
-      - "v*"
+  pull_request:
+    types:
+      - closed
+    branches:
+      - DEV
+      - main
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.event.pull_request.merge_commit_sha || github.run_id }}
+  cancel-in-progress: false
+
 jobs:
+  prepare_release_meta:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    outputs:
+      app_version: ${{ steps.meta.outputs.app_version }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+      release_name: ${{ steps.meta.outputs.release_name }}
+      tag_name: ${{ steps.meta.outputs.tag_name }}
+      target_sha: ${{ steps.meta.outputs.target_sha }}
+    steps:
+      - name: Generate release metadata
+        id: meta
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          MERGED_AT: ${{ github.event.pull_request.merged_at }}
+          TARGET_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+        run: |
+          merged_day="$(date -u -d "$MERGED_AT" '+%y.%m.%d')"
+          run_suffix="$(printf '%03d' "$GITHUB_RUN_NUMBER")"
+          app_version="${merged_day}.${run_suffix}"
+
+          if [[ "$BASE_REF" == "DEV" ]]; then
+            tag_name="dev-${app_version}"
+            release_name="TranscribeMate DEV ${app_version}"
+            prerelease="true"
+          else
+            tag_name="v${app_version}"
+            release_name="TranscribeMate ${app_version}"
+            prerelease="false"
+          fi
+
+          {
+            echo "app_version=${app_version}"
+            echo "prerelease=${prerelease}"
+            echo "release_name=${release_name}"
+            echo "tag_name=${tag_name}"
+            echo "target_sha=${TARGET_SHA}"
+          } >> "$GITHUB_OUTPUT"
+
   build_windows:
+    needs: prepare_release_meta
+    if: needs.prepare_release_meta.result == 'success'
     runs-on: windows-latest
     timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare_release_meta.outputs.target_sha }}
 
       - name: Setup Java 21
         uses: actions/setup-java@v4
@@ -27,30 +77,33 @@ jobs:
       - name: Build Windows app-image + ZIP
         shell: pwsh
         run: |
-          ./scripts/windows/build_v2_release.ps1
+          ./scripts/windows/build_v2_release.ps1 -AppVersion "${{ needs.prepare_release_meta.outputs.app_version }}"
 
       - name: Verify Windows ZIP output
         shell: pwsh
         run: |
-          $zip = Get-ChildItem dist/windows -Filter "TranscribeMate-*-win-x64.zip" | Select-Object -First 1
-          if (-not $zip) {
-            throw "Windows release ZIP was not generated."
-          }
+          $expectedName = "TranscribeMate-${{ needs.prepare_release_meta.outputs.app_version }}-win-x64.zip"
+          $zip = Get-Item "dist/windows/$expectedName" -ErrorAction Stop
           Write-Host "Found Windows ZIP: $($zip.Name)"
 
       - name: Upload Windows release artifact
         uses: actions/upload-artifact@v4
         with:
           name: transcribemate-windows-release
-          path: dist/windows/*-win-x64.zip
+          path: dist/windows/TranscribeMate-${{ needs.prepare_release_meta.outputs.app_version }}-win-x64.zip
           if-no-files-found: error
 
   build_macos:
+    needs: prepare_release_meta
+    if: needs.prepare_release_meta.result == 'success'
     runs-on: macos-15
     timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare_release_meta.outputs.target_sha }}
 
       - name: Setup Java 21
         uses: actions/setup-java@v4
@@ -63,29 +116,132 @@ jobs:
         run: |
           chmod +x ./scripts/macos/bootstrap_runtime.sh
           chmod +x ./scripts/macos/build_v2_release.sh
-          ./scripts/macos/build_v2_release.sh
+          ./scripts/macos/build_v2_release.sh --app-version "${{ needs.prepare_release_meta.outputs.app_version }}"
 
       - name: Verify macOS ZIP output
         run: |
-          zip_path="$(find dist/macos -maxdepth 1 -type f -name 'TranscribeMate-*-macos-arm64.zip' | head -n 1)"
-          if [[ -z "$zip_path" ]]; then
-            echo "macOS release ZIP was not generated." >&2
+          expected_name="TranscribeMate-${{ needs.prepare_release_meta.outputs.app_version }}-macos-arm64.zip"
+          zip_path="dist/macos/${expected_name}"
+          if [[ ! -f "$zip_path" ]]; then
+            echo "macOS release ZIP was not generated: ${expected_name}" >&2
             exit 1
           fi
-          echo "Found macOS ZIP: $(basename "$zip_path")"
+          echo "Found macOS ZIP: ${expected_name}"
 
       - name: Upload macOS release artifact
         uses: actions/upload-artifact@v4
         with:
           name: transcribemate-macos-release
-          path: dist/macos/*-macos-arm64.zip
+          path: dist/macos/TranscribeMate-${{ needs.prepare_release_meta.outputs.app_version }}-macos-arm64.zip
+          if-no-files-found: error
+
+  build_linux_debian:
+    needs: prepare_release_meta
+    if: needs.prepare_release_meta.result == 'success'
+    runs-on: ubuntu-latest
+    container:
+      image: debian:12-slim
+    timeout-minutes: 120
+    steps:
+      - name: Install Debian build dependencies
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y bash ca-certificates coreutils curl findutils git gzip maven tar unzip
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare_release_meta.outputs.target_sha }}
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build Linux Debian app-image + TAR.GZ
+        shell: bash
+        run: |
+          bash ./scripts/linux/build_v2_release.sh --distro debian --app-version "${{ needs.prepare_release_meta.outputs.app_version }}"
+
+      - name: Verify Linux Debian TAR.GZ output
+        shell: bash
+        run: |
+          expected_name="TranscribeMate-${{ needs.prepare_release_meta.outputs.app_version }}-linux-debian-x64.tar.gz"
+          archive_path="dist/linux/${expected_name}"
+          if [[ ! -f "$archive_path" ]]; then
+            echo "Linux Debian release TAR.GZ was not generated: ${expected_name}" >&2
+            exit 1
+          fi
+          echo "Found Linux Debian TAR.GZ: ${expected_name}"
+
+      - name: Upload Linux Debian release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcribemate-linux-debian-release
+          path: dist/linux/TranscribeMate-${{ needs.prepare_release_meta.outputs.app_version }}-linux-debian-x64.tar.gz
+          if-no-files-found: error
+
+  build_linux_arch:
+    needs: prepare_release_meta
+    if: needs.prepare_release_meta.result == 'success'
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    timeout-minutes: 120
+    steps:
+      - name: Install Arch build dependencies
+        shell: bash
+        run: |
+          pacman -Sy --noconfirm --needed bash ca-certificates coreutils curl findutils git gzip maven tar unzip
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.prepare_release_meta.outputs.target_sha }}
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build Linux Arch app-image + TAR.GZ
+        shell: bash
+        run: |
+          bash ./scripts/linux/build_v2_release.sh --distro arch --app-version "${{ needs.prepare_release_meta.outputs.app_version }}"
+
+      - name: Verify Linux Arch TAR.GZ output
+        shell: bash
+        run: |
+          expected_name="TranscribeMate-${{ needs.prepare_release_meta.outputs.app_version }}-linux-arch-x64.tar.gz"
+          archive_path="dist/linux/${expected_name}"
+          if [[ ! -f "$archive_path" ]]; then
+            echo "Linux Arch release TAR.GZ was not generated: ${expected_name}" >&2
+            exit 1
+          fi
+          echo "Found Linux Arch TAR.GZ: ${expected_name}"
+
+      - name: Upload Linux Arch release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcribemate-linux-arch-release
+          path: dist/linux/TranscribeMate-${{ needs.prepare_release_meta.outputs.app_version }}-linux-arch-x64.tar.gz
           if-no-files-found: error
 
   publish_release:
     needs:
+      - prepare_release_meta
       - build_windows
       - build_macos
-    if: startsWith(github.ref, 'refs/tags/v')
+      - build_linux_debian
+      - build_linux_arch
+    if: needs.prepare_release_meta.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -101,10 +257,22 @@ jobs:
           name: transcribemate-macos-release
           path: dist/macos
 
+      - name: Download Linux Debian artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: transcribemate-linux-debian-release
+          path: dist/linux
+
+      - name: Download Linux Arch artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: transcribemate-linux-arch-release
+          path: dist/linux
+
       - name: Generate combined checksums.txt
         run: |
           mkdir -p dist
-          find dist -mindepth 2 -maxdepth 2 -type f -name '*.zip' -print0 \
+          find dist -mindepth 2 -maxdepth 2 -type f \( -name '*.zip' -o -name '*.tar.gz' \) -print0 \
             | sort -z \
             | while IFS= read -r -d '' file; do
                 hash="$(sha256sum "$file" | awk '{print $1}')"
@@ -116,8 +284,15 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          name: ${{ needs.prepare_release_meta.outputs.release_name }}
+          tag_name: ${{ needs.prepare_release_meta.outputs.tag_name }}
+          target_commitish: ${{ needs.prepare_release_meta.outputs.target_sha }}
+          prerelease: ${{ needs.prepare_release_meta.outputs.prerelease }}
+          overwrite_files: true
+          fail_on_unmatched_files: true
+          generate_release_notes: true
           files: |
             dist/windows/*.zip
             dist/macos/*.zip
+            dist/linux/*.tar.gz
             dist/checksums.txt
-          generate_release_notes: true
