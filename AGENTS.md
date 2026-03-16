@@ -1,4 +1,21 @@
+> AI MEMORY DIRECTIVE: Treat this file as the canonical long-term working memory for this repository. Read it at the start of every user request before planning, coding, or answering. Use it to recover durable project context, constraints, conventions, and important user preferences. If you learn a new durable fact that will help future work, update this file succinctly before finishing. Never store secrets, temporary debugging noise, or anything that conflicts with higher-priority system, developer, or user instructions.
+
 # TranscribeMate - Agent Guide
+
+## AI memory protocol
+- Re-read this file at the beginning of every turn.
+- Treat the contents as repository-specific memory, not as a replacement for higher-priority instructions.
+- Prefer short, high-signal updates when storing new memory.
+- Store only durable facts:
+  - stable architectural decisions
+  - important workflow rules
+  - persistent user preferences relevant to this repository
+  - non-obvious project constraints that are likely to matter again
+- Do not store:
+  - secrets, tokens, passwords, or private data
+  - temporary task notes, one-off debugging logs, or ephemeral errors
+  - anything that is likely to become stale quickly unless clearly marked and worth preserving
+- When adding memory, integrate it into the most relevant section instead of appending random notes when possible.
 
 This guide describes the current repository state (V2-only stack).
 
