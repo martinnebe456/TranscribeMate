@@ -8,7 +8,7 @@ APP_VERSION=""
 DISTRO=""
 
 PYTHON_ARCHIVE_URL="https://github.com/astral-sh/python-build-standalone/releases/download/20260303/cpython-3.12.13%2B20260303-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
-PYTHON_ARCHIVE_SHA256="de1ca5416aada18989ed046fad9a366d6aabbaf38af40fa7956ff7657f3e4014"
+PYTHON_ARCHIVE_SHA256="c710dd6b63e4df92f4c5b7b29ccad4276226a024a9017d5018f15321c7854af4"
 FFMPEG_ZIP_URL="https://ffmpeg.martin-riedl.de/download/linux/amd64/1766430728_8.0.1/ffmpeg.zip"
 FFMPEG_ZIP_SHA_URL="https://ffmpeg.martin-riedl.de/download/linux/amd64/1766430728_8.0.1/ffmpeg.zip.sha256"
 FFPROBE_ZIP_URL="https://ffmpeg.martin-riedl.de/download/linux/amd64/1766430728_8.0.1/ffprobe.zip"
