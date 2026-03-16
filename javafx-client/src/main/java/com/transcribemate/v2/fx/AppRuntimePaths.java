@@ -23,6 +23,43 @@ final class AppRuntimePaths {
         return osName().contains("mac");
     }
 
+    static boolean isLinux() {
+        String os = osName();
+        return os.contains("linux") || os.contains("nux");
+    }
+
+    static boolean defaultGpuPreferenceSelected() {
+        return isWindows();
+    }
+
+    static boolean isGpuPreferenceEditable() {
+        return !isLinux();
+    }
+
+    static boolean normalizeGpuPreference(boolean requested) {
+        return !isLinux() && requested;
+    }
+
+    static String gpuPreferenceLabelText() {
+        if (isMac()) {
+            return "Prefer GPU (CUDA/NVIDIA only; macOS uses CPU-only in this release)";
+        }
+        if (isLinux()) {
+            return "Prefer GPU (Linux build is CPU-only in this release)";
+        }
+        return "Prefer GPU (CUDA/NVIDIA)";
+    }
+
+    static String runtimeProfileSetupLine() {
+        if (isMac()) {
+            return "- CPU-focused runtime profile for Apple Silicon (CUDA/NVIDIA path disabled)";
+        }
+        if (isLinux()) {
+            return "- CPU-only runtime profile for Linux (GPU provisioning disabled in this release)";
+        }
+        return "- NVIDIA GPU detection and CUDA Torch provisioning (fallback to CPU runtime)";
+    }
+
     static Path resolveAppDataDir() {
         Path override = normalizePath(firstNonBlank(
                 System.getProperty("tm.appDataDir"),
@@ -206,6 +243,7 @@ final class AppRuntimePaths {
 
         List<Path> candidates = List.of(
                 candidateRoot.resolve("Contents").resolve("app").resolve("backend"),
+                candidateRoot.resolve("lib").resolve("app").resolve("backend"),
                 candidateRoot.resolve("app").resolve("backend"),
                 candidateRoot.resolve("backend"),
                 candidateRoot

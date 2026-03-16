@@ -1,15 +1,23 @@
 # Linux Script Layout
 
-This directory is reserved for the future Linux port.
+Linux x64 is now a first-class packaging target.
 
-Planned platform-local entrypoints:
+Platform-local entrypoints:
 - `run_v2_backend.sh`
 - `run_v2_frontend.sh`
 - `bootstrap_runtime.sh`
 - `build_v2_release.sh`
 
-Planned output layout:
+Release variants:
+- `--distro debian`
+- `--distro arch`
+
+Output layout:
 - `dist/linux/`
+- `dist/linux/debian/TranscribeMate/`
+- `dist/linux/arch/TranscribeMate/`
+- `dist/linux/TranscribeMate-<version>-linux-debian-x64.tar.gz`
+- `dist/linux/TranscribeMate-<version>-linux-arch-x64.tar.gz`
 
 Top-level wrapper scripts in `scripts/` are kept as compatibility shims and can
-dispatch to `scripts/linux/` once the Linux implementation is added.
+dispatch to `scripts/linux/`.

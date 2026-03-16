@@ -23,10 +23,38 @@ def test_user_data_dir_honors_tm_app_data_dir_override(monkeypatch, tmp_path):
     assert result == override
 
 
+def test_user_data_dir_uses_xdg_data_home_on_linux(monkeypatch, tmp_path):
+    monkeypatch.setattr(core_paths.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg-data"))
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("TM_APP_DATA_DIR", raising=False)
+    monkeypatch.setattr(core_paths.Path, "home", lambda: tmp_path / "home")
+
+    result = core_paths.user_data_dir()
+
+    assert result == tmp_path / "xdg-data" / "TranscribeMate"
+
+
+def test_transcription_spec_defaults_to_gpu_on_windows(monkeypatch):
+    monkeypatch.setattr(backend_models.sys, "platform", "win32")
+
+    spec = backend_models.TranscriptionSpec.from_payload({})
+
+    assert spec.prefer_gpu is True
+
+
 def test_transcription_spec_defaults_to_cpu_on_macos(monkeypatch):
     monkeypatch.setattr(backend_models.sys, "platform", "darwin")
 
     spec = backend_models.TranscriptionSpec.from_payload({})
+
+    assert spec.prefer_gpu is False
+
+
+def test_transcription_spec_forces_cpu_on_linux_even_when_gpu_requested(monkeypatch):
+    monkeypatch.setattr(backend_models.sys, "platform", "linux")
+
+    spec = backend_models.TranscriptionSpec.from_payload({"prefer_gpu": True})
 
     assert spec.prefer_gpu is False
 

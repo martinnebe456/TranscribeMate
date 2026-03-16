@@ -81,7 +81,14 @@ def _normalized_str(value: Any, *, default: str = "") -> str:
 
 
 def _default_prefer_gpu() -> bool:
-    return sys.platform != "darwin"
+    return sys.platform == "win32"
+
+
+def _normalize_prefer_gpu(value: Any) -> bool:
+    requested = _as_bool(value, default=_default_prefer_gpu())
+    if sys.platform.startswith("linux"):
+        return False
+    return requested
 
 
 def _normalize_target_lang(value: str) -> str:
@@ -228,12 +235,15 @@ class TranscriptionSpec:
     source_lang: str = "auto"
     batch_size: int = 16
 
+    def __post_init__(self) -> None:
+        self.prefer_gpu = _normalize_prefer_gpu(self.prefer_gpu)
+
     @classmethod
     def from_payload(cls, payload: dict[str, Any]) -> "TranscriptionSpec":
         return cls(
             model=_normalized_str(payload.get("model"), default="large-v3"),
             auto_model=_as_bool(payload.get("auto_model"), default=False),
-            prefer_gpu=_as_bool(payload.get("prefer_gpu"), default=_default_prefer_gpu()),
+            prefer_gpu=_normalize_prefer_gpu(payload.get("prefer_gpu")),
             source_lang=_normalized_str(payload.get("source_lang"), default="auto"),
             batch_size=_as_int(payload.get("batch_size"), default=16, minimum=1, maximum=128),
         )

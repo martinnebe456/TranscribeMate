@@ -158,6 +158,10 @@ Transport is newline-delimited JSON (`\n`-terminated objects).
   "conference_meta": {}
 }
 ```
+- `transcription.prefer_gpu` is platform-normalized by the backend:
+  - Windows releases may honor `true` when CUDA/NVIDIA runtime is ready.
+  - macOS releases stay CPU-focused by default, but preserve current fallback behavior.
+  - Linux releases force `prefer_gpu=false` and run CPU-only in this release.
 
 ## Status Values
 - `queued`
