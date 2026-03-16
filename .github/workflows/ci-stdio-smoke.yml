@@ -1,4 +1,4 @@
-name: CI Backend
+name: CI Stdio Smoke
 
 on:
   workflow_call:
@@ -8,16 +8,16 @@ permissions:
   contents: read
 
 jobs:
-  tests:
+  smoke:
     strategy:
       fail-fast: false
       matrix:
         os:
           - windows-latest
-          - ubuntu-latest
           - macos-15
+          - ubuntu-latest
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,6 +33,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
 
-      - name: Run backend test suite
+      - name: Run backend stdio smoke test
         run: |
-          python -m pytest -q
+          python tests/ci_stdio_smoke.py

@@ -29,7 +29,10 @@ jobs:
           java-version: "21"
           cache: maven
 
-      - name: Build frontend JAR + runtime dependencies
+      - name: Run frontend tests + build JAR/runtime dependencies
         working-directory: javafx-client
+        env:
+          TM_PROJECT_ROOT: ${{ github.workspace }}
+          TM_RUN_FRONTEND_SMOKE: "false"
         run: |
-          mvn -B -DskipTests clean package dependency:copy-dependencies -DincludeScope=runtime -DoutputDirectory=target/dependency
+          mvn -B clean test package dependency:copy-dependencies -DincludeScope=runtime -DoutputDirectory=target/dependency

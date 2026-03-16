@@ -119,6 +119,7 @@ This guide describes the current repository state (V2-only stack).
 - `scripts/linux/build_v2_release.sh --distro debian|arch` builds Linux x64 app-images via `jpackage`, bundles pinned runtime assets, and then creates distro-scoped TAR.GZ packages.
 - Runtime policy is now platform-scoped: Windows release keeps CUDA/NVIDIA GPU provisioning; macOS release stays CPU-focused; Linux release is CPU-only and normalizes `prefer_gpu` to `false`.
 - CI/release automation is host-OS scoped: the release workflow builds Windows artifacts on `windows-latest`, macOS artifacts on `macos-15`, and Linux Debian/Arch artifacts on `ubuntu-latest` via distro containers.
+- PR/manual/nightly CI now includes backend pytest on Windows/macOS/Linux, frontend Maven tests plus package build on Windows/macOS/Linux, and a reusable cross-OS backend stdio smoke workflow.
 - Linux container packaging jobs need distro-native GUI/runtime libraries plus `binutils`/`objcopy` installed before `actions/setup-java`; the workflows now verify `java -version` and `jpackage --version` explicitly so minimal-container failures surface early.
 - GitHub releases are merge-driven now: merged PRs into `DEV` create automatic prereleases tagged `dev-<yy.MM.dd.NNN>`, and merged PRs into `main` create automatic official releases tagged `v<yy.MM.dd.NNN>`.
 - Release CI generates one shared version per merge from the PR `merged_at` timestamp in UTC plus the GitHub Actions `run_number`, then passes it explicitly into all 4 OS build scripts so artifact versions stay aligned.

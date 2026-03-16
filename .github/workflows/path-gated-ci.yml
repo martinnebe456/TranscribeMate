@@ -90,6 +90,11 @@ jobs:
     if: needs.changes.outputs.backend == 'true'
     uses: ./.github/workflows/ci-backend.yml
 
+  stdio_smoke:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    uses: ./.github/workflows/ci-stdio-smoke.yml
+
   frontend:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
