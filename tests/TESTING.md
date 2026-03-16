@@ -24,6 +24,18 @@ Run only shared core/pipeline helper tests:
 python -m pytest -q tests/test_core_files.py tests/test_core_process.py tests/test_i18n_summary_lang.py tests/test_pipeline_helpers.py tests/test_diarization_helpers.py tests/test_speaker_srt_helpers.py tests/test_transcripts_metadata.py
 ```
 
+## Full macOS Suite
+For the heavy end-to-end validation flow on Apple Silicon macOS, use:
+
+```bash
+./scripts/macos/test_all.sh
+```
+
+This runner keeps the default `pytest -q` suite fast, then adds:
+- real fixture regression over `tests/test_files/`
+- frontend Maven tests/build checks without GUI automation
+- macOS release build + artifact verification
+
 ## Test inventory
 
 ### Shared core helpers
@@ -90,8 +102,8 @@ File: `tests/test_v2_components.py`
 The suite is intentionally fast and deterministic.
 
 Not covered by unit tests:
-- end-to-end JavaFX UI flows
-- full runtime bootstrap/download integration (models, FFmpeg, Python runtime)
+- Windows GUI click smoke
+- macOS GUI click smoke
 - real GPU/CUDA environment execution paths
 
 ## Guidelines for new tests

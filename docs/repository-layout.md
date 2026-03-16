@@ -6,12 +6,18 @@ This document summarizes the current folder structure after the V2 component ref
 
 - `javafx-client/`: JavaFX frontend sources, resources, Maven build
 - `transcribemate/`: Python package (V2 backend + shared core/pipeline modules)
-- `scripts/`: bootstrap and runtime helper scripts
+- `scripts/`: top-level compatibility wrappers plus platform-local script folders
 - `tests/`: Python test suite and testing notes
 - `docs/`: architecture, protocol, user/dev docs
 - `.github/workflows/`: CI/CD workflows
 
-## Frontend module components
+## Scripts
+
+- `scripts/windows/`: Windows-specific build, run and bootstrap scripts
+- `scripts/macos/`: macOS-specific build, run, bootstrap and full-suite scripts
+- `scripts/linux/`: reserved placeholder for the future Linux port
+- `scripts/shared/`: cross-platform helper code used by platform launchers
+- `scripts/*.ps1`, `scripts/*.sh`: compatibility wrappers that dispatch to platform-local scripts
 
 Path: `javafx-client/src/main/java/com/transcribemate/v2/fx/modules/`
 

@@ -9,11 +9,9 @@ import java.io.BufferedWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -53,10 +51,9 @@ public final class BackendClient implements AutoCloseable {
     }
 
     public static BackendClient auto() {
-        String workDir = System.getenv("TM_PROJECT_ROOT");
-        if (workDir == null || workDir.isBlank()) {
-            workDir = detectBundledProjectRoot();
-        }
+        Path backendRoot = AppRuntimePaths.resolveBackendRoot();
+        Path projectRoot = AppRuntimePaths.resolveProjectRoot();
+        String workDir = backendRoot == null ? null : backendRoot.toString();
 
         String customCommand = System.getenv("TM_BACKEND_CMD");
         List<String> cmd = new ArrayList<>();
@@ -69,7 +66,7 @@ public final class BackendClient implements AutoCloseable {
         } else {
             String python = System.getenv("TM_BACKEND_PYTHON");
             if (python == null || python.isBlank()) {
-                python = detectProjectRuntimePython(System.getenv("TM_PROJECT_ROOT"));
+                python = detectProjectRuntimePython(projectRoot);
             }
             if (python == null || python.isBlank()) {
                 python = detectManagedRuntimePython();
@@ -100,14 +97,15 @@ public final class BackendClient implements AutoCloseable {
         return new BackendClient(cmd, workDir);
     }
 
-    private static String detectProjectRuntimePython(String projectRoot) {
-        if (projectRoot == null || projectRoot.isBlank()) {
+    private static String detectProjectRuntimePython(Path projectRoot) {
+        if (projectRoot == null) {
             return null;
         }
 
         List<Path> candidates = new ArrayList<>();
-        candidates.add(Paths.get(projectRoot, ".venv", "Scripts", "python.exe"));
-        candidates.add(Paths.get(projectRoot, ".venv", "bin", "python"));
+        candidates.add(projectRoot.resolve(".venv").resolve("Scripts").resolve("python.exe"));
+        candidates.add(projectRoot.resolve(".venv").resolve("bin").resolve("python3"));
+        candidates.add(projectRoot.resolve(".venv").resolve("bin").resolve("python"));
 
         for (Path candidate : candidates) {
             try {
@@ -123,22 +121,7 @@ public final class BackendClient implements AutoCloseable {
 
     private static String detectManagedRuntimePython() {
         List<Path> candidates = new ArrayList<>();
-
-        String localAppData = System.getenv("LOCALAPPDATA");
-        if (localAppData != null && !localAppData.isBlank()) {
-            candidates.add(Paths.get(localAppData, "TranscribeMate", "runtime", "python", "python.exe"));
-            candidates.add(Paths.get(localAppData, "TranscribeMate", "runtime", "venv", "Scripts", "python.exe"));
-        }
-
-        String userHome = System.getProperty("user.home", "");
-        if (userHome != null && !userHome.isBlank()) {
-            // Windows fallback when LOCALAPPDATA is not present.
-            candidates.add(Paths.get(userHome, "AppData", "Local", "TranscribeMate", "runtime", "python", "python.exe"));
-            candidates.add(Paths.get(userHome, "AppData", "Local", "TranscribeMate", "runtime", "venv", "Scripts", "python.exe"));
-            // Linux/macOS fallback.
-            //candidates.add(Paths.get(userHome, ".local", "share", "TranscribeMate", "runtime", "python", "bin", "python"));
-            //candidates.add(Paths.get(userHome, ".local", "share", "TranscribeMate", "runtime", "venv", "bin", "python"));
-        }
+        candidates.addAll(AppRuntimePaths.managedRuntimePythonCandidates(AppRuntimePaths.resolveAppDataDir()));
 
         for (Path candidate : candidates) {
             try {
@@ -150,37 +133,6 @@ public final class BackendClient implements AutoCloseable {
             }
         }
         return null;
-    }
-
-    private static String detectBundledProjectRoot() {
-        try {
-            URI uri = BackendClient.class.getProtectionDomain().getCodeSource().getLocation().toURI();
-            Path codePath = Paths.get(uri).toAbsolutePath().normalize();
-            Path appDir = Files.isDirectory(codePath) ? codePath : codePath.getParent();
-            if (appDir == null) {
-                return null;
-            }
-
-            Path bundledBackend = appDir.resolve("backend");
-            if (containsBackendPackage(bundledBackend)) {
-                return bundledBackend.toString();
-            }
-            if (containsBackendPackage(appDir)) {
-                return appDir.toString();
-            }
-        } catch (Exception ignored) {
-            // Best effort only. Dev mode typically relies on TM_PROJECT_ROOT.
-        }
-        return null;
-    }
-
-    private static boolean containsBackendPackage(Path root) {
-        if (root == null) {
-            return false;
-        }
-        return Files.isRegularFile(
-                root.resolve("transcribemate").resolve("v2").resolve("backend").resolve("server.py")
-        );
     }
 
     public void start() throws IOException {

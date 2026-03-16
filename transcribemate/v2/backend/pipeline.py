@@ -572,6 +572,7 @@ class PipelineOrchestrator:
                 downloads_dir.parent,
                 self.request.source.is_playlist,
                 self.request.source.quality,
+                self.request.output.mode,
                 self._log_legacy,
                 self._set_step_progress,
                 self.stop_flag,

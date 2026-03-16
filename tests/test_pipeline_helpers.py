@@ -14,6 +14,20 @@ def test_quality_to_format_height():
     assert "height<=720" in fmt
 
 
+def test_quality_to_format_best_without_merge_prefers_single_file():
+    fmt = quality_to_format("best", allow_merge=False)
+
+    assert "bestvideo" not in fmt
+    assert "[acodec!=none]" in fmt
+
+
+def test_quality_to_format_audio_only_prefers_audio_streams():
+    fmt = quality_to_format("best", allow_merge=False, audio_only=True)
+
+    assert "bestaudio" in fmt
+    assert "bestvideo" not in fmt
+
+
 def test_hex_to_ass_color_rgb_order():
     assert hex_to_ass_color("#112233") == "&H332211&"
 

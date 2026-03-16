@@ -265,6 +265,10 @@ class BackendService:
             add_check("output_dir", "fail", f"Output directory not writable: {out_dir} ({exc})", level="error")
 
         ffmpeg = ffmpeg_path()
+        youtube_download_can_run_without_ffmpeg = (
+            request.source.mode == "youtube"
+            and request.output.mode in {"txt_only", "srt_only"}
+        )
         if ffmpeg:
             add_check("ffmpeg", "pass", f"ffmpeg detected: {ffmpeg}")
         elif request.output.mode in {"video_subs", "video_dub"}:
@@ -273,6 +277,12 @@ class BackendService:
                 "fail",
                 f"ffmpeg is required for {request.output.mode} mode.",
                 level="error",
+            )
+        elif youtube_download_can_run_without_ffmpeg:
+            add_check(
+                "ffmpeg",
+                "pass",
+                "ffmpeg not found. Current YouTube mode will use a no-merge download fallback.",
             )
         else:
             add_check("ffmpeg", "warn", "ffmpeg not found. Some output modes may fail.", level="warn")

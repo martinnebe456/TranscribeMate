@@ -21,8 +21,12 @@
 
 ## Runtime Flow
 1. JavaFX app starts Python backend process:
-   - preferred interpreter: managed runtime (`%LOCALAPPDATA%/TranscribeMate/runtime/python/python.exe`) when present
+   - preferred interpreter on Windows: managed runtime (`%LOCALAPPDATA%/TranscribeMate/runtime/python/python.exe`) when present
+   - preferred interpreter on macOS: managed runtime (`~/Library/Application Support/TranscribeMate/runtime/python/bin/python3`) when present
    - default fallback command: `python -m transcribemate.v2.backend.server --stdio`
+   - first-launch bootstrap is platform-specific:
+     - Windows: `scripts/windows/bootstrap_runtime.ps1`
+     - macOS: `scripts/macos/bootstrap_runtime.sh`
 2. Frontend sends request:
    - `run_pipeline`
 3. Backend creates async job and immediately returns `job_id`.
@@ -34,7 +38,8 @@
 
 ## Workspace Persistence
 - Workspace root:
-  - `%LOCALAPPDATA%/TranscribeMate/workspace/`
+  - Windows: `%LOCALAPPDATA%/TranscribeMate/workspace/`
+  - macOS: `~/Documents/TranscribeMate/workspace/`
 - Metadata:
   - `workspace/workspace.json` (project registry + active project pointer)
 - Per-project root:
@@ -66,6 +71,9 @@
 - JavaFX dev run:
   - `cd javafx-client`
   - `mvn -q javafx:run`
+- macOS dev helpers:
+  - `./scripts/macos/run_v2_backend.sh`
+  - `./scripts/macos/run_v2_frontend.sh`
 
 Environment variables used by frontend:
 - `TM_BACKEND_CMD` (full custom command)

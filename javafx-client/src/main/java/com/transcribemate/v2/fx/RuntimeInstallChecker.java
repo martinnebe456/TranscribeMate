@@ -16,7 +16,6 @@ import java.util.stream.Stream;
  * Validates local managed runtime installation before backend startup.
  */
 public final class RuntimeInstallChecker {
-    static final String APP_NAME = "TranscribeMate";
     static final String RUNTIME_READY_MARKER_NAME = "runtime-ready.json";
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final String DEFAULT_WHISPER_MODEL_PATH = "cache/whisper/models/large-v3";
@@ -61,10 +60,18 @@ public final class RuntimeInstallChecker {
     private RuntimeInstallChecker() {
     }
 
+    private record RuntimeMarkerMetadata(
+            Path pythonPath,
+            Path ffmpegPath,
+            Path ffprobePath,
+            List<String> requiredPaths
+    ) {
+    }
+
     public static RuntimeCheckResult evaluate() {
-        String projectRoot = trimToEmpty(System.getenv("TM_PROJECT_ROOT"));
+        Path projectRoot = AppRuntimePaths.resolveProjectRoot();
         Path appDataDir = resolveRuntimeAppDataDir();
-        if (!projectRoot.isBlank()) {
+        if (projectRoot != null) {
             return new RuntimeCheckResult(
                     RuntimeCheckStatus.READY,
                     "dev_bypass",
@@ -76,9 +83,16 @@ public final class RuntimeInstallChecker {
 
         Path runtimeRoot = appDataDir.resolve("runtime");
         Path markerPath = runtimeRoot.resolve(RUNTIME_READY_MARKER_NAME);
-        Path pythonExe = resolveManagedRuntimePython(runtimeRoot);
-        Path ffmpegPath = resolveExpectedBinary(appDataDir, "ffmpeg.exe", "ffmpeg");
-        Path ffprobePath = resolveExpectedBinary(appDataDir, "ffprobe.exe", "ffprobe");
+        RuntimeMarkerMetadata marker = loadMarker(markerPath, appDataDir);
+        Path pythonExe = marker != null && marker.pythonPath() != null
+                ? marker.pythonPath()
+                : resolveManagedRuntimePython(runtimeRoot);
+        Path ffmpegPath = marker != null && marker.ffmpegPath() != null
+                ? marker.ffmpegPath()
+                : resolveExpectedBinary(appDataDir, "ffmpeg.exe", "ffmpeg");
+        Path ffprobePath = marker != null && marker.ffprobePath() != null
+                ? marker.ffprobePath()
+                : resolveExpectedBinary(appDataDir, "ffprobe.exe", "ffprobe");
         Path whisperModelPath = appDataDir.resolve(DEFAULT_WHISPER_MODEL_PATH);
         Path translationModelPath = appDataDir.resolve(DEFAULT_TRANSLATION_MODEL_PATH);
 
@@ -105,23 +119,15 @@ public final class RuntimeInstallChecker {
         }
 
         if (markerExists) {
-            try {
-                JsonNode root = MAPPER.readTree(markerPath.toFile());
-                JsonNode requiredPaths = root.path("components").path("required_paths");
-                if (requiredPaths.isArray()) {
-                    for (JsonNode item : requiredPaths) {
-                        String rawPath = trimToEmpty(item.asText(""));
-                        if (rawPath.isBlank()) {
-                            continue;
-                        }
-                        boolean present = isRequiredPathAvailable(appDataDir, rawPath);
-                        if (!present) {
-                            missing.add("marker_required:" + rawPath);
-                        }
+            if (marker == null) {
+                missing.add(toRelativeLabel(appDataDir, markerPath) + " (invalid JSON)");
+            } else {
+                for (String rawPath : marker.requiredPaths()) {
+                    boolean present = isRequiredPathAvailable(appDataDir, rawPath);
+                    if (!present) {
+                        missing.add("marker_required:" + rawPath);
                     }
                 }
-            } catch (Exception ex) {
-                missing.add(toRelativeLabel(appDataDir, markerPath) + " (invalid JSON)");
             }
         }
 
@@ -172,37 +178,48 @@ public final class RuntimeInstallChecker {
     }
 
     static Path resolveRuntimeAppDataDir() {
-        String localAppData = trimToEmpty(System.getenv("LOCALAPPDATA"));
-        if (!localAppData.isBlank()) {
-            return Path.of(localAppData, APP_NAME);
-        }
-
-        String userHome = trimToEmpty(System.getProperty("user.home"));
-        if (userHome.isBlank()) {
-            return Path.of(System.getProperty("user.dir", "."), APP_NAME);
-        }
-
-        String osName = trimToEmpty(System.getProperty("os.name")).toLowerCase(Locale.ROOT);
-        if (osName.contains("win")) {
-            return Path.of(userHome, "AppData", "Local", APP_NAME);
-        }
-        return Path.of(userHome, ".local", "share", APP_NAME);
+        return AppRuntimePaths.resolveAppDataDir();
     }
 
     private static Path resolveManagedRuntimePython(Path runtimeRoot) {
-        String osName = trimToEmpty(System.getProperty("os.name")).toLowerCase(Locale.ROOT);
-        if (osName.contains("win")) {
-            return runtimeRoot.resolve("python").resolve("python.exe");
-        }
-        return runtimeRoot.resolve("python").resolve("bin").resolve("python");
+        return AppRuntimePaths.preferredManagedRuntimePython(runtimeRoot == null ? null : runtimeRoot.getParent());
     }
 
     private static Path resolveExpectedBinary(Path appDataDir, String windowsName, String unixName) {
-        String osName = trimToEmpty(System.getProperty("os.name")).toLowerCase(Locale.ROOT);
-        if (osName.contains("win")) {
-            return appDataDir.resolve("assets").resolve(windowsName);
+        return AppRuntimePaths.resolveExpectedBinary(appDataDir, windowsName, unixName);
+    }
+
+    private static RuntimeMarkerMetadata loadMarker(Path markerPath, Path appDataDir) {
+        if (markerPath == null || appDataDir == null || !Files.isRegularFile(markerPath)) {
+            return null;
         }
-        return appDataDir.resolve("assets").resolve(unixName);
+        try {
+            JsonNode root = MAPPER.readTree(markerPath.toFile());
+            List<String> requiredPaths = new ArrayList<>();
+            JsonNode requiredPathsNode = root.path("components").path("required_paths");
+            if (requiredPathsNode.isArray()) {
+                for (JsonNode item : requiredPathsNode) {
+                    String rawPath = trimToEmpty(item.asText(""));
+                    if (!rawPath.isBlank()) {
+                        requiredPaths.add(rawPath);
+                    }
+                }
+            }
+            Path pythonPath = resolveOptionalMarkerPath(appDataDir, root.path("python_relpath").asText(""));
+            Path ffmpegPath = resolveOptionalMarkerPath(appDataDir, root.path("ffmpeg_relpath").asText(""));
+            Path ffprobePath = resolveOptionalMarkerPath(appDataDir, root.path("ffprobe_relpath").asText(""));
+            return new RuntimeMarkerMetadata(pythonPath, ffmpegPath, ffprobePath, List.copyOf(requiredPaths));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static Path resolveOptionalMarkerPath(Path appDataDir, String rawPath) {
+        String normalized = trimToEmpty(rawPath);
+        if (normalized.isBlank()) {
+            return null;
+        }
+        return resolveRequiredPath(appDataDir, normalized);
     }
 
     private static Path resolveRequiredPath(Path appDataDir, String rawPath) {

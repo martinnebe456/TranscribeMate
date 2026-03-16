@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
+import sys
 from typing import Any
 
 from ...core.i18n import LANG_CODES, TRANSLATION_MODELS
@@ -77,6 +78,10 @@ def _as_float(value: Any, *, default: float = 0.0) -> float:
 def _normalized_str(value: Any, *, default: str = "") -> str:
     text = str(value or "").strip()
     return text if text else default
+
+
+def _default_prefer_gpu() -> bool:
+    return sys.platform != "darwin"
 
 
 def _normalize_target_lang(value: str) -> str:
@@ -219,7 +224,7 @@ class OutputSpec:
 class TranscriptionSpec:
     model: str = "large-v3"
     auto_model: bool = False
-    prefer_gpu: bool = True
+    prefer_gpu: bool = field(default_factory=_default_prefer_gpu)
     source_lang: str = "auto"
     batch_size: int = 16
 
@@ -228,7 +233,7 @@ class TranscriptionSpec:
         return cls(
             model=_normalized_str(payload.get("model"), default="large-v3"),
             auto_model=_as_bool(payload.get("auto_model"), default=False),
-            prefer_gpu=_as_bool(payload.get("prefer_gpu"), default=True),
+            prefer_gpu=_as_bool(payload.get("prefer_gpu"), default=_default_prefer_gpu()),
             source_lang=_normalized_str(payload.get("source_lang"), default="auto"),
             batch_size=_as_int(payload.get("batch_size"), default=16, minimum=1, maximum=128),
         )
