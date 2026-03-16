@@ -27,13 +27,55 @@ jobs:
         shell: bash
         run: |
           apt-get update
-          apt-get install -y bash ca-certificates coreutils curl findutils git gzip maven tar unzip
+          apt-get install -y \
+            bash \
+            ca-certificates \
+            coreutils \
+            curl \
+            findutils \
+            fontconfig \
+            fonts-dejavu-core \
+            git \
+            gzip \
+            libasound2 \
+            libcups2 \
+            libfreetype6 \
+            libgtk-3-0 \
+            libx11-6 \
+            libxext6 \
+            libxi6 \
+            libxrender1 \
+            libxtst6 \
+            maven \
+            tar \
+            unzip
 
       - name: Install Arch build dependencies
         if: matrix.distro == 'arch'
         shell: bash
         run: |
-          pacman -Sy --noconfirm --needed bash ca-certificates coreutils curl findutils git gzip maven tar unzip
+          pacman -Sy --noconfirm --needed \
+            alsa-lib \
+            bash \
+            ca-certificates \
+            coreutils \
+            cups \
+            curl \
+            findutils \
+            fontconfig \
+            freetype2 \
+            git \
+            gtk3 \
+            gzip \
+            libx11 \
+            libxext \
+            libxi \
+            libxrender \
+            libxtst \
+            maven \
+            tar \
+            ttf-dejavu \
+            unzip
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,7 +85,12 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-          cache: maven
+
+      - name: Verify Java 21 + jpackage
+        shell: bash
+        run: |
+          java -version
+          jpackage --version
 
       - name: Build Linux app-image + TAR.GZ
         shell: bash
