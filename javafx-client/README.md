@@ -20,6 +20,10 @@ or
 ```bash
 ./scripts/macos/run_v2_frontend.sh
 ```
+or
+```bash
+./scripts/linux/run_v2_frontend.sh
+```
 
 ## UI structure (V2 shell)
 - `Dashboard`: project overview, recent outputs, timeline.
@@ -41,6 +45,7 @@ Runtime resolution order:
 - project `.venv` (dev mode)
 - managed runtime `%LOCALAPPDATA%\TranscribeMate\runtime\python\python.exe` (packaged ZIP mode)
 - managed runtime `~/Library/Application Support/TranscribeMate/runtime/python/bin/python3` (packaged macOS mode)
+- managed runtime `${XDG_DATA_HOME:-~/.local/share}/TranscribeMate/runtime/python/bin/python3` (packaged Linux mode)
 - fallback `python`
 
 Optional overrides:

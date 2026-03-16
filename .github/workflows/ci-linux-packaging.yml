@@ -1,0 +1,68 @@
+name: CI Linux Packaging
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: debian
+            container: debian:12-slim
+          - distro: arch
+            container: archlinux:base-devel
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.container }}
+    timeout-minutes: 60
+    steps:
+      - name: Install Debian build dependencies
+        if: matrix.distro == 'debian'
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y bash ca-certificates coreutils curl findutils git gzip maven tar unzip
+
+      - name: Install Arch build dependencies
+        if: matrix.distro == 'arch'
+        shell: bash
+        run: |
+          pacman -Sy --noconfirm --needed bash ca-certificates coreutils curl findutils git gzip maven tar unzip
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build Linux app-image + TAR.GZ
+        shell: bash
+        run: |
+          bash ./scripts/linux/build_v2_release.sh --distro "${{ matrix.distro }}"
+
+      - name: Verify Linux TAR.GZ output
+        shell: bash
+        run: |
+          archive_path="$(find dist/linux -maxdepth 1 -type f -name "TranscribeMate-*-linux-${{ matrix.distro }}-x64.tar.gz" | head -n 1)"
+          if [[ -z "$archive_path" ]]; then
+            echo "Linux ${{ matrix.distro }} release TAR.GZ was not generated." >&2
+            exit 1
+          fi
+          echo "Found Linux TAR.GZ: $(basename "$archive_path")"
+
+      - name: Upload Linux packaging artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcribemate-linux-${{ matrix.distro }}-smoke
+          path: dist/linux/*-linux-${{ matrix.distro }}-x64.tar.gz
+          if-no-files-found: error

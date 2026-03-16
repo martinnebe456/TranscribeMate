@@ -1511,7 +1511,9 @@ public class MainController {
         if (target == null) {
             addTechnicalLog(
                     "ERROR",
-                    "Mandatory runtime setup/repair is unavailable. Missing bootstrap_runtime.ps1 or backend bundle."
+                    "Mandatory runtime setup/repair is unavailable. Missing "
+                            + AppRuntimePaths.bootstrapScriptFileName()
+                            + " or backend bundle."
             );
             if (firstRunRequired) {
                 runMandatoryRuntimeRollbackAndExit(check.appDataDir(), "Mandatory first-launch setup cannot start.");
@@ -1551,12 +1553,9 @@ public class MainController {
                 .append("- Managed runtime folder\n")
                 .append("- Managed Python runtime and backend dependencies\n")
                 .append("- Default AI model pack (Whisper large-v3, Helsinki-NLP/opus-mt-en-cs)\n")
-                .append("- FFmpeg tools\n");
-        if (AppRuntimePaths.isMac()) {
-            body.append("- CPU-focused runtime profile for Apple Silicon (CUDA/NVIDIA path disabled)\n\n");
-        } else {
-            body.append("- NVIDIA GPU detection and CUDA Torch provisioning (fallback to CPU runtime)\n\n");
-        }
+                .append("- FFmpeg tools\n")
+                .append(AppRuntimePaths.runtimeProfileSetupLine())
+                .append("\n\n");
         body.append("Runtime location:\n")
                 .append(target.appDataDir())
                 .append("\n");
@@ -6382,7 +6381,7 @@ public class MainController {
             output.put("output_prefix", trimToEmpty(outputPrefixField.getText()));
         }
         if (useGpuBox != null) {
-            workingParams.put("use_gpu", useGpuBox.isSelected());
+            workingParams.put("use_gpu", AppRuntimePaths.normalizeGpuPreference(useGpuBox.isSelected()));
         }
     }
 
@@ -6452,7 +6451,9 @@ public class MainController {
         if (target == null) {
             addTechnicalLog(
                     "ERROR",
-                    "Runtime repair is unavailable. Missing bootstrap_runtime.ps1 or backend bundle."
+                    "Runtime repair is unavailable. Missing "
+                            + AppRuntimePaths.bootstrapScriptFileName()
+                            + " or backend bundle."
             );
             return;
         }
@@ -6464,7 +6465,9 @@ public class MainController {
         repairDialog.setHeaderText("Reinstall managed runtime components?");
         repairDialog.setContentText(
                 "This will re-run runtime bootstrap and may re-download dependencies, models and FFmpeg.\n\n"
-                        + "Use this when backend runtime is broken or CUDA/AI dependencies are inconsistent.\n\n"
+                        + (AppRuntimePaths.isWindows()
+                        ? "Use this when backend runtime is broken or CUDA/AI dependencies are inconsistent.\n\n"
+                        : "Use this when backend runtime is broken or AI dependencies are inconsistent.\n\n")
                         + "A restart is recommended after successful repair.\n\n"
                         + "Continue with runtime repair?"
         );
@@ -7296,10 +7299,9 @@ public class MainController {
         diarizationMaxSpinner.setValueFactory(new SpinnerValueFactory.IntegerSpinnerValueFactory(0, 32, 0));
 
         autoModelBox.setSelected(false);
-        useGpuBox.setText(AppRuntimePaths.isMac()
-                ? "Prefer GPU (CUDA/NVIDIA only; macOS uses CPU-only in this release)"
-                : "Prefer GPU (CUDA/NVIDIA)");
-        useGpuBox.setSelected(!AppRuntimePaths.isMac());
+        useGpuBox.setText(AppRuntimePaths.gpuPreferenceLabelText());
+        useGpuBox.setSelected(AppRuntimePaths.defaultGpuPreferenceSelected());
+        useGpuBox.setDisable(!AppRuntimePaths.isGpuPreferenceEditable());
         cleanTextBox.setSelected(false);
         exportMdBox.setSelected(false);
         summaryPackBox.setSelected(false);
@@ -7779,7 +7781,11 @@ public class MainController {
                 selectModel(savedModel);
             }
 
-            useGpuBox.setSelected(preferences.getBoolean(PREF_USE_GPU, useGpuBox.isSelected()));
+            useGpuBox.setSelected(
+                    AppRuntimePaths.normalizeGpuPreference(
+                            preferences.getBoolean(PREF_USE_GPU, useGpuBox.isSelected())
+                    )
+            );
             diarizationEnabledBox.setSelected(preferences.getBoolean(PREF_DIARIZATION_ENABLED, diarizationEnabledBox.isSelected()));
 
             String savedDiarizationBackend = normalizeDiarizationBackend(
@@ -8382,7 +8388,7 @@ public class MainController {
 
         preferences.put(prefix + "model", safeValue(modelField));
         preferences.putBoolean(prefix + "auto_model", autoModelBox.isSelected());
-        preferences.putBoolean(prefix + "prefer_gpu", useGpuBox.isSelected());
+        preferences.putBoolean(prefix + "prefer_gpu", AppRuntimePaths.normalizeGpuPreference(useGpuBox.isSelected()));
         preferences.put(prefix + "source_lang", safeValue(sourceLangBox));
         preferences.put(prefix + "summary_lang", safeValue(summaryLangBox));
         preferences.putBoolean(prefix + "summary_ai_enabled", summaryAiBox != null && summaryAiBox.isSelected());
@@ -8460,7 +8466,11 @@ public class MainController {
 
         selectModel(trimToEmpty(preferences.get(prefix + "model", safeValue(modelField))));
         autoModelBox.setSelected(preferences.getBoolean(prefix + "auto_model", autoModelBox.isSelected()));
-        useGpuBox.setSelected(preferences.getBoolean(prefix + "prefer_gpu", useGpuBox.isSelected()));
+        useGpuBox.setSelected(
+                AppRuntimePaths.normalizeGpuPreference(
+                        preferences.getBoolean(prefix + "prefer_gpu", useGpuBox.isSelected())
+                )
+        );
 
         selectComboValue(sourceLangBox, preferences.get(prefix + "source_lang", safeValue(sourceLangBox)));
         selectComboValue(summaryLangBox, preferences.get(prefix + "summary_lang", safeValue(summaryLangBox)));
@@ -8614,7 +8624,7 @@ public class MainController {
 
         node.put("model", safeValue(modelField));
         node.put("auto_model", autoModelBox.isSelected());
-        node.put("prefer_gpu", useGpuBox.isSelected());
+        node.put("prefer_gpu", AppRuntimePaths.normalizeGpuPreference(useGpuBox.isSelected()));
         node.put("source_lang", safeValue(sourceLangBox));
         node.put("summary_lang", safeValue(summaryLangBox));
         node.put("summary_ai_enabled", summaryAiBox != null && summaryAiBox.isSelected());
@@ -8674,7 +8684,11 @@ public class MainController {
 
         selectModel(nodeText(node, "model", safeValue(modelField)));
         autoModelBox.setSelected(nodeBool(node, "auto_model", autoModelBox.isSelected()));
-        useGpuBox.setSelected(nodeBool(node, "prefer_gpu", useGpuBox.isSelected()));
+        useGpuBox.setSelected(
+                AppRuntimePaths.normalizeGpuPreference(
+                        nodeBool(node, "prefer_gpu", useGpuBox.isSelected())
+                )
+        );
         selectComboValue(sourceLangBox, nodeText(node, "source_lang", safeValue(sourceLangBox)));
         selectComboValue(summaryLangBox, nodeText(node, "summary_lang", safeValue(summaryLangBox)));
         if (summaryAiBox != null) {
@@ -9043,7 +9057,7 @@ public class MainController {
         ObjectNode transcription = params.putObject("transcription");
         transcription.put("model", safeValue(modelField));
         transcription.put("auto_model", autoModelBox.isSelected());
-        transcription.put("prefer_gpu", useGpuBox.isSelected());
+        transcription.put("prefer_gpu", AppRuntimePaths.normalizeGpuPreference(useGpuBox.isSelected()));
         transcription.put("source_lang", safeValue(sourceLangBox));
         transcription.put("batch_size", valueOf(batchSizeSpinner));
 
@@ -10657,6 +10671,15 @@ public class MainController {
             );
             if (macAppTarget != null) {
                 return macAppTarget;
+            }
+
+            RuntimeBootstrapTarget linuxAppTarget = buildRuntimeBootstrapTarget(
+                    normalizedRoot.resolve("lib").resolve("app").resolve("backend").resolve(bootstrapScriptName),
+                    normalizedRoot.resolve("lib").resolve("app").resolve("backend"),
+                    appDataPath
+            );
+            if (linuxAppTarget != null) {
+                return linuxAppTarget;
             }
 
             RuntimeBootstrapTarget bundledAppTarget = buildRuntimeBootstrapTarget(

@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AppRuntimePathsTest {
@@ -70,5 +71,27 @@ class AppRuntimePathsTest {
         Path workspaceRoot = AppRuntimePaths.resolveDefaultWorkspaceRoot(override);
 
         assertEquals(override.resolve("workspace"), workspaceRoot);
+    }
+
+    @Test
+    void resolveDefaultWorkspaceRootUsesAppDataWorkspaceOnLinux() throws Exception {
+        Path appData = Files.createTempDirectory("tm-linux-app-data");
+        System.setProperty("os.name", "Linux");
+        System.setProperty("user.home", "/tmp/tm-linux-home");
+
+        Path workspaceRoot = AppRuntimePaths.resolveDefaultWorkspaceRoot(appData);
+
+        assertEquals(appData.resolve("workspace"), workspaceRoot);
+    }
+
+    @Test
+    void linuxUsesShellBootstrapAndCpuOnlyGpuPolicy() {
+        System.setProperty("os.name", "Linux");
+
+        assertEquals("bootstrap_runtime.sh", AppRuntimePaths.bootstrapScriptFileName());
+        assertEquals("Prefer GPU (Linux build is CPU-only in this release)", AppRuntimePaths.gpuPreferenceLabelText());
+        assertFalse(AppRuntimePaths.defaultGpuPreferenceSelected());
+        assertFalse(AppRuntimePaths.isGpuPreferenceEditable());
+        assertFalse(AppRuntimePaths.normalizeGpuPreference(true));
     }
 }

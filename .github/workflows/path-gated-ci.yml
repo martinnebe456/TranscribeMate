@@ -17,6 +17,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      linux_packaging: ${{ steps.filter.outputs.linux_packaging }}
       docs_contract: ${{ steps.filter.outputs.docs_contract }}
       lint: ${{ steps.filter.outputs.lint }}
     steps:
@@ -50,6 +51,7 @@ jobs:
               - 'scripts/run_v2_frontend.ps1'
               - 'scripts/run_v2_frontend.sh'
               - 'scripts/build_v2_release.ps1'
+              - 'scripts/build_v2_release_linux.sh'
               - 'scripts/build_v2_release_macos.sh'
               - 'scripts/test_all_macos.sh'
               - 'scripts/windows/run_v2_frontend.ps1'
@@ -58,6 +60,15 @@ jobs:
               - 'scripts/macos/run_v2_frontend.sh'
               - 'scripts/macos/build_v2_release.sh'
               - 'scripts/macos/test_all.sh'
+              - 'scripts/linux/**'
+            linux_packaging:
+              - 'javafx-client/**'
+              - 'transcribemate/**'
+              - 'requirements*.txt'
+              - 'scripts/build_v2_release_linux.sh'
+              - 'scripts/run_v2_backend.sh'
+              - 'scripts/run_v2_frontend.sh'
+              - 'scripts/bootstrap_runtime.sh'
               - 'scripts/linux/**'
             docs_contract:
               - 'docs/**'
@@ -71,6 +82,7 @@ jobs:
             lint:
               - '**/*.py'
               - '**/*.ps1'
+              - '**/*.sh'
               - 'version.txt'
               - '.github/workflows/**'
 
@@ -83,6 +95,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.frontend == 'true'
     uses: ./.github/workflows/ci-frontend.yml
+
+  linux_packaging:
+    needs: changes
+    if: needs.changes.outputs.linux_packaging == 'true'
+    uses: ./.github/workflows/ci-linux-packaging.yml
 
   docs_and_contract:
     needs: changes
@@ -99,6 +116,7 @@ jobs:
     if: |
       needs.changes.outputs.backend != 'true' &&
       needs.changes.outputs.frontend != 'true' &&
+      needs.changes.outputs.linux_packaging != 'true' &&
       needs.changes.outputs.docs_contract != 'true' &&
       needs.changes.outputs.lint != 'true'
     runs-on: ubuntu-latest
