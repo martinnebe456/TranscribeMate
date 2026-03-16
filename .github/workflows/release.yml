@@ -149,6 +149,7 @@ jobs:
           apt-get update
           apt-get install -y \
             bash \
+            binutils \
             ca-certificates \
             coreutils \
             curl \
@@ -225,6 +226,7 @@ jobs:
           pacman -Sy --noconfirm --needed \
             alsa-lib \
             bash \
+            binutils \
             ca-certificates \
             coreutils \
             cups \
