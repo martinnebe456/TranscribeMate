@@ -13,6 +13,9 @@ jobs:
   frontend:
     uses: ./.github/workflows/ci-frontend.yml
 
+  stdio_smoke:
+    uses: ./.github/workflows/ci-stdio-smoke.yml
+
   linux_packaging:
     uses: ./.github/workflows/ci-linux-packaging.yml
 
