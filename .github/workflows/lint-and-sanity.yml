@@ -50,15 +50,11 @@ jobs:
       - name: PowerShell parser check
         shell: pwsh
         run: |
-          $files = @(
-            "scripts/build_v2_release.ps1",
-            "scripts/run_v2_backend.ps1",
-            "scripts/run_v2_frontend.ps1",
-            "scripts/setup_build_and_run.ps1"
-          )
+          $files = @()
           if (Test-Path "scripts") {
-            $files += (Get-ChildItem -Path "scripts" -Filter "*.ps1" -File | Select-Object -ExpandProperty FullName)
+            $files += (Get-ChildItem -Path "scripts" -Recurse -Filter "*.ps1" -File | Select-Object -ExpandProperty FullName)
           }
+          $files = $files | Sort-Object -Unique
 
           $errorsFound = @()
           foreach ($file in $files) {

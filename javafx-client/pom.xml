@@ -14,6 +14,8 @@
     <maven.compiler.target>21</maven.compiler.target>
     <javafx.version>21.0.2</javafx.version>
     <jackson.version>2.17.2</jackson.version>
+    <junit.jupiter.version>5.11.4</junit.jupiter.version>
+    <testfx.version>4.0.16-alpha</testfx.version>
   </properties>
 
   <dependencies>
@@ -31,6 +33,24 @@
       <groupId>com.fasterxml.jackson.core</groupId>
       <artifactId>jackson-databind</artifactId>
       <version>${jackson.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-api</artifactId>
+      <version>${junit.jupiter.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter-engine</artifactId>
+      <version>${junit.jupiter.version}</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testfx</groupId>
+      <artifactId>testfx-junit5</artifactId>
+      <version>${testfx.version}</version>
+      <scope>test</scope>
     </dependency>
   </dependencies>
 
@@ -50,6 +70,24 @@
         <version>0.0.8</version>
         <configuration>
           <mainClass>com.transcribemate.v2.fx.Launcher</mainClass>
+        </configuration>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <version>3.5.2</version>
+        <configuration>
+          <useModulePath>false</useModulePath>
+          <systemPropertyVariables>
+            <testfx.robot>glass</testfx.robot>
+            <testfx.setup.timeout>120000</testfx.setup.timeout>
+            <java.awt.headless>false</java.awt.headless>
+            <prism.order>sw</prism.order>
+            <tm.project.root>${env.TM_PROJECT_ROOT}</tm.project.root>
+            <tm.appDataDir>${env.TM_APP_DATA_DIR}</tm.appDataDir>
+            <tm.uiTestMode>${env.TM_UI_TEST_MODE}</tm.uiTestMode>
+            <tm.runFrontendSmoke>${env.TM_RUN_FRONTEND_SMOKE}</tm.runFrontendSmoke>
+          </systemPropertyVariables>
         </configuration>
       </plugin>
     </plugins>

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "summary_required_headings": [
+    "## TL;DR",
+    "## Key Points",
+    "## Action Items",
+    "## Open Questions",
+    "## Risks"
+  ],
+  "fixtures": [
+    {
+      "id": "audio-sample-2",
+      "source": "audio-sample-2.mp3",
+      "reference_pdf": "completed-transcription-2.pdf",
+      "summary_lang": "cs",
+      "transcript_similarity_min": 0.45
+    },
+    {
+      "id": "audio-sample-3",
+      "source": "audio-sample-3.mp3",
+      "reference_pdf": "completed-transcription-3.pdf",
+      "summary_lang": "cs",
+      "transcript_similarity_min": 0.45
+    },
+    {
+      "id": "audio-sample-4",
+      "source": "audio-sample-4.mp3",
+      "reference_pdf": "completed-transcription-4.pdf",
+      "summary_lang": "cs",
+      "transcript_similarity_min": 0.45
+    }
+  ]
+}

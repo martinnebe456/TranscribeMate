@@ -9,8 +9,14 @@ permissions:
 
 jobs:
   build:
-    runs-on: windows-latest
-    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@v4

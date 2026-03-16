@@ -35,6 +35,18 @@ def _payload(*, output_mode: str = "txt_only") -> dict:
     }
 
 
+def _youtube_payload(*, output_mode: str = "txt_only") -> dict:
+    payload = _payload(output_mode=output_mode)
+    payload["module"] = "youtube_transcribe" if output_mode == "txt_only" else payload["module"]
+    payload["source"] = {
+        "mode": "youtube",
+        "url": "https://www.youtube.com/watch?v=test123",
+        "is_playlist": False,
+        "quality": "best",
+    }
+    return payload
+
+
 def test_service_ping_and_capabilities():
     events = []
 
@@ -130,6 +142,38 @@ def test_preflight_requires_torch_for_ai_summary(monkeypatch):
     torch_checks = [item for item in result["checks"] if item["name"] == "torch"]
     assert torch_checks
     assert torch_checks[-1]["status"] == "fail"
+
+
+def test_preflight_allows_youtube_txt_only_without_ffmpeg(monkeypatch):
+    real_import = builtins.__import__
+
+    def fake_import(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "yt_dlp":
+            return object()
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+    monkeypatch.setattr("transcribemate.v2.backend.service.ffmpeg_path", lambda: None)
+    monkeypatch.setattr(
+        "transcribemate.v2.backend.service._gather_gpu_runtime_diagnostics",
+        lambda: {
+            "torch_ok": True,
+            "torch_version": "test",
+            "torch_cuda_available": False,
+            "torch_cuda_build": "",
+            "nvidia_gpu_detected": False,
+            "nvidia_smi_path": "",
+        },
+    )
+
+    svc = BackendService(emit_event=lambda _: None)
+    result = svc.handle_request("preflight_check", _youtube_payload(output_mode="txt_only"))
+
+    assert result["ok"] is True
+    ffmpeg_checks = [item for item in result["checks"] if item["name"] == "ffmpeg"]
+    assert ffmpeg_checks
+    assert ffmpeg_checks[-1]["status"] == "pass"
+    assert "fallback" in ffmpeg_checks[-1]["message"].lower()
 
 
 def test_preflight_requires_local_diarization_runtime(monkeypatch):

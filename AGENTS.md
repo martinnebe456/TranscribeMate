@@ -30,13 +30,19 @@ This guide describes the current repository state (V2-only stack).
 
 ## Entry points
 - Frontend (JavaFX):
-  - `./scripts/run_v2_frontend.ps1`
+  - Windows: `./scripts/windows/run_v2_frontend.ps1`
+  - macOS: `./scripts/macos/run_v2_frontend.sh`
+  - compatibility wrappers: `./scripts/run_v2_frontend.ps1`, `./scripts/run_v2_frontend.sh`
   - or `cd javafx-client && mvn javafx:run`
 - Backend (Python):
-  - `./scripts/run_v2_backend.ps1`
+  - Windows: `./scripts/windows/run_v2_backend.ps1`
+  - macOS: `./scripts/macos/run_v2_backend.sh`
+  - compatibility wrappers: `./scripts/run_v2_backend.ps1`, `./scripts/run_v2_backend.sh`
   - or `python -m transcribemate.v2.backend.server --stdio`
 - Release build (Windows ZIP):
-  - `./scripts/build_v2_release.ps1`
+  - `./scripts/windows/build_v2_release.ps1`
+- Release build (macOS arm64 ZIP):
+  - `./scripts/macos/build_v2_release.sh`
 
 ## Code map
 - `javafx-client/src/main/java/com/transcribemate/v2/fx/`
@@ -69,29 +75,53 @@ This guide describes the current repository state (V2-only stack).
 ## Runtime data and outputs
 - User data directory:
   - Windows: `%LOCALAPPDATA%/TranscribeMate`
+  - macOS: `~/Library/Application Support/TranscribeMate`
   - Other: `$XDG_DATA_HOME` or `~/.local/share/TranscribeMate`
+- Default workspace root:
+  - Windows: `%LOCALAPPDATA%/TranscribeMate/workspace`
+  - macOS: `~/Documents/TranscribeMate/workspace`
 - Config: `config.json`
 - Runtime log: `runtime.log`
 - Cache: `cache/huggingface`, `cache/whisper`
-- Runtime Python packages: `runtime/python/Lib/site-packages/`
-- Managed runtime interpreter: `runtime/python/python.exe`
+- Runtime Python packages:
+  - Windows: `runtime/python/Lib/site-packages/`
+  - macOS: `runtime/python/lib/python*/site-packages/`
+- Managed runtime interpreter:
+  - Windows: `runtime/python/python.exe`
+  - macOS: `runtime/python/bin/python3`
 - Output root: `<out_dir>/transcribemate_outputs/`
 
 ## Tests
 - Run with:
   - `python -m pip install -r requirements-dev.txt`
   - `python -m pytest`
+- Full macOS validation runner:
+  - `./scripts/macos/test_all.sh`
 - Tests include:
   - V2 backend protocol/models/service
   - selected shared core/pipeline helper tests
+  - macOS-only heavy fixture regression over `tests/test_files/*.mp3` + paired PDF transcripts
+  - manual macOS UI verification is separate; `scripts/macos/test_all.sh` does not automate GUI clicks
 
 ## Build/packaging note
 - Legacy Tkinter/PyInstaller flow was removed from this branch.
 - Inno installer flow is removed.
-- `scripts/build_v2_release.ps1` builds Java app-image via `jpackage` and then creates a distributable ZIP package.
-- Build output includes `dist_release/checksums.txt` with SHA256 for ZIP verification.
-- ZIP distribution entry point is `TranscribeMate.exe` inside extracted package.
-- Runtime bootstrap (embedded Python + deps + models + FFmpeg) runs on first app launch.
+- Platform scripts are organized under `scripts/windows/`, `scripts/macos/`, `scripts/linux/` and `scripts/shared/`; top-level `scripts/*` entrypoints are compatibility wrappers.
+- `scripts/windows/build_v2_release.ps1` builds the Windows app-image via `jpackage` and then creates a distributable ZIP package.
+- `scripts/macos/build_v2_release.sh` builds the macOS arm64 `.app` via `jpackage`, bundles pinned runtime assets, and then creates a distributable ZIP package.
+- Release/version filenames stay on the shared `yy.MM.dd.NNN` format; the macOS build script derives a separate `jpackage`-compatible 3-segment app metadata version internally.
+- Build outputs are OS-scoped under a single root: `dist/windows`, `dist/macos`, and later `dist/linux`.
+- Each local build writes a platform-local `checksums.txt`; CI release publishing additionally writes a combined top-level `dist/checksums.txt`.
+- ZIP distribution entry points:
+  - Windows: `TranscribeMate.exe`
+  - macOS: `TranscribeMate.app`
+- Runtime bootstrap is platform-specific on first app launch:
+  - Windows: `scripts/windows/bootstrap_runtime.ps1`
+  - macOS: `scripts/macos/bootstrap_runtime.sh`
+- macOS dev-mode note:
+  - when `TM_PROJECT_ROOT` is set and bundled runtime assets are absent, `scripts/macos/bootstrap_runtime.sh` now uses a development fallback (project `.venv` + app-data FFmpeg install) instead of requiring release-bundled assets.
+  - direct `mvn javafx:run` from `javafx-client/` should now auto-detect the repository backend and `.venv`; helper scripts still set `TM_PROJECT_ROOT` explicitly for predictable dev runs.
+  - `TM_APP_DATA_DIR` is now a shared override honored by Python path resolution, JavaFX path resolution, and runtime bootstrap scripts; the new macOS full-suite uses it to isolate app-data/workspace/logs per run.
 
 ## Legal
 - `DISCLAIMER.md`
