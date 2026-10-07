@@ -181,3 +181,50 @@ def test_pipeline_request_rejects_missing_project_context():
 
     with pytest.raises(RequestValidationError):
         PipelineRequest.from_payload(payload)
+
+
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "source",
+        "output",
+        "transcription",
+        "translation",
+        "subtitles",
+        "text",
+        "diarization",
+        "project",
+        "conference_defaults",
+        "conference_meta",
+    ],
+)
+def test_pipeline_request_rejects_non_object_nested_fields(field_name):
+    payload = _base_payload()
+    payload[field_name] = [["unexpected", "pair"]]
+
+    with pytest.raises(RequestValidationError) as exc:
+        PipelineRequest.from_payload(payload)
+
+    assert exc.value.code == "invalid_request"
+    assert exc.value.details == {"field": field_name, "expected": "object"}
+
+
+def test_pipeline_request_rejects_non_object_nested_metadata():
+    payload = _base_payload()
+    payload["conference_meta"] = {"session.wav": "not an object"}
+
+    with pytest.raises(RequestValidationError) as exc:
+        PipelineRequest.from_payload(payload)
+
+    assert exc.value.code == "invalid_request"
+    assert exc.value.details == {"field": "conference_meta[0]", "expected": "object"}
+
+
+def test_pipeline_request_rejects_non_object_speaker_profiles():
+    payload = _base_payload()
+    payload["diarization"]["speaker_profiles"] = [["SPEAKER_1", "Alice"]]
+
+    with pytest.raises(RequestValidationError) as exc:
+        PipelineRequest.from_payload(payload)
+
+    assert exc.value.details == {"field": "speaker_profiles", "expected": "object"}

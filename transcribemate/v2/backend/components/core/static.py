@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from threading import Event
 
-from ...models import PipelineRequest
+from ...models import PipelineRequest, RequestValidationError
 from .base import (
     LogCallback,
     ModuleComponent,
@@ -45,6 +45,17 @@ class StaticModuleComponent(ModuleComponent):
         output = request.output
         translation = request.translation
         diarization = request.diarization
+
+        required_source_mode = self._runtime_profile.source_mode
+        if source.mode != required_source_mode:
+            raise RequestValidationError(
+                f"module '{self._runtime_profile.module_id}' requires source.mode='{required_source_mode}'.",
+                details={
+                    "module": self._runtime_profile.module_id,
+                    "source.mode": source.mode,
+                    "required_source.mode": required_source_mode,
+                },
+            )
 
         if self._force_source_mode:
             source = replace(source, mode=self._force_source_mode)

@@ -124,6 +124,19 @@ def _normalize_module(value: Any) -> str:
     return module
 
 
+def _nested_object(payload: dict[str, Any], field_name: str) -> dict[str, Any]:
+    """Return a request object field after validating its JSON shape."""
+    if field_name not in payload:
+        return {}
+    value = payload[field_name]
+    if not isinstance(value, dict):
+        raise RequestValidationError(
+            f"{field_name} must be an object.",
+            details={"field": field_name, "expected": "object"},
+        )
+    return value
+
+
 def _normalize_diarization_backend(value: Any) -> str:
     backend = _normalized_str(value, default="local_cluster_accurate").lower()
     legacy_map = {
@@ -467,14 +480,13 @@ class DiarizationSpec:
         if min_speakers > 0 and max_speakers > 0 and max_speakers < min_speakers:
             max_speakers = min_speakers
 
-        profiles_raw = payload.get("speaker_profiles") or {}
+        profiles_raw = _nested_object(payload, "speaker_profiles")
         speaker_profiles: dict[str, str] = {}
-        if isinstance(profiles_raw, dict):
-            for key, value in profiles_raw.items():
-                k = _normalized_str(key).upper()
-                v = _normalized_str(value)
-                if k:
-                    speaker_profiles[k] = v
+        for key, value in profiles_raw.items():
+            k = _normalized_str(key).upper()
+            v = _normalized_str(value)
+            if k:
+                speaker_profiles[k] = v
 
         return cls(
             enabled=_as_bool(payload.get("enabled"), default=False),
@@ -524,27 +536,28 @@ class PipelineRequest:
                 details={"module": module, "supported": sorted(ALLOWED_MODULES)},
             )
 
-        source = SourceSpec.from_payload(dict(payload.get("source") or {}))
-        output = OutputSpec.from_payload(dict(payload.get("output") or {}))
-        transcription = TranscriptionSpec.from_payload(dict(payload.get("transcription") or {}))
-        translation = TranslationSpec.from_payload(dict(payload.get("translation") or {}))
-        subtitles = SubtitleStyleSpec.from_payload(dict(payload.get("subtitles") or {}))
-        text_export = TextExportSpec.from_payload(dict(payload.get("text") or {}))
-        diarization = DiarizationSpec.from_payload(dict(payload.get("diarization") or {}))
-        project_raw = payload.get("project") or {}
-        if not isinstance(project_raw, dict):
-            raise RequestValidationError("project must be an object.")
+        source = SourceSpec.from_payload(_nested_object(payload, "source"))
+        output = OutputSpec.from_payload(_nested_object(payload, "output"))
+        transcription = TranscriptionSpec.from_payload(_nested_object(payload, "transcription"))
+        translation = TranslationSpec.from_payload(_nested_object(payload, "translation"))
+        subtitles = SubtitleStyleSpec.from_payload(_nested_object(payload, "subtitles"))
+        text_export = TextExportSpec.from_payload(_nested_object(payload, "text"))
+        diarization = DiarizationSpec.from_payload(_nested_object(payload, "diarization"))
+        project_raw = _nested_object(payload, "project")
         project = ProjectContextSpec.from_payload(project_raw)
-        conference_defaults = ConferenceDefaultsSpec.from_payload(dict(payload.get("conference_defaults") or {}))
+        conference_defaults = ConferenceDefaultsSpec.from_payload(
+            _nested_object(payload, "conference_defaults")
+        )
 
-        conference_meta_raw = payload.get("conference_meta") or {}
-        if not isinstance(conference_meta_raw, dict):
-            raise RequestValidationError("conference_meta must be an object mapping file names to metadata.")
+        conference_meta_raw = _nested_object(payload, "conference_meta")
 
         conference_meta: dict[str, dict[str, str]] = {}
-        for key, value in conference_meta_raw.items():
+        for index, (key, value) in enumerate(conference_meta_raw.items()):
             if not isinstance(value, dict):
-                continue
+                raise RequestValidationError(
+                    "conference_meta entries must be objects.",
+                    details={"field": f"conference_meta[{index}]", "expected": "object"},
+                )
             conference_meta[str(key)] = {
                 "speaker": _normalized_str(value.get("speaker")),
                 "topic": _normalized_str(value.get("topic")),

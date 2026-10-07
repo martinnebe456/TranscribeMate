@@ -528,6 +528,32 @@ def test_run_pipeline_rejects_parallel_job(tmp_path):
     assert exc.value.code == "job_limit_reached"
 
 
+@pytest.mark.parametrize(
+    ("module", "source"),
+    [
+        ("offline_transcribe", {"mode": "youtube", "url": "https://www.youtube.com/watch?v=test123"}),
+        ("youtube_transcribe", {"mode": "local", "path": "tests"}),
+    ],
+)
+def test_run_pipeline_rejects_module_source_mismatch_before_creating_job(module, source):
+    svc = BackendService(emit_event=lambda _: None)
+    payload = _payload()
+    payload["module"] = module
+    payload["source"] = source
+
+    preflight = svc.handle_request("preflight_check", payload)
+    assert preflight["ok"] is False
+    assert preflight["checks"][0]["name"] == "request_schema"
+    assert preflight["checks"][0]["status"] == "fail"
+
+    with pytest.raises(RequestValidationError) as exc:
+        svc.handle_request("run_pipeline", payload)
+
+    assert exc.value.code == "invalid_request"
+    assert exc.value.details["module"] == module
+    assert not svc._jobs
+
+
 def test_project_job_logs_are_persisted(tmp_path):
     svc = BackendService(emit_event=lambda _: None)
     payload = _payload(output_mode="txt_only")

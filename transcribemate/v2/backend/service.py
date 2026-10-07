@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
-from threading import Event, Lock, Thread
+from threading import Event, RLock, Thread
 from typing import Callable, Deque
 
 from ...core.models import force_refresh_models
@@ -71,7 +71,7 @@ class BackendService:
     def __init__(self, *, emit_event: EventEmitter):
         self._emit_event = emit_event
         self._jobs: dict[str, JobRecord] = {}
-        self._lock = Lock()
+        self._lock = RLock()
 
     def handle_request(self, method: str, params: dict) -> dict:
         route = method.strip().lower()
@@ -208,6 +208,8 @@ class BackendService:
         request: PipelineRequest | None
         try:
             request = PipelineRequest.from_payload(params or {})
+            module_component = get_module_component(request.module)
+            request = module_component.configure_request(request)
             add_check("request_schema", "pass", "Request payload is valid.")
         except RequestValidationError as exc:
             add_check("request_schema", "fail", str(exc), level="error")
@@ -217,8 +219,6 @@ class BackendService:
             }
 
         assert request is not None
-        module_component = get_module_component(request.module)
-        request = module_component.configure_request(request)
         module_component.augment_preflight_checks(
             request,
             lambda name, status, message, level: add_check(name, status, message, level=level),
@@ -813,16 +813,15 @@ class BackendService:
 
         with self._lock:
             record = self._jobs.get(job_id)
+            if not record:
+                raise RequestValidationError("Job not found.", code="not_found", details={"job_id": job_id})
 
-        if not record:
-            raise RequestValidationError("Job not found.", code="not_found", details={"job_id": job_id})
+            if record.status in {"completed", "failed", "cancelled"}:
+                return {"job_id": job_id, "status": record.status, "cancel_requested": False}
 
-        if record.status in {"completed", "failed", "cancelled"}:
-            return {"job_id": job_id, "status": record.status, "cancel_requested": False}
-
-        record.stop_flag.set()
-        self._emit_job_event("job.cancel_requested", job_id, {"status": record.status})
-        return {"job_id": job_id, "status": record.status, "cancel_requested": True}
+            record.stop_flag.set()
+            self._emit_job_event("job.cancel_requested", job_id, {"status": record.status})
+            return {"job_id": job_id, "status": record.status, "cancel_requested": True}
 
     def _get_job(self, params: dict) -> dict:
         job_id = str((params or {}).get("job_id") or "").strip()
@@ -886,17 +885,18 @@ class BackendService:
 
     def _run_job_thread(self, record: JobRecord):
         module_component = get_module_component(record.request.module)
-        record.status = "running"
-        record.started_at = _utc_now()
-        self._emit_job_event(
-            "job.started",
-            record.job_id,
-            {
-                "status": record.status,
-                "request": record.request.to_dict(),
-                "runtime_profile": module_component.to_capability_dict(),
-            },
-        )
+        with self._lock:
+            record.status = "running"
+            record.started_at = _utc_now()
+            self._emit_job_event(
+                "job.started",
+                record.job_id,
+                {
+                    "status": record.status,
+                    "request": record.request.to_dict(),
+                    "runtime_profile": module_component.to_capability_dict(),
+                },
+            )
 
         pipeline = module_component.create_pipeline(
             request=record.request,
@@ -907,62 +907,65 @@ class BackendService:
 
         try:
             result: PipelineRunResult = pipeline.run()
-            if record.stop_flag.is_set():
+            with self._lock:
+                if record.stop_flag.is_set():
+                    record.status = "cancelled"
+                    record.finished_at = _utc_now()
+                    self._emit_job_event(
+                        "job.cancelled",
+                        record.job_id,
+                        {
+                            "status": record.status,
+                            "result": result.to_dict(),
+                        },
+                    )
+                    return
+
+                record.status = "completed"
+                record.result = result.to_dict()
+                record.warnings = list(result.warnings)
+                record.finished_at = _utc_now()
+                self._emit_job_event(
+                    "job.completed",
+                    record.job_id,
+                    {
+                        "status": record.status,
+                        "result": record.result,
+                    },
+                )
+        except PipelineCancelledError as exc:
+            with self._lock:
                 record.status = "cancelled"
                 record.finished_at = _utc_now()
+                record.error = {
+                    "code": "cancelled",
+                    "message": str(exc),
+                }
                 self._emit_job_event(
                     "job.cancelled",
                     record.job_id,
                     {
                         "status": record.status,
-                        "result": result.to_dict(),
+                        "error": record.error,
                     },
                 )
-                return
-
-            record.status = "completed"
-            record.result = result.to_dict()
-            record.warnings = list(result.warnings)
-            record.finished_at = _utc_now()
-            self._emit_job_event(
-                "job.completed",
-                record.job_id,
-                {
-                    "status": record.status,
-                    "result": record.result,
-                },
-            )
-        except PipelineCancelledError as exc:
-            record.status = "cancelled"
-            record.finished_at = _utc_now()
-            record.error = {
-                "code": "cancelled",
-                "message": str(exc),
-            }
-            self._emit_job_event(
-                "job.cancelled",
-                record.job_id,
-                {
-                    "status": record.status,
-                    "error": record.error,
-                },
-            )
         except Exception as exc:
-            record.status = "failed"
-            record.finished_at = _utc_now()
-            record.error = {
-                "code": "pipeline_failed",
-                "message": str(exc),
-                "traceback": traceback.format_exc(),
-            }
-            self._emit_job_event(
-                "job.failed",
-                record.job_id,
-                {
-                    "status": record.status,
-                    "error": record.error,
-                },
-            )
+            with self._lock:
+                record.status = "failed"
+                record.finished_at = _utc_now()
+                record.error = {
+                    "code": "pipeline_failed",
+                    "message": str(exc),
+                    "traceback": traceback.format_exc(),
+                }
+                self._emit_job_event(
+                    "job.failed",
+                    record.job_id,
+                    {
+                        "status": record.status,
+                        "error": record.error,
+                    },
+                )
 
     def _on_job_log(self, record: JobRecord, line: str):
         cleaned = str(line or "").strip()
