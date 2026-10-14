@@ -6,7 +6,7 @@ faster-whisper
 av>=11,<19
 # Keep the runtime above known unsafe model-loading and save_pretrained paths.
 transformers>=5.10.0,<6
-huggingface_hub>=0.34,<1.0
+huggingface_hub>=1.5,<2.0
 sentencepiece
 accelerate
 safetensors
