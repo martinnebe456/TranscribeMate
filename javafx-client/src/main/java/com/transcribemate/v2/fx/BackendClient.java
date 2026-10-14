@@ -263,13 +263,17 @@ public final class BackendClient implements AutoCloseable {
             }
 
             if ("event".equals(type)) {
-                for (Consumer<JsonNode> listener : eventListeners) {
-                    listener.accept(message);
-                }
+                dispatchEvent(message);
             }
         } catch (Exception ex) {
             AppFileLogger.logException("backend.client.protocol", ex);
             publishSyntheticEvent("backend.protocol_error", "stdout", ex.toString() + " | line=" + line);
+        }
+    }
+
+    void dispatchEvent(JsonNode event) {
+        for (Consumer<JsonNode> listener : eventListeners) {
+            listener.accept(event);
         }
     }
 

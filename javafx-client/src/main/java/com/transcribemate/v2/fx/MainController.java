@@ -4638,6 +4638,27 @@ public class MainController {
             fileEditorStatusLabel.setText("Preview/editor: select a text file (.txt/.srt/.json/.md) from the gallery.");
         }
         refreshWorkspaceFileFilter();
+        if (AppRuntimePaths.isUiTestMode()) {
+            long transcriptCount = workspaceFileRows.stream()
+                    .filter(row -> row.getRelativePath().toLowerCase(Locale.ROOT).endsWith(".txt"))
+                    .count();
+            long visibleTranscriptCount = filteredWorkspaceFileRows.stream()
+                    .filter(row -> row.getRelativePath().toLowerCase(Locale.ROOT).endsWith(".txt"))
+                    .count();
+            long visibleOutputTranscriptCount = filteredWorkspaceFileRows.stream()
+                    .filter(this::isOutputWorkspacePath)
+                    .filter(row -> row.getRelativePath().toLowerCase(Locale.ROOT).endsWith(".txt"))
+                    .count();
+            AppFileLogger.log(
+                    "INFO",
+                    "ui.test.files.loaded",
+                    "project_id=" + activeProjectId
+                            + "; file_count=" + workspaceFileRows.size()
+                            + "; transcript_count=" + transcriptCount
+                            + "; visible_transcript_count=" + visibleTranscriptCount
+                            + "; visible_output_transcript_count=" + visibleOutputTranscriptCount
+            );
+        }
         if (projectFilesTable != null) {
             projectFilesTable.getSelectionModel().clearSelection();
         }
@@ -9259,18 +9280,19 @@ public class MainController {
                 }
                 case "job.completed" -> {
                     updateJobStatus(jobId, "completed");
-                    if (operationsStatusLabel != null) {
-                        operationsStatusLabel.setText("Idle");
-                    }
                     JsonNode result = payload.path("result");
                     String finalOut = result.path("final_output_dir").asText("");
                     Path sidecarPath = extractDiarizationSidecarPath(result);
-                    if (sidecarPath != null) {
-                        lastDiarizationSidecarPath = sidecarPath;
-                        mergeSpeakerProfilesFromSidecar(sidecarPath);
-                        updateSpeakerMappingButtonState(false);
-                    }
-                    if (jobId != null && !jobId.isBlank() && jobId.equals(currentJobId)) {
+                    boolean ownsJob = JobEventScope.owns(currentJobId, jobId);
+                    if (ownsJob) {
+                        if (operationsStatusLabel != null) {
+                            operationsStatusLabel.setText("Idle");
+                        }
+                        if (sidecarPath != null) {
+                            lastDiarizationSidecarPath = sidecarPath;
+                            mergeSpeakerProfilesFromSidecar(sidecarPath);
+                            updateSpeakerMappingButtonState(false);
+                        }
                         setRunning(false);
                         releaseGlobalRunLockIfOwned();
                         statusLabel.setText("Completed");
@@ -9278,27 +9300,28 @@ public class MainController {
                         progressBar.setProgress(1.0);
                         setEtaDone();
                         lastOutputDir = finalOut;
-                    }
-                    if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
-                        jobProgressWindow.markCompleted(finalOut);
+                        if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
+                            jobProgressWindow.markCompleted(finalOut);
+                        }
+                        if (notifyDoneBox.isSelected() && finalOut != null && !finalOut.isBlank()) {
+                            openPath(finalOut);
+                        }
+                        if (sidecarPath != null) {
+                            promptSpeakerMapping(sidecarPath);
+                        }
                     }
                     addUserLog("SUCCESS", withJobPrefix(jobId, "Job completed. Output: " + finalOut));
-                    if (notifyDoneBox.isSelected() && finalOut != null && !finalOut.isBlank()) {
-                        openPath(finalOut);
-                    }
                     if (sidecarPath != null) {
                         addUserLog("INFO", withJobPrefix(jobId, "Speaker sidecar ready: " + sidecarPath));
-                        promptSpeakerMapping(sidecarPath);
                     }
-                    refreshOperationsDiagnostics();
+                    if (ownsJob) {
+                        refreshOperationsDiagnostics();
+                    }
                     refreshDashboardData();
                     refreshJobsSilently();
                 }
                 case "job.failed" -> {
                     updateJobStatus(jobId, "failed");
-                    if (operationsStatusLabel != null) {
-                        operationsStatusLabel.setText("Failed");
-                    }
                     JsonNode err = payload.path("error");
                     String message = err.path("message").asText("Pipeline failed");
                     addTechnicalLog("ERROR", withJobPrefix(jobId, message));
@@ -9306,45 +9329,55 @@ public class MainController {
                     if (!traceback.isBlank()) {
                         addTechnicalLog("ERROR", withJobPrefix(jobId, "Traceback:\n" + traceback));
                     }
-                    if (jobId != null && !jobId.isBlank() && jobId.equals(currentJobId)) {
+                    boolean ownsJob = JobEventScope.owns(currentJobId, jobId);
+                    if (ownsJob) {
+                        if (operationsStatusLabel != null) {
+                            operationsStatusLabel.setText("Failed");
+                        }
                         setRunning(false);
                         releaseGlobalRunLockIfOwned();
                         statusLabel.setText("Failed");
                         stepLabel.setText("error");
                         progressBar.setProgress(0.0);
                         resetEtaDisplay();
+                        if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
+                            jobProgressWindow.markFailed(message);
+                        }
                     }
-                    if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
-                        jobProgressWindow.markFailed(message);
+                    if (ownsJob) {
+                        refreshOperationsDiagnostics();
                     }
-                    refreshOperationsDiagnostics();
                     refreshDashboardData();
                     refreshJobsSilently();
                 }
                 case "job.cancelled" -> {
                     updateJobStatus(jobId, "cancelled");
-                    if (operationsStatusLabel != null) {
-                        operationsStatusLabel.setText("Cancelled");
-                    }
                     addUserLog("WARN", withJobPrefix(jobId, "Job cancelled."));
-                    if (jobId != null && !jobId.isBlank() && jobId.equals(currentJobId)) {
+                    boolean ownsJob = JobEventScope.owns(currentJobId, jobId);
+                    if (ownsJob) {
+                        if (operationsStatusLabel != null) {
+                            operationsStatusLabel.setText("Cancelled");
+                        }
                         setRunning(false);
                         releaseGlobalRunLockIfOwned();
                         statusLabel.setText("Cancelled");
                         stepLabel.setText("cancelled");
                         progressBar.setProgress(0.0);
                         resetEtaDisplay();
+                        if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
+                            jobProgressWindow.markCancelled();
+                        }
                     }
-                    if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
-                        jobProgressWindow.markCancelled();
+                    if (ownsJob) {
+                        refreshOperationsDiagnostics();
                     }
-                    refreshOperationsDiagnostics();
                     refreshDashboardData();
                     refreshJobsSilently();
                 }
                 case "job.cancel_requested" -> {
                     addUserLog("INFO", withJobPrefix(jobId, "Cancel request accepted."));
-                    if (jobProgressWindow != null && jobProgressWindow.isShowing()) {
+                    if (JobEventScope.owns(currentJobId, jobId)
+                            && jobProgressWindow != null && jobProgressWindow.isShowing()) {
                         jobProgressWindow.markCancelRequested();
                     }
                 }

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
 from ..core.files import split_segments
+from ..core.cancellation import OperationCancelledError
 from ..core.paths import user_data_dir
 from ..core.transcripts import (
     build_metadata,
@@ -474,7 +475,7 @@ def _extract_embeddings(
     total = max(1, len(windows))
     for idx, window in enumerate(windows, start=1):
         if stop_flag and stop_flag.is_set():
-            raise RuntimeError("Stopped by user.")
+            raise OperationCancelledError("Stopped by user.")
 
         chunk = _slice_audio_chunk(
             waveform,

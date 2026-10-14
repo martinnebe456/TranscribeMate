@@ -19,7 +19,16 @@ if (-not $PSBoundParameters.ContainsKey("DownloadFfmpeg")) {
 $script:EmbeddedPythonVersion = "3.12.10"
 $script:EmbeddedPythonZipName = "python-$($script:EmbeddedPythonVersion)-embed-amd64.zip"
 $script:EmbeddedPythonUrl = "https://www.python.org/ftp/python/$($script:EmbeddedPythonVersion)/$($script:EmbeddedPythonZipName)"
-$script:GetPipUrl = "https://bootstrap.pypa.io/get-pip.py"
+# Keep these immutable artifact URLs and repository-recorded SHA-256 pins in sync.
+$script:EmbeddedPythonSha256 = "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3"
+$script:PipVersion = "25.1.1"
+$script:PipWheelName = "pip-$($script:PipVersion)-py3-none-any.whl"
+$script:PipWheelUrl = "https://files.pythonhosted.org/packages/29/a2/d40fb2460e883eca5199c62cfc2463fd261f760556ae6290f88488c362c0/$($script:PipWheelName)"
+$script:PipWheelSha256 = "2913a38a2abf4ea6b64ab507bd9e967f3b53dc1ede74b01b0931e1ce548751af"
+$script:FfmpegVersion = "9.0.2"
+$script:FfmpegArchiveName = "ffmpeg-$($script:FfmpegVersion)-essentials_build.zip"
+$script:FfmpegUrl = "https://www.gyan.dev/ffmpeg/builds/packages/$($script:FfmpegArchiveName)"
+$script:FfmpegSha256 = "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba"
 $script:LastLogWriteWarningUtc = $null
 
 try {
@@ -299,6 +308,41 @@ function Invoke-DownloadWithRetry([string]$Url, [string]$OutFile, [int]$Retries 
             Write-Log "Download attempt $attempt/$Retries failed: $($_.Exception.Message)" "WARN"
             Start-Sleep -Seconds ([Math]::Min(10, $attempt * 2))
         }
+    }
+}
+
+function Assert-FileSha256([string]$Path, [string]$ExpectedSha256, [string]$Description) {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Cannot verify missing $Description artifact: $Path"
+    }
+    if ($ExpectedSha256 -notmatch '^[0-9a-fA-F]{64}$') {
+        throw "Invalid repository SHA-256 pin for $Description."
+    }
+
+    $actualSha256 = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualSha256 -ne $ExpectedSha256.ToLowerInvariant()) {
+        throw [System.Security.SecurityException]::new(
+            "$Description SHA-256 mismatch: expected $ExpectedSha256, received $actualSha256."
+        )
+    }
+}
+
+function Expand-VerifiedArchive(
+    [string]$ArchivePath,
+    [string]$DestinationPath,
+    [string]$ExpectedSha256,
+    [string]$Description
+) {
+    # Verify before creating the destination or asking Expand-Archive to read input.
+    Assert-FileSha256 -Path $ArchivePath -ExpectedSha256 $ExpectedSha256 -Description $Description
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::ExtractToDirectory($ArchivePath, $DestinationPath)
+}
+
+function Clear-StaleRuntimeReadyMarker([string]$RuntimeRoot) {
+    $markerPath = Join-Path $RuntimeRoot "runtime-ready.json"
+    if (Test-Path -LiteralPath $markerPath) {
+        Remove-Item -LiteralPath $markerPath -Force
     }
 }
 
@@ -794,7 +838,7 @@ function Ensure-EmbeddedPythonRuntime([string]$RuntimeRoot) {
     $versionMarker = Join-Path $RuntimeRoot "python-runtime.version"
     $zipPath = Join-Path $RuntimeRoot $script:EmbeddedPythonZipName
     $extractDir = Join-Path $RuntimeRoot "python-extract"
-    $getPipPath = Join-Path $RuntimeRoot "get-pip.py"
+    $pipWheelPath = Join-Path $RuntimeRoot $script:PipWheelName
 
     $runtimeReady = $false
     if ((Test-Path $pythonExe) -and (Test-Path $versionMarker)) {
@@ -808,6 +852,7 @@ function Ensure-EmbeddedPythonRuntime([string]$RuntimeRoot) {
         Update-InstallerProgress -Percent 5 -Message "Downloading embedded Python runtime."
         Write-Log "Downloading embedded Python from: $($script:EmbeddedPythonUrl)"
         Invoke-DownloadWithRetry -Url $script:EmbeddedPythonUrl -OutFile $zipPath
+        Assert-FileSha256 -Path $zipPath -ExpectedSha256 $script:EmbeddedPythonSha256 -Description "Embedded Python $($script:EmbeddedPythonVersion)"
 
         Update-InstallerProgress -Percent 10 -Message "Extracting embedded Python runtime."
         if (Test-Path $extractDir) {
@@ -817,8 +862,7 @@ function Ensure-EmbeddedPythonRuntime([string]$RuntimeRoot) {
             Remove-Item -Path $pythonRoot -Recurse -Force -ErrorAction SilentlyContinue
         }
 
-        New-Item -Path $extractDir -ItemType Directory -Force | Out-Null
-        Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
+        Expand-VerifiedArchive -ArchivePath $zipPath -DestinationPath $extractDir -ExpectedSha256 $script:EmbeddedPythonSha256 -Description "Embedded Python $($script:EmbeddedPythonVersion)"
 
         New-Item -Path $pythonRoot -ItemType Directory -Force | Out-Null
         Copy-Item -Path (Join-Path $extractDir "*") -Destination $pythonRoot -Recurse -Force
@@ -843,15 +887,13 @@ function Ensure-EmbeddedPythonRuntime([string]$RuntimeRoot) {
     if (-not (Test-PipAvailable -PythonExe $pythonExe)) {
         Update-InstallerProgress -Percent 18 -Message "Installing pip into embedded Python."
         Write-Log "Installing pip into embedded runtime..."
-        Invoke-DownloadWithRetry -Url $script:GetPipUrl -OutFile $getPipPath
-        $pipBootstrapArgs = @(
-            $getPipPath,
-            "--disable-pip-version-check",
-            "--no-warn-script-location"
-        )
-        [void](Invoke-RuntimePythonWithRetry -PythonExe $pythonExe -CommandArgs $pipBootstrapArgs -Description "pip bootstrap install" -Retries 2 -TimeoutSeconds 900)
+        Invoke-DownloadWithRetry -Url $script:PipWheelUrl -OutFile $pipWheelPath
+        Assert-FileSha256 -Path $pipWheelPath -ExpectedSha256 $script:PipWheelSha256 -Description "pip $($script:PipVersion) wheel"
+        $sitePackagesPath = Join-Path $pythonRoot "Lib\site-packages"
+        New-Item -Path $sitePackagesPath -ItemType Directory -Force | Out-Null
+        Expand-VerifiedArchive -ArchivePath $pipWheelPath -DestinationPath $sitePackagesPath -ExpectedSha256 $script:PipWheelSha256 -Description "pip $($script:PipVersion) wheel"
         if (-not (Test-PipAvailable -PythonExe $pythonExe)) {
-            throw "pip bootstrap finished but pip is still unavailable."
+            throw "pip $($script:PipVersion) wheel was installed but pip is still unavailable."
         }
     }
     else {
@@ -864,8 +906,8 @@ function Ensure-EmbeddedPythonRuntime([string]$RuntimeRoot) {
     if (Test-Path $extractDir) {
         Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue
     }
-    if (Test-Path $getPipPath) {
-        Remove-Item -Path $getPipPath -Force -ErrorAction SilentlyContinue
+    if (Test-Path $pipWheelPath) {
+        Remove-Item -Path $pipWheelPath -Force -ErrorAction SilentlyContinue
     }
 
     $script:RuntimePythonExe = $pythonExe
@@ -1136,6 +1178,7 @@ try {
     New-Item -Path $appDataDir -ItemType Directory -Force | Out-Null
     New-Item -Path $runtimeRoot -ItemType Directory -Force | Out-Null
     New-Item -Path $assetsDir -ItemType Directory -Force | Out-Null
+    Clear-StaleRuntimeReadyMarker -RuntimeRoot $runtimeRoot
 
     Update-InstallerProgress -Percent 1 -Message "Initializing runtime bootstrap."
     Write-Log "Backend root: $BackendRoot"
@@ -1191,7 +1234,6 @@ try {
         "--timeout",
         "120",
         "--upgrade",
-        "pip",
         "setuptools",
         "wheel"
     )
@@ -1357,15 +1399,14 @@ print("Model prefetch complete.")
         }
         else {
             Write-Log "Downloading FFmpeg essentials package..."
-            $ffmpegZip = Join-Path $runtimeRoot "ffmpeg-release-essentials.zip"
+            $ffmpegZip = Join-Path $runtimeRoot $script:FfmpegArchiveName
             $ffmpegExtractDir = Join-Path $runtimeRoot "ffmpeg-extract"
-            $ffmpegUrl = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
             try {
                 if (Test-Path $ffmpegExtractDir) {
                     Remove-Item -Path $ffmpegExtractDir -Recurse -Force
                 }
-                Invoke-DownloadWithRetry -Url $ffmpegUrl -OutFile $ffmpegZip
-                Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegExtractDir -Force
+                Invoke-DownloadWithRetry -Url $script:FfmpegUrl -OutFile $ffmpegZip
+                Expand-VerifiedArchive -ArchivePath $ffmpegZip -DestinationPath $ffmpegExtractDir -ExpectedSha256 $script:FfmpegSha256 -Description "FFmpeg $($script:FfmpegVersion) essentials archive"
 
                 $ffmpegFound = Get-ChildItem -Path $ffmpegExtractDir -Recurse -File -Filter "ffmpeg.exe" | Select-Object -First 1
                 $ffprobeFound = Get-ChildItem -Path $ffmpegExtractDir -Recurse -File -Filter "ffprobe.exe" | Select-Object -First 1
@@ -1378,6 +1419,9 @@ print("Model prefetch complete.")
                 Write-Log "FFmpeg assets installed into: $assetsDir"
             }
             catch {
+                if ($_.Exception -is [System.Security.SecurityException]) {
+                    throw
+                }
                 Write-Log "FFmpeg download failed: $($_.Exception.Message)" "WARN"
             }
             finally {

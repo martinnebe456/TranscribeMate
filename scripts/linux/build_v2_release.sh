@@ -237,6 +237,11 @@ validate_bundled_backend() {
   [[ -f "${bundled_dir}/runtime_assets/linux-x64/asset-manifest.env" ]] || { echo "[TM] Missing Linux runtime asset manifest." >&2; exit 1; }
 }
 
+validate_bundled_license() {
+  local license_path="$1"
+  [[ -s "$license_path" ]] || { echo "[TM] Missing or empty bundled project license: ${license_path}" >&2; exit 1; }
+}
+
 write_platform_checksums() {
   local checksum_path="${DIST_DIR}/checksums.txt"
   find "$DIST_DIR" -maxdepth 1 -type f -name '*.tar.gz' -print0 \
@@ -328,6 +333,8 @@ fi
 
 "$JPACKAGE_EXE" "${JPACKAGE_ARGS[@]}"
 [[ -d "$APP_IMAGE_DIR" ]] || { echo "[TM] jpackage finished but app image was not found: ${APP_IMAGE_DIR}" >&2; exit 1; }
+cp "${ROOT}/LICENSE" "${APP_IMAGE_DIR}/LICENSE.txt"
+validate_bundled_license "${APP_IMAGE_DIR}/LICENSE.txt"
 
 mkdir -p "$BACKEND_PAYLOAD_DIR"
 cp -R "${ROOT}/transcribemate" "${BACKEND_PAYLOAD_DIR}/transcribemate"

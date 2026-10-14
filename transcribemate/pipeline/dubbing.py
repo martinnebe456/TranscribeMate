@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import re
-import subprocess
 import tempfile
 from pathlib import Path
 from typing import Iterable, List
 
 from ..core.paths import ffmpeg_path, ffprobe_path
+from ..core.cancellation import OperationCancelledError, check_cancelled
 from ..core.process import safe_run
 
 _SPEAKER_PREFIX_PATTERN = re.compile(r"^(?P<prefix>[^:\n]{1,80}):\s*(?P<body>.+)$", re.DOTALL)
@@ -117,10 +117,17 @@ async def _synthesize_chunks_async(
 
     for index, chunk in enumerate(chunks, start=1):
         if stop_flag.is_set():
-            raise RuntimeError("Stopped by user.")
+            raise OperationCancelledError("Stopped by user.")
         out_path = out_dir / f"dub_{index:05d}.mp3"
         communicator = edge_tts.Communicate(chunk, voice=voice)
-        await communicator.save(str(out_path))
+        save_task = asyncio.create_task(communicator.save(str(out_path)))
+        while not save_task.done():
+            if stop_flag and stop_flag.is_set():
+                save_task.cancel()
+                await asyncio.gather(save_task, return_exceptions=True)
+                raise OperationCancelledError("Stopped by user.")
+            await asyncio.wait((save_task,), timeout=0.1)
+        await save_task
         out_paths.append(out_path)
         pct = (index / total) * 65.0
         set_step_progress(pct)
@@ -129,7 +136,7 @@ async def _synthesize_chunks_async(
     return out_paths
 
 
-def _probe_duration_seconds(path: Path, ffprobe_exe: str) -> float:
+def _probe_duration_seconds(path: Path, ffprobe_exe: str, stop_flag=None) -> float:
     cmd = [
         ffprobe_exe,
         "-v",
@@ -140,17 +147,10 @@ def _probe_duration_seconds(path: Path, ffprobe_exe: str) -> float:
         "default=noprint_wrappers=1:nokey=1",
         str(path),
     ]
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"ffprobe failed for {path.name}: {result.stderr.strip()}")
+    output = []
+    safe_run(cmd, on_line=output.append, stop_flag=stop_flag)
     try:
-        return max(0.0, float((result.stdout or "").strip()))
+        return max(0.0, float("".join(output).strip()))
     except Exception as exc:
         raise RuntimeError(f"Cannot parse media duration for {path.name}.") from exc
 
@@ -192,6 +192,7 @@ def dub_video_with_edge_tts(
     set_step_indeterminate,
     stop_flag,
 ):
+    check_cancelled(stop_flag)
     ff = ffmpeg_path()
     ffprobe = ffprobe_path()
     if not ff:
@@ -256,8 +257,8 @@ def dub_video_with_edge_tts(
         set_step_indeterminate(False)
         set_step_progress(72.0)
 
-        video_duration = _probe_duration_seconds(video_path, ffprobe)
-        merged_duration = _probe_duration_seconds(merged_mp3, ffprobe)
+        video_duration = _probe_duration_seconds(video_path, ffprobe, stop_flag)
+        merged_duration = _probe_duration_seconds(merged_mp3, ffprobe, stop_flag)
         if video_duration <= 0.0:
             raise RuntimeError(f"Video duration is invalid for dubbing: {video_path.name}")
         if merged_duration <= 0.0:

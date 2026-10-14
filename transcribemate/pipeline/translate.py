@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from ..core.hf_progress import huggingface_download_progress
+from ..core.cancellation import check_cancelled
 
 LOGGER = logging.getLogger(__name__)
 _SPEAKER_PREFIX_PATTERN = re.compile(r"^(?P<prefix>[^:\n]{1,80}):\s*(?P<body>.+)$", re.DOTALL)
@@ -34,6 +35,7 @@ def translate_srt(
     set_step_progress,
     stop_flag,
 ):
+    check_cancelled(stop_flag)
     import torch
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
@@ -48,6 +50,7 @@ def translate_srt(
     progress_state = {"last_bucket": -10}
 
     def _on_download_progress(desc: str, percent: float | None):
+        check_cancelled(stop_flag)
         if percent is None:
             return
         bounded = max(0.0, min(100.0, float(percent)))
@@ -62,6 +65,7 @@ def translate_srt(
     with huggingface_download_progress(_on_download_progress):
         log("[INFO] Loading translation tokenizer...\n")
         tok = AutoTokenizer.from_pretrained(model_name)
+        check_cancelled(stop_flag)
 
         log("[INFO] Loading translation model...\n")
         try:
@@ -70,12 +74,14 @@ def translate_srt(
                 use_safetensors=True,
                 torch_dtype="auto",
             ).to(device)
+            check_cancelled(stop_flag)
         except (OSError, ValueError):
             log("[WARN] Safetensors not available, falling back to PyTorch format.\n")
             mdl = AutoModelForSeq2SeqLM.from_pretrained(
                 model_name,
                 torch_dtype="auto",
             ).to(device)
+            check_cancelled(stop_flag)
 
     set_step_progress(model_prep_weight)
 
@@ -103,8 +109,7 @@ def translate_srt(
 
     out = []
     for i in range(0, len(texts), batch_size):
-        if stop_flag.is_set():
-            raise RuntimeError("Stopped by user.")
+        check_cancelled(stop_flag)
         batch = texts[i:i + batch_size]
         inputs = tok(batch, return_tensors="pt", padding=True, truncation=True).to(device)
         with torch.no_grad():

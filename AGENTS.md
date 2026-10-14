@@ -20,6 +20,7 @@
 This guide describes the current repository state (V2-only stack).
 
 ## Project summary
+- Product goal: deliver a reliable, distributable Windows desktop app as an open-source project; prioritize the complete install-to-first-transcription experience.
 - Desktop app architecture:
   - JavaFX frontend (`javafx-client/`)
   - Python backend (`transcribemate/v2/backend/`)
@@ -76,6 +77,9 @@ This guide describes the current repository state (V2-only stack).
 - Shared backend dependencies:
   - `transcribemate/core/`
   - `transcribemate/pipeline/`
+  - `transcribemate/pipeline/safe_youtube.py` - validates YouTube HTTPS source URLs and checks/pins public destinations for yt-dlp HTTPS requests and redirects
+- Cancellation contract: shared helpers raise `OperationCancelledError` from `transcribemate/core/cancellation.py`; backend job cancellation and terminal assignment are serialized under the service lock, and subprocess output is drained on a reader thread so stop requests do not wait for a blocking `readline()`.
+- Backend concurrency: one pipeline job may be queued/running at a time per backend process; additional `run_pipeline` requests fail with `job_limit_reached` (including across projects).
 
 ## Runtime data and outputs
 - User data directory:
@@ -104,6 +108,8 @@ This guide describes the current repository state (V2-only stack).
   - `python -m pytest`
 - Full macOS validation runner:
   - `./scripts/macos/test_all.sh`
+- Full Windows release-to-transcription runner:
+  - `./scripts/windows/test_all.ps1`
 - Tests include:
   - V2 backend protocol/models/service
   - selected shared core/pipeline helper tests
@@ -119,6 +125,8 @@ This guide describes the current repository state (V2-only stack).
 - `scripts/linux/build_v2_release.sh --distro debian|arch` builds Linux x64 app-images via `jpackage`, bundles pinned runtime assets, and then creates distro-scoped TAR.GZ packages.
 - Runtime policy is now platform-scoped: Windows release keeps CUDA/NVIDIA GPU provisioning; macOS release stays CPU-focused; Linux release is CPU-only and normalizes `prefer_gpu` to `false`.
 - CI/release automation is host-OS scoped: the release workflow builds Windows artifacts on `windows-latest`, macOS artifacts on `macos-15`, and Linux Debian/Arch artifacts on `ubuntu-latest` via distro containers.
+- Scheduled/manual Windows full-suite builds and extracts the release ZIP, runs its first-launch runtime bootstrap, validates real audio/video outputs through the packaged backend's JSON-lines server, and confirms the packaged UI loads transcript files from the app workspace.
+- Release CI acceptance for macOS arm64, Debian 12 x64, and Arch x64 must extract the actual archive, verify its SHA-256, bootstrap isolated app data, transcribe the approved `audio-sample-2` fixture through the packaged JSON-lines backend, launch packaged JavaFX, and upload per-platform reports/logs; interactive first-run clicks have a named manual checklist in `docs/release/package-first-transcription-acceptance.md`.
 - PR/manual/nightly CI now includes backend pytest on Windows/macOS/Linux, frontend Maven tests plus package build on Windows/macOS/Linux, and a reusable cross-OS backend stdio smoke workflow.
 - Linux container packaging jobs need distro-native GUI/runtime libraries plus `binutils`/`objcopy` installed before `actions/setup-java`; the workflows now verify `java -version` and `jpackage --version` explicitly so minimal-container failures surface early.
 - GitHub releases are merge-driven now: merged PRs into `DEV` create automatic prereleases tagged `dev-<yy.MM.dd.NNN>`, and merged PRs into `main` create automatic official releases tagged `v<yy.MM.dd.NNN>`.
@@ -135,12 +143,16 @@ This guide describes the current repository state (V2-only stack).
   - Windows: `scripts/windows/bootstrap_runtime.ps1`
   - macOS: `scripts/macos/bootstrap_runtime.sh`
   - Linux: `scripts/linux/bootstrap_runtime.sh`
+- Runtime dependency constraint: keep PyAV below 19 until faster-whisper stops passing the removed `metadata_errors` argument to `av.open`.
+- Windows acceptance reruns can pass `-AppDataDir <existing path>` to reuse a previously bootstrapped runtime and model cache.
+- Windows first-launch bootstrap pins the embedded Python, pip bootstrap wheel, and FFmpeg archive by version and repository-recorded SHA-256; update each version, URL, and digest together. The Windows acceptance runner checks corrupt-artifact rejection and the clean bootstrap runtime marker.
 - macOS dev-mode note:
   - when `TM_PROJECT_ROOT` is set and bundled runtime assets are absent, `scripts/macos/bootstrap_runtime.sh` now uses a development fallback (project `.venv` + app-data FFmpeg install) instead of requiring release-bundled assets.
   - direct `mvn javafx:run` from `javafx-client/` should now auto-detect the repository backend and `.venv`; helper scripts still set `TM_PROJECT_ROOT` explicitly for predictable dev runs.
   - `TM_APP_DATA_DIR` is now a shared override honored by Python path resolution, JavaFX path resolution, and runtime bootstrap scripts; the new macOS full-suite uses it to isolate app-data/workspace/logs per run.
 
 ## Legal
+- Project source license: MIT (`LICENSE`); release app images include `LICENSE.txt` at their root.
 - `DISCLAIMER.md`
 - `LICENSE`
 

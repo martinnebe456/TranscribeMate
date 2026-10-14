@@ -15,7 +15,7 @@ This document summarizes the current folder structure after the V2 component ref
 
 - `scripts/windows/`: Windows-specific build, run and bootstrap scripts
 - `scripts/macos/`: macOS-specific build, run, bootstrap and full-suite scripts
-- `scripts/linux/`: reserved placeholder for the future Linux port
+- `scripts/linux/`: Linux x64 frontend/backend launchers, runtime bootstrap, and Debian/Arch release packaging ([script layout](../scripts/linux/README.md))
 - `scripts/shared/`: cross-platform helper code used by platform launchers
 - `scripts/*.ps1`, `scripts/*.sh`: compatibility wrappers that dispatch to platform-local scripts
 

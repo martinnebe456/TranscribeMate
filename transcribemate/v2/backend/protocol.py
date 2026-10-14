@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from .redaction import redact_data
+
 
 class ProtocolError(ValueError):
     """Raised when a protocol message is malformed."""
@@ -27,7 +29,7 @@ class RpcError:
         }
         if self.details is not None:
             payload["details"] = self.details
-        return payload
+        return redact_data(payload)
 
 
 @dataclass(slots=True)
@@ -62,7 +64,7 @@ class ResponseMessage:
                 code="internal_error",
                 message="Unknown backend error.",
             ).to_dict()
-        return payload
+        return redact_data(payload)
 
 
 @dataclass(slots=True)
@@ -82,7 +84,7 @@ class EventMessage:
         }
         if self.job_id:
             data["job_id"] = self.job_id
-        return data
+        return redact_data(data)
 
 
 def now_utc_iso() -> str:

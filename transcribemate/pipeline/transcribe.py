@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 
 from ..core.hf_progress import huggingface_download_progress
+from ..core.cancellation import check_cancelled
 from ..core.models import whisper_cache_dir
 from ..core.gpu import torch_device
 from ..core.types import TranscriptSegment, TranscriptionResult
@@ -32,7 +33,7 @@ def _safe_model_dir_name(model_name: str) -> str:
     return text or "whisper-model"
 
 
-def _resolve_whisper_model_path(model_name: str, log, set_step_progress) -> str:
+def _resolve_whisper_model_path(model_name: str, log, set_step_progress, stop_flag=None) -> str:
     from faster_whisper.utils import download_model as download_faster_whisper_model
 
     cache_dir = os.environ.get("WHISPER_CACHE_DIR")
@@ -44,6 +45,7 @@ def _resolve_whisper_model_path(model_name: str, log, set_step_progress) -> str:
     progress_state = {"last_bucket": -10, "saw_progress": False}
 
     def _on_download_progress(desc: str, percent: float | None):
+        check_cancelled(stop_flag)
         progress_state["saw_progress"] = True
         if percent is None:
             return
@@ -124,15 +126,18 @@ def faster_whisper_transcribe(
     set_step_progress,
     stop_flag,
 ) -> TranscriptionResult:
+    check_cancelled(stop_flag)
     out_dir.mkdir(parents=True, exist_ok=True)
     preferred_device = "cuda" if prefer_gpu else "cpu"
 
     log(f"[INFO] Transcription request: model={model}, preferred_device={preferred_device}\n")
     log(f"[INFO] Language hint: {language}\n")
     log(f"[INFO] Loading faster-whisper model '{model}'...\n")
-    model_path = _resolve_whisper_model_path(model, log, set_step_progress)
+    model_path = _resolve_whisper_model_path(model, log, set_step_progress, stop_flag)
+    check_cancelled(stop_flag)
     log(f"[INFO] Whisper model path: {model_path}\n")
     wmodel, device, compute_type = _load_whisper_model(model_path, prefer_gpu, log)
+    check_cancelled(stop_flag)
     log(f"[INFO] Transcription settings: model={model}, device={device}, compute={compute_type}\n")
 
     log(f"[INFO] Transcribing: {media_path.name}\n")
@@ -151,8 +156,7 @@ def faster_whisper_transcribe(
     last_end = 0.0
 
     for idx, seg in enumerate(segments, 1):
-        if stop_flag and stop_flag.is_set():
-            raise RuntimeError("Stopped by user.")
+        check_cancelled(stop_flag)
 
         start_ts = format_timestamp(seg.start)
         end_ts = format_timestamp(seg.end)

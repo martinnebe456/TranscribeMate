@@ -40,3 +40,22 @@ def test_response_message_error_payload():
     assert resp["ok"] is False
     assert resp["error"]["code"] == "invalid_request"
     assert resp["error"]["details"] == {"x": 1}
+
+
+def test_error_serialization_redacts_secrets_and_omits_tracebacks():
+    canary = "protocol-fake-token"
+    resp = ResponseMessage(
+        request_id="abc",
+        ok=False,
+        error=RpcError(
+            code="internal_error",
+            message=f"Failed for https://user:pass@example.test/?access_token={canary}",
+            details={"traceback": "private stack", "access_token": canary},
+        ),
+    ).to_dict()
+
+    serialized = str(resp)
+    assert canary not in serialized
+    assert "user:pass" not in serialized
+    assert "traceback" not in serialized
+    assert "[REDACTED]@example.test" in serialized

@@ -9,6 +9,7 @@ from threading import Event
 from typing import Callable
 
 from ..core.files import sanitize_filename, unique_path
+from ..core.cancellation import OperationCancelledError
 from ..core.hf_progress import huggingface_download_progress
 
 LOGGER = logging.getLogger(__name__)
@@ -521,4 +522,4 @@ def _log(callback: SummaryLogCallback | None, line: str) -> None:
 
 def _check_cancelled(stop_flag: Event | None) -> None:
     if stop_flag is not None and stop_flag.is_set():
-        raise RuntimeError("Summary generation cancelled by user.")
+        raise OperationCancelledError("Summary generation cancelled by user.")

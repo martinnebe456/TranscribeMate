@@ -7,6 +7,8 @@ Desktop transcription app with:
 
 This branch is V2-only (JavaFX + Python). Legacy Tkinter/PyInstaller and Inno installer flow are removed.
 
+The TranscribeMate project source is licensed under the MIT License. See [`LICENSE`](LICENSE).
+
 ## Modules (V2)
 - `offline_transcribe` - offline A/V transcript from local files
 - `youtube_transcribe` - transcript from YouTube video/playlist
@@ -64,6 +66,7 @@ This branch is V2-only (JavaFX + Python). Legacy Tkinter/PyInstaller and Inno in
 
 ## Quick Start
 - Users:
+  - Windows first-transcription steps and output locations: [`docs/user-install.md`](docs/user-install.md#first-transcription-windows).
   - Windows: download the Windows ZIP, extract it, run `TranscribeMate.exe`, then complete mandatory first-launch runtime setup.
   - macOS (Apple Silicon): download the macOS ZIP, extract it, open `TranscribeMate.app`, then complete mandatory first-launch runtime setup.
   - Linux x64 (Debian / Arch): download the matching Linux TAR.GZ, extract it, run `TranscribeMate/bin/TranscribeMate`, then complete mandatory first-launch runtime setup.

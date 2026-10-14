@@ -6,6 +6,8 @@ import importlib
 from contextlib import contextmanager
 from typing import Callable, Iterator
 
+from .cancellation import OperationCancelledError
+
 ProgressCallback = Callable[[str, float | None], None]
 
 
@@ -71,6 +73,8 @@ def huggingface_download_progress(callback: ProgressCallback) -> Iterator[None]:
 
             try:
                 callback(self._tm_desc, percent)
+            except OperationCancelledError:
+                raise
             except Exception:
                 # Callback must never interrupt model download flow.
                 return
