@@ -167,6 +167,8 @@ def main() -> int:
                 str(bootstrap),
                 "--backend-root",
                 str(backend),
+                # JavaFX requires the default model pack even for a transcript-only acceptance run.
+                "--with-models",
                 "--download-ffmpeg",
                 "--log-file",
                 str(artifact_dir / "runtime-bootstrap.log"),
