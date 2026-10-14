@@ -4,6 +4,7 @@
 - Desktop app for transcription, translation, subtitles and optional speaker diarization.
 - Portable ZIP distributions (no installer required).
 - Portable TAR.GZ distributions for Linux x64.
+- Release packages include `LICENSE.txt` alongside the app image.
 - Linux x64 builds are CPU-only in this release.
 - On first launch, the app performs mandatory online runtime setup:
   - managed Python runtime
@@ -18,6 +19,17 @@
 3. Run `TranscribeMate.exe`.
 4. Confirm first-launch setup and wait until it finishes.
 5. Restart the app if prompted.
+
+CI release builds are unsigned unless code signing is configured. Windows may show a reputation warning when you start the app. Verify the downloaded ZIP against the published SHA256 checksum before opening it.
+
+## First Transcription (Windows)
+1. Create or select a project in the app. Projects keep each run's input and output files together.
+2. Open **Run** and choose **Run wizard**. Select **Offline A/V Transcript** for a file on your computer.
+3. In **Import local source**, choose an audio or video file. The app copies it into the project's `input` folder.
+4. Continue through **Transcription settings** and **Output options**. At the last step, confirm the start; the app runs its required preflight before starting the job.
+5. Wait for the job to finish in **Operations**. Open **Project Files** to browse the generated transcript and other output artifacts in the active project's `output` folder.
+
+By default, Windows project data is stored at `%LOCALAPPDATA%\TranscribeMate\workspace\projects\<project_id>\`. The input is in `input\` and generated files are in `output\`. To open the project folder directly, select the project in **Projects** and choose **Open folder**. The active project's full output path is also shown in **Run**.
 
 ## Install Steps (macOS Apple Silicon)
 1. Download the latest macOS arm64 ZIP.
@@ -41,7 +53,7 @@
 - Free disk space for runtime, dependencies and models (can be several GB).
 
 ## Verify Download Integrity
-Release packages include `checksums.txt` (SHA256).
+GitHub release downloads include a separate `checksums.txt` file with SHA256 hashes.
 
 Windows example:
 ```powershell
@@ -94,5 +106,9 @@ If first-launch setup fails:
   - `assets/` (`ffmpeg`, `ffprobe`)
 
 ## Output Location
-- Outputs are written into:
-  - `<out_dir>/transcribemate_outputs/`
+- By default, completed jobs write generated files directly into the active project's `output` folder. This is the job's `final_output_dir` and the path shown in **Run**.
+- The default folder is `<workspace>/projects/<project_id>/output/`:
+  - Windows: `%LOCALAPPDATA%\TranscribeMate\workspace\projects\<project_id>\output\`
+  - macOS: `~/Documents/TranscribeMate/workspace/projects/<project_id>/output/`
+  - Linux: `${XDG_DATA_HOME:-~/.local/share}/TranscribeMate/workspace/projects/<project_id>/output/`
+- To find it in the app, open **Project Files** to browse the output files, or select the project in **Projects** and choose **Open folder**. **Run** shows the active project's full output path.

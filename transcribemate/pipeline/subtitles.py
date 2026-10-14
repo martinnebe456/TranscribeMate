@@ -58,8 +58,10 @@ def hard_subtitles(
         str(out_mp4),
     ]
     set_step_indeterminate(True)
-    safe_run(cmd, on_line=log, stop_flag=stop_flag)
-    set_step_indeterminate(False)
+    try:
+        safe_run(cmd, on_line=log, stop_flag=stop_flag)
+    finally:
+        set_step_indeterminate(False)
     log(f"[OK] Subtitled video saved: {out_mp4}\n")
 
 
@@ -103,6 +105,8 @@ def soft_subtitles(
         str(out_mp4),
     ]
     set_step_indeterminate(True)
-    safe_run(cmd, on_line=log, stop_flag=stop_flag)
-    set_step_indeterminate(False)
+    try:
+        safe_run(cmd, on_line=log, stop_flag=stop_flag)
+    finally:
+        set_step_indeterminate(False)
     log(f"[OK] Subtitled video saved: {out_mp4}\n")

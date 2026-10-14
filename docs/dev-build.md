@@ -80,6 +80,13 @@ python -m pip install -r requirements-dev.txt
 python -m pytest
 ```
 
+## Full Windows Release-to-Transcription Suite
+```powershell
+./scripts/windows/test_all.ps1
+```
+
+This scheduled/manual suite builds the Windows release ZIP, checks its checksum and required files, performs first-launch runtime setup from the extracted package, and runs real audio/video fixtures through the bundled backend's JSON-lines server. It places the generated project in the isolated app workspace, then starts the packaged UI and verifies the Files view loaded the transcripts. It stores logs and reports under `artifacts/test_all/windows/`.
+
 ## Full macOS Validation Runner
 ```bash
 chmod +x ./scripts/macos/test_all.sh

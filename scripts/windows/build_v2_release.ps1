@@ -436,6 +436,15 @@ function Validate-BundledBackend([string]$BundledBackendDir) {
     }
 }
 
+# Verifies that the release image carries the project license alongside the app.
+function Validate-BundledLicense([string]$AppImageDir) {
+    $licensePath = Join-Path $AppImageDir "LICENSE.txt"
+    Assert-PathExists -Path $licensePath -Description "bundled project license"
+    if ((Get-Item -LiteralPath $licensePath).Length -le 0) {
+        throw "[TM] Bundled project license is empty: $licensePath"
+    }
+}
+
 # ============================================================================
 # Main build pipeline
 # ============================================================================
@@ -556,6 +565,10 @@ if (-not (Test-Path $appImageDir)) {
     throw "[TM] jpackage finished but app image not found: $appImageDir"
 }
 
+$licenseSource = Join-Path $root "LICENSE"
+Assert-PathExists -Path $licenseSource -Description "project license"
+Copy-Item -LiteralPath $licenseSource -Destination (Join-Path $appImageDir "LICENSE.txt") -Force
+
 # Code signing thumbprint resolution order:
 # 1) -CodeSignThumbprint argument
 # 2) TM_CODESIGN_THUMBPRINT environment variable
@@ -628,6 +641,7 @@ Get-ChildItem -Path $bundledBackendDir -Recurse -File -Include "*.pyc", "*.pyo" 
 
 # Verify bundle structure before we continue with release output steps.
 Validate-BundledBackend -BundledBackendDir $bundledBackendDir
+Validate-BundledLicense -AppImageDir $appImageDir
 
 Write-Host "[TM] App image ready: $appImageDir"
 

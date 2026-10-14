@@ -237,6 +237,11 @@ validate_bundled_backend() {
   [[ -f "${bundled_dir}/runtime_assets/macos-arm64/asset-manifest.env" ]] || { echo "[TM] Missing macOS runtime asset manifest." >&2; exit 1; }
 }
 
+validate_bundled_license() {
+  local license_path="$1"
+  [[ -s "$license_path" ]] || { echo "[TM] Missing or empty bundled project license: ${license_path}" >&2; exit 1; }
+}
+
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "[TM] This script must be run on macOS." >&2
   exit 1
@@ -316,6 +321,8 @@ fi
 
 "$JPACKAGE_EXE" "${JPACKAGE_ARGS[@]}"
 [[ -d "$APP_IMAGE_DIR" ]] || { echo "[TM] jpackage finished but app image was not found: ${APP_IMAGE_DIR}" >&2; exit 1; }
+cp "${ROOT}/LICENSE" "${APP_IMAGE_DIR}/LICENSE.txt"
+validate_bundled_license "${APP_IMAGE_DIR}/LICENSE.txt"
 
 mkdir -p "$BACKEND_PAYLOAD_DIR"
 cp -R "${ROOT}/transcribemate" "${BACKEND_PAYLOAD_DIR}/transcribemate"

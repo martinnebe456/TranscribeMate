@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 
 from ..core.paths import ffmpeg_path
+from .safe_youtube import SafeHttpsProxy, validate_youtube_url
+from ..core.cancellation import OperationCancelledError, check_cancelled
 
 LOGGER = logging.getLogger(__name__)
 
@@ -38,6 +40,9 @@ def download_single_or_playlist(
     set_step_progress,
     stop_flag,
 ):
+    check_cancelled(stop_flag)
+    validate_youtube_url(url)
+
     import yt_dlp
     from yt_dlp.utils import DownloadError
 
@@ -64,8 +69,7 @@ def download_single_or_playlist(
     def progress_hook(d: dict):
         nonlocal last_logged_pct
 
-        if stop_flag and stop_flag.is_set():
-            raise DownloadError("Stopped by user.")
+        check_cancelled(stop_flag)
 
         status = d.get("status")
         if status == "finished":
@@ -104,12 +108,14 @@ def download_single_or_playlist(
 
     log("[INFO] Downloading via yt-dlp...\n")
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+        with SafeHttpsProxy() as proxy:
+            ydl_opts["proxy"] = proxy.url
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([url])
     except DownloadError as exc:
         LOGGER.exception("yt-dlp download failed")
         if stop_flag and stop_flag.is_set():
-            raise RuntimeError("Stopped by user.") from exc
+            raise OperationCancelledError("Stopped by user.") from exc
         raise RuntimeError(str(exc)) from exc
 
     set_step_progress(100)

@@ -1,12 +1,13 @@
 import builtins
 import json
 from pathlib import Path
+from threading import Event, Thread
 
 import pytest
 
 from transcribemate.core.types import SpeakerTurn, TranscriptSegment, TranscriptionResult
 from transcribemate.pipeline.diarize import build_speaker_sidecar, load_speaker_sidecar, save_speaker_sidecar
-from transcribemate.v2.backend.models import PipelineRequest, RequestValidationError
+from transcribemate.v2.backend.models import PipelineRequest, PipelineRunResult, RequestValidationError
 from transcribemate.v2.backend.protocol import EventMessage
 from transcribemate.v2.backend.service import BackendService, JobRecord
 
@@ -499,6 +500,89 @@ def test_project_job_timeline_is_persisted(tmp_path):
     assert timeline_rows[0]["overall_pct"] == 42.0
 
 
+def test_canary_url_secrets_are_redacted_from_job_events_and_persistence(tmp_path, monkeypatch):
+    import transcribemate.v2.backend.service as service_module
+
+    canary = "TRA19_FAKE_TOKEN_DO_NOT_PERSIST"
+    source_url = f"https://worker:private@example.test/watch?v=abc&access_token={canary}"
+    app_data = tmp_path / "app-data"
+    monkeypatch.setenv("TM_APP_DATA_DIR", str(app_data))
+
+    events = []
+    svc = BackendService(emit_event=events.append)
+    payload = _youtube_payload()
+    payload["source"]["url"] = source_url
+    payload["project"]["root_dir"] = str(tmp_path / "project")
+    request = PipelineRequest.from_payload(payload)
+    record = JobRecord(
+        job_id="job-redaction",
+        request=request,
+        created_at="2026-02-17T10:00:00+00:00",
+    )
+    svc._jobs[record.job_id] = record
+
+    class FailingPipeline:
+        def __init__(self, log_cb):
+            self.log_cb = log_cb
+
+        def run(self):
+            self.log_cb(f"Downloading {source_url}")
+            raise RuntimeError(f"Downloader failed for {source_url}")
+
+    class FakeComponent:
+        def to_capability_dict(self):
+            return {"id": "youtube_transcribe"}
+
+        def create_pipeline(self, *, log_cb, **_kwargs):
+            return FailingPipeline(log_cb)
+
+    monkeypatch.setattr(service_module, "get_module_component", lambda _module: FakeComponent())
+    svc._run_job_thread(record)
+
+    # Events are the exact serialized content consumed by frontend technical logs.
+    event_wire = json.dumps([event.to_dict() for event in events], ensure_ascii=False)
+    assert "job.started" in event_wire
+    assert "job.failed" in event_wire
+    assert canary not in event_wire
+    assert "worker:private" not in event_wire
+    assert "[REDACTED]@example.test" in event_wire
+    assert "[REDACTED]" in event_wire
+
+    jobs_dir = tmp_path / "project" / "jobs"
+    snapshot = json.loads((jobs_dir / "job-redaction.json").read_text(encoding="utf-8"))
+    assert "url" not in snapshot["request"]["source"]
+    assert canary not in json.dumps(snapshot)
+    timeline = [
+        json.loads(line)
+        for line in (jobs_dir / "timeline.jsonl").read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert any(item["event"] == "job.failed" and item.get("error") for item in timeline)
+    assert canary not in json.dumps(timeline)
+    assert canary not in (tmp_path / "project" / "logs" / "job-redaction.log").read_text(encoding="utf-8")
+
+    runtime_log = app_data / "runtime.log"
+    diagnostics = runtime_log.read_text(encoding="utf-8")
+    assert "RuntimeError" in diagnostics
+    assert "example.test/watch" in diagnostics
+    assert canary not in diagnostics
+    assert "worker:private" not in diagnostics
+
+
+def test_job_snapshot_omits_source_url_even_without_event_serialization():
+    payload = _youtube_payload()
+    payload["source"]["url"] = "https://example.test/watch?token=do-not-store"
+    record = JobRecord(
+        job_id="job-snapshot-redaction",
+        request=PipelineRequest.from_payload(payload),
+        created_at="2026-02-17T10:00:00+00:00",
+    )
+
+    snapshot = record.snapshot()
+    assert "url" not in snapshot["request"]["source"]
+    assert "do-not-store" not in json.dumps(snapshot)
+
+
 def test_run_pipeline_rejects_parallel_job(tmp_path):
     svc = BackendService(emit_event=lambda _: None)
     active_payload = _payload(output_mode="txt_only")
@@ -578,3 +662,120 @@ def test_project_job_logs_are_persisted(tmp_path):
     assert job_log.is_file()
     assert "job-logs" in project_log.read_text(encoding="utf-8")
     assert "Testing project log persistence" in job_log.read_text(encoding="utf-8")
+
+
+def test_acknowledged_cancel_wins_barrier_controlled_completion_race(monkeypatch, tmp_path):
+    events = []
+    run_entered = Event()
+    finish_pipeline = Event()
+
+    class Pipeline:
+        def run(self):
+            run_entered.set()
+            assert finish_pipeline.wait(timeout=2)
+            return PipelineRunResult(str(tmp_path), str(tmp_path), 1, 1)
+
+    class Component:
+        def create_pipeline(self, **_kwargs):
+            return Pipeline()
+
+        def to_capability_dict(self):
+            return {}
+
+    monkeypatch.setattr("transcribemate.v2.backend.service.get_module_component", lambda _module: Component())
+    svc = BackendService(emit_event=events.append)
+    payload = _payload(output_mode="txt_only")
+    payload["project"] = {"project_id": "cancel-race", "name": "Cancel Race", "root_dir": str(tmp_path)}
+    record = JobRecord(
+        job_id="cancel-race",
+        request=PipelineRequest.from_payload(payload),
+        created_at="2026-02-17T10:00:00+00:00",
+    )
+    svc._jobs[record.job_id] = record
+
+    worker = Thread(target=svc._run_job_thread, args=(record,))
+    worker.start()
+    assert run_entered.wait(timeout=2)
+    response = svc.handle_request("cancel_job", {"job_id": record.job_id})
+    finish_pipeline.set()
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert response["cancel_requested"] is True
+    assert record.status == "cancelled"
+    terminal_events = [event.event for event in events if event.event in {"job.completed", "job.failed", "job.cancelled"}]
+    assert terminal_events == ["job.cancelled"]
+
+
+def test_ordinary_pipeline_error_remains_failed(monkeypatch, tmp_path):
+    events = []
+
+    class Pipeline:
+        def run(self):
+            raise RuntimeError("ordinary failure")
+
+    class Component:
+        def create_pipeline(self, **_kwargs):
+            return Pipeline()
+
+        def to_capability_dict(self):
+            return {}
+
+    monkeypatch.setattr("transcribemate.v2.backend.service.get_module_component", lambda _module: Component())
+    svc = BackendService(emit_event=events.append)
+    payload = _payload(output_mode="txt_only")
+    payload["project"] = {"project_id": "ordinary-failure", "name": "Ordinary Failure", "root_dir": str(tmp_path)}
+    record = JobRecord(
+        job_id="ordinary-failure",
+        request=PipelineRequest.from_payload(payload),
+        created_at="2026-02-17T10:00:00+00:00",
+    )
+    svc._jobs[record.job_id] = record
+
+    svc._run_job_thread(record)
+
+    assert record.status == "failed"
+    assert record.error["code"] == "pipeline_failed"
+    assert [event.event for event in events if event.event == "job.failed"] == ["job.failed"]
+
+
+def test_acknowledged_cancel_wins_pipeline_error_race(monkeypatch, tmp_path):
+    events = []
+    run_entered = Event()
+    fail_pipeline = Event()
+
+    class Pipeline:
+        def run(self):
+            run_entered.set()
+            assert fail_pipeline.wait(timeout=2)
+            raise RuntimeError("operation interrupted during cancellation")
+
+    class Component:
+        def create_pipeline(self, **_kwargs):
+            return Pipeline()
+
+        def to_capability_dict(self):
+            return {}
+
+    monkeypatch.setattr("transcribemate.v2.backend.service.get_module_component", lambda _module: Component())
+    svc = BackendService(emit_event=events.append)
+    payload = _payload(output_mode="txt_only")
+    payload["project"] = {"project_id": "cancel-error-race", "name": "Cancel Error Race", "root_dir": str(tmp_path)}
+    record = JobRecord(
+        job_id="cancel-error-race",
+        request=PipelineRequest.from_payload(payload),
+        created_at="2026-02-17T10:00:00+00:00",
+    )
+    svc._jobs[record.job_id] = record
+
+    worker = Thread(target=svc._run_job_thread, args=(record,))
+    worker.start()
+    assert run_entered.wait(timeout=2)
+    response = svc.handle_request("cancel_job", {"job_id": record.job_id})
+    fail_pipeline.set()
+    worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    assert response["cancel_requested"] is True
+    assert record.status == "cancelled"
+    assert [event.event for event in events if event.event in {"job.failed", "job.cancelled"}] == ["job.cancelled"]

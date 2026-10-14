@@ -29,6 +29,7 @@ from .diarization import supported_backends
 from .models import PipelineRequest, PipelineRunResult, ProjectContextSpec, RequestValidationError
 from .pipeline import PipelineCancelledError
 from .protocol import EventMessage
+from .redaction import redact_data, redact_text, write_runtime_diagnostic
 
 EventEmitter = Callable[[EventMessage], None]
 
@@ -50,19 +51,24 @@ class JobRecord:
     thread: Thread | None = None
 
     def snapshot(self) -> dict:
-        return {
+        request = self.request.to_dict()
+        source = request.get("source")
+        if isinstance(source, dict):
+            # Source URLs are not needed in persisted job history.
+            source.pop("url", None)
+        return redact_data({
             "job_id": self.job_id,
             "status": self.status,
             "created_at": self.created_at,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
-            "request": self.request.to_dict(),
+            "request": request,
             "progress": dict(self.progress),
             "result": self.result,
             "error": self.error,
             "warnings": list(self.warnings),
             "logs_tail": list(self.logs),
-        }
+        })
 
 
 class BackendService:
@@ -949,26 +955,29 @@ class BackendService:
                         "error": record.error,
                     },
                 )
-        except Exception as exc:
+        except Exception:
+            write_runtime_diagnostic(traceback.format_exc())
             with self._lock:
-                record.status = "failed"
                 record.finished_at = _utc_now()
-                record.error = {
-                    "code": "pipeline_failed",
-                    "message": str(exc),
-                    "traceback": traceback.format_exc(),
-                }
+                if record.stop_flag.is_set():
+                    record.status = "cancelled"
+                    record.error = {"code": "cancelled", "message": "Stopped by user."}
+                    event_name = "job.cancelled"
+                else:
+                    record.status = "failed"
+                    record.error = {
+                        "code": "pipeline_failed",
+                        "message": "Pipeline failed. See runtime.log for diagnostics.",
+                    }
+                    event_name = "job.failed"
                 self._emit_job_event(
-                    "job.failed",
+                    event_name,
                     record.job_id,
-                    {
-                        "status": record.status,
-                        "error": record.error,
-                    },
+                    {"status": record.status, "error": record.error},
                 )
 
     def _on_job_log(self, record: JobRecord, line: str):
-        cleaned = str(line or "").strip()
+        cleaned = redact_text(str(line or "").strip())
         if not cleaned:
             return
         record.logs.append(cleaned)
@@ -980,7 +989,7 @@ class BackendService:
         self._emit_job_event("job.progress", record.job_id, dict(record.progress))
 
     def _emit_job_event(self, event: str, job_id: str, payload: dict):
-        normalized_payload = dict(payload or {})
+        normalized_payload = redact_data(dict(payload or {}))
         self._emit_event(EventMessage(event=event, payload=normalized_payload, job_id=job_id))
         with self._lock:
             record = self._jobs.get(job_id)
@@ -1012,6 +1021,7 @@ class BackendService:
         write_snapshot: bool = True,
         write_timeline: bool = True,
     ) -> None:
+        payload = redact_data(payload or {})
         project = record.request.project
         if not project.enabled:
             return
@@ -1092,7 +1102,7 @@ class BackendService:
                 return
             logs_dir.mkdir(parents=True, exist_ok=True)
             timestamp = _utc_now()
-            message = str(line or "").strip()
+            message = redact_text(str(line or "").strip())
             if not message:
                 return
 

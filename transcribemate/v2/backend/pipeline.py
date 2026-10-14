@@ -16,6 +16,7 @@ from ...core.files import (
     timestamped_base_name,
     unique_path,
 )
+from ...core.cancellation import OperationCancelledError
 from ...core.gpu import auto_whisper_model, get_gpu_info
 from ...core.i18n import TRANSLATION_MODELS
 from ...core.models import configure_model_environment
@@ -41,8 +42,7 @@ LogCallback = Callable[[str], None]
 ProgressCallback = Callable[[dict], None]
 
 
-class PipelineCancelledError(RuntimeError):
-    """Raised when a running pipeline job is cancelled by user request."""
+PipelineCancelledError = OperationCancelledError
 
 
 def _artifact_kind_for(path: Path) -> str:

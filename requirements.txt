@@ -1,5 +1,9 @@
 yt-dlp
 faster-whisper
+# faster-whisper currently calls av.open(..., metadata_errors="ignore"), an
+# argument removed in PyAV 19. Keep PyAV on the compatible API until the
+# transcriber dependency updates that call.
+av>=11,<19
 transformers
 huggingface_hub>=0.34,<1.0
 sentencepiece

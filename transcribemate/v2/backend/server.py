@@ -18,6 +18,7 @@ from .protocol import (
     parse_request_line,
 )
 from .service import BackendService
+from .redaction import write_runtime_diagnostic
 
 
 class JsonLineBackendServer:
@@ -76,15 +77,15 @@ class JsonLineBackendServer:
                         error=RpcError(code=exc.code, message=str(exc), details=exc.details),
                     )
                 )
-            except Exception as exc:
+            except Exception:
+                write_runtime_diagnostic(traceback.format_exc())
                 self._write_response(
                     ResponseMessage(
                         request_id=request.request_id,
                         ok=False,
                         error=RpcError(
                             code="internal_error",
-                            message=str(exc),
-                            details={"traceback": traceback.format_exc()},
+                            message="An internal backend error occurred.",
                         ),
                     )
                 )
