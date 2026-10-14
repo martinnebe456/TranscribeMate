@@ -144,6 +144,7 @@ This guide describes the current repository state (V2-only stack).
   - macOS: `scripts/macos/bootstrap_runtime.sh`
   - Linux: `scripts/linux/bootstrap_runtime.sh`
 - Runtime dependency constraint: keep PyAV below 19 until faster-whisper stops passing the removed `metadata_errors` argument to `av.open`.
+- Keep Transformers at 5.10.0 or newer to avoid known unsafe model-loading and `save_pretrained` vulnerabilities; keep pytest at 9.0.3 or newer for the Unix tmpdir fix.
 - Windows acceptance reruns can pass `-AppDataDir <existing path>` to reuse a previously bootstrapped runtime and model cache.
 - Windows first-launch bootstrap pins the embedded Python, pip bootstrap wheel, and FFmpeg archive by version and repository-recorded SHA-256; update each version, URL, and digest together. The Windows acceptance runner checks corrupt-artifact rejection and the clean bootstrap runtime marker.
 - macOS dev-mode note:
