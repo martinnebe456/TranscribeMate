@@ -4,7 +4,8 @@ faster-whisper
 # argument removed in PyAV 19. Keep PyAV on the compatible API until the
 # transcriber dependency updates that call.
 av>=11,<19
-transformers
+# Keep the runtime above known unsafe model-loading and save_pretrained paths.
+transformers>=5.10.0,<6
 huggingface_hub>=0.34,<1.0
 sentencepiece
 accelerate
