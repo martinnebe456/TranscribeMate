@@ -491,7 +491,11 @@ def main() -> int:
     report = {
         "offline_run": offline_result if isinstance(offline_result, dict) else offline_result.to_dict(),
         "offline_validation": offline_validation,
-        "video_run": video_result if isinstance(video_result, dict) else video_result.to_dict(),
+        "video_run": (
+            video_result
+            if video_result is None or isinstance(video_result, dict)
+            else video_result.to_dict()
+        ),
         "video_validation": video_validation,
         "artifact_dir": str(artifact_dir),
         "app_data_dir": os.environ.get("TM_APP_DATA_DIR", ""),

@@ -4,9 +4,11 @@ Run this named manual check for release packages on Windows x64, macOS arm64,
 Debian 12 x64, and Arch x64 when validating the interactive first-run path.
 Release CI runs `tests/full_suite/run_extracted_package_acceptance.py` for the
 macOS and Linux packages. That check extracts the archive, bootstraps isolated
-app data, transcribes the approved `audio-sample-2` fixture through the packaged
-JSON-lines backend, and confirms the packaged JavaFX app displays the completed
-transcript. Windows release CI builds the package, and the scheduled Windows
+app data with `--with-models` (Whisper `large-v3` and `Helsinki-NLP/opus-mt-en-cs`,
+both required by JavaFX at startup), transcribes the approved `audio-sample-2`
+fixture through the packaged JSON-lines backend, and confirms the packaged
+JavaFX app displays the completed transcript. Windows release CI builds the
+package, and the scheduled Windows
 full-suite covers its backend and files view, but it bootstraps separately and
 prepares project metadata itself. Run this manual check on Windows to cover
 first setup and user-driven project, import, and job actions.
