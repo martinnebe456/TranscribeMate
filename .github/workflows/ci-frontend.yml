@@ -21,7 +21,6 @@ permissions:
 
 jobs:
   build:
-    if: ${{ inputs.run_build }}
     strategy:
       fail-fast: false
       matrix:
@@ -32,10 +31,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:
+      - name: Skip frontend build for unrelated changes
+        if: ${{ !inputs.run_build }}
+        run: echo "Frontend build is not needed for the changed paths."
+
       - name: Checkout
+        if: ${{ inputs.run_build }}
         uses: actions/checkout@v4
 
       - name: Setup Java 21
+        if: ${{ inputs.run_build }}
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -43,6 +48,7 @@ jobs:
           cache: maven
 
       - name: Run frontend tests + build JAR/runtime dependencies
+        if: ${{ inputs.run_build }}
         working-directory: javafx-client
         env:
           TM_PROJECT_ROOT: ${{ github.workspace }}
