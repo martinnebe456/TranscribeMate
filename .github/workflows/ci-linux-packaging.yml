@@ -21,7 +21,6 @@ permissions:
 
 jobs:
   build:
-    if: ${{ inputs.run_build }}
     strategy:
       fail-fast: false
       matrix:
@@ -35,8 +34,12 @@ jobs:
       image: ${{ matrix.container }}
     timeout-minutes: 60
     steps:
+      - name: Skip Linux packaging for unrelated changes
+        if: ${{ !inputs.run_build }}
+        run: echo "Linux packaging is not needed for the changed paths."
+
       - name: Install Debian build dependencies
-        if: matrix.distro == 'debian'
+        if: ${{ inputs.run_build && matrix.distro == 'debian' }}
         shell: bash
         run: |
           apt-get update
@@ -65,7 +68,7 @@ jobs:
             unzip
 
       - name: Install Arch build dependencies
-        if: matrix.distro == 'arch'
+        if: ${{ inputs.run_build && matrix.distro == 'arch' }}
         shell: bash
         run: |
           pacman -Sy --noconfirm --needed \
@@ -93,26 +96,31 @@ jobs:
             unzip
 
       - name: Checkout
+        if: ${{ inputs.run_build }}
         uses: actions/checkout@v4
 
       - name: Setup Java 21
+        if: ${{ inputs.run_build }}
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "21"
 
       - name: Verify Java 21 + jpackage
+        if: ${{ inputs.run_build }}
         shell: bash
         run: |
           java -version
           jpackage --version
 
       - name: Build Linux app-image + TAR.GZ
+        if: ${{ inputs.run_build }}
         shell: bash
         run: |
           bash ./scripts/linux/build_v2_release.sh --distro "${{ matrix.distro }}"
 
       - name: Verify Linux TAR.GZ output
+        if: ${{ inputs.run_build }}
         shell: bash
         run: |
           archive_path="$(find dist/linux -maxdepth 1 -type f -name "TranscribeMate-*-linux-${{ matrix.distro }}-x64.tar.gz" | head -n 1)"
@@ -123,6 +131,7 @@ jobs:
           echo "Found Linux TAR.GZ: $(basename "$archive_path")"
 
       - name: Upload Linux packaging artifact
+        if: ${{ inputs.run_build }}
         uses: actions/upload-artifact@v4
         with:
           name: transcribemate-linux-${{ matrix.distro }}-smoke
