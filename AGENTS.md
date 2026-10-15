@@ -153,6 +153,12 @@ This guide describes the current repository state (V2-only stack).
   - direct `mvn javafx:run` from `javafx-client/` should now auto-detect the repository backend and `.venv`; helper scripts still set `TM_PROJECT_ROOT` explicitly for predictable dev runs.
   - `TM_APP_DATA_DIR` is now a shared override honored by Python path resolution, JavaFX path resolution, and runtime bootstrap scripts; the new macOS full-suite uses it to isolate app-data/workspace/logs per run.
 
+## Code Review Rules
+
+### Release package acceptance
+- Do not treat a successful backend transcription alone as proof that a release package is ready. The first-run bootstrap and packaged JavaFX transcript display are part of the same acceptance flow.
+  Safe path: verify bootstrap installs the default models required by JavaFX, then confirm the packaged app displays the generated transcript in `tests/full_suite/run_extracted_package_acceptance.py`.
+
 ## Legal
 - Project source license: MIT (`LICENSE`); release app images include `LICENSE.txt` at their root.
 - `DISCLAIMER.md`
