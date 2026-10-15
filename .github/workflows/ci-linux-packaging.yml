@@ -2,13 +2,26 @@ name: CI Linux Packaging
 
 on:
   workflow_call:
+    inputs:
+      run_build:
+        description: Run the Linux packaging matrix for this change.
+        type: boolean
+        required: false
+        default: true
   workflow_dispatch:
+    inputs:
+      run_build:
+        description: Run the Linux packaging matrix.
+        type: boolean
+        required: false
+        default: true
 
 permissions:
   contents: read
 
 jobs:
   build:
+    if: ${{ inputs.run_build }}
     strategy:
       fail-fast: false
       matrix:

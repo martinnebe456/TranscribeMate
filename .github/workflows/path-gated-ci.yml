@@ -97,13 +97,15 @@ jobs:
 
   frontend:
     needs: changes
-    if: needs.changes.outputs.frontend == 'true'
     uses: ./.github/workflows/ci-frontend.yml
+    with:
+      run_build: ${{ needs.changes.outputs.frontend == 'true' }}
 
   linux_packaging:
     needs: changes
-    if: needs.changes.outputs.linux_packaging == 'true'
     uses: ./.github/workflows/ci-linux-packaging.yml
+    with:
+      run_build: ${{ needs.changes.outputs.linux_packaging == 'true' }}
 
   docs_and_contract:
     needs: changes
